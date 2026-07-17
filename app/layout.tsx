@@ -23,10 +23,6 @@ export async function generateMetadata(): Promise<Metadata> {
     title: "CrossBorder.sg — Go now or wait?",
     description:
       "A live Singapore–Johor checkpoint recommendation based on official traffic signals.",
-    icons: {
-      icon: "/favicon.svg",
-      shortcut: "/favicon.svg",
-    },
     openGraph: {
       title: "CrossBorder.sg — Go now or wait?",
       description: "Know when to leave and which land checkpoint to use.",
