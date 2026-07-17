@@ -770,7 +770,7 @@ a:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
   .checkpoint-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .camera-frame { height: 175px; }
   .estimate-panel { grid-template-columns: 0.8fr 1.2fr; align-items: start; }
-  .approach-tools { grid-template-columns: 0.8fr 1fr; align-items: end; }
+  .approach-tools { grid-template-columns: 0.8fr 1fr auto; align-items: end; }
   .approach-tools small { grid-column: 1 / -1; }
   .feedback-card { grid-template-columns: 0.9fr 1.35fr; align-items: center; }
   .feedback-controls { grid-template-columns: auto auto auto; align-items: center; }

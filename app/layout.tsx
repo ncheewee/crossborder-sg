@@ -23,6 +23,17 @@ export async function generateMetadata(): Promise<Metadata> {
     title: "CrossBorder.sg — Go now or wait?",
     description:
       "A live Singapore–Johor checkpoint recommendation based on official traffic signals.",
+    manifest: "/manifest.webmanifest",
+    themeColor: "#0d9488",
+    appleWebApp: {
+      capable: true,
+      title: "CrossBorder.sg",
+      statusBarStyle: "default",
+    },
+    icons: {
+      icon: "/icon.svg",
+      apple: "/icon.svg",
+    },
     openGraph: {
       title: "CrossBorder.sg — Go now or wait?",
       description: "Know when to leave and which land checkpoint to use.",

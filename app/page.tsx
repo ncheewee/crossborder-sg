@@ -7,6 +7,8 @@ type Checkpoint = "Tuas" | "Woodlands";
 type ForecastWindow = "current" | "next";
 type EstimateMode = "border" | "approach";
 type ApproachSource = "fixed" | "gps" | "address";
+type LocationStatus = "idle" | "detecting" | "ready" | "denied" | "estimated" | "not-found";
+type Coordinate = { latitude: number; longitude: number };
 
 type LiveCamera = {
   cameraId: string;
@@ -204,14 +206,23 @@ function formatTimeLabel(value?: string) {
 }
 
 function formatDayWindow(value?: string) {
-  if (!value) return "00:00–24:00";
+  if (!value) return "00:00–23:59";
   const date = new Date(value);
   const day = new Intl.DateTimeFormat("en-SG", {
     weekday: "short",
     day: "numeric",
     month: "short",
   }).format(date);
-  return `${day} · 00:00–24:00`;
+  return `${day} · 00:00–23:59`;
+}
+
+function formatHourTick(value?: string) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    hour: "numeric",
+    hour12: true,
+  }).format(new Date(value)).replace(" ", "").toLowerCase();
 }
 
 function roundUpToQuarter(date: Date) {
@@ -228,7 +239,7 @@ function crossingMidpoint(value: string) {
   return Math.round((low + (Number.isFinite(high) ? high : low)) / 2);
 }
 
-function distanceKm(from: GeolocationCoordinates, to: { latitude: number; longitude: number }) {
+function distanceKm(from: Coordinate, to: Coordinate) {
   const radius = 6371;
   const lat1 = from.latitude * Math.PI / 180;
   const lat2 = to.latitude * Math.PI / 180;
@@ -244,10 +255,54 @@ const checkpointCoordinates: Record<Checkpoint, { latitude: number; longitude: n
   Tuas: { latitude: 1.3478, longitude: 103.6376 },
 };
 
-function gpsApproachMinutes(position: GeolocationCoordinates | null, checkpoint: Checkpoint, fallback: number) {
+const postalSectorCoordinates: Array<{ test: (value: string) => boolean; label: string; coordinate: Coordinate }> = [
+  { test: (value) => /^0[1-8]/.test(value), label: "CBD / Marina Bay", coordinate: { latitude: 1.2868, longitude: 103.8545 } },
+  { test: (value) => /^(09|10)/.test(value), label: "HarbourFront / Sentosa", coordinate: { latitude: 1.2654, longitude: 103.8200 } },
+  { test: (value) => /^(11|12|13|14)/.test(value), label: "Queenstown / Bukit Merah", coordinate: { latitude: 1.2890, longitude: 103.8040 } },
+  { test: (value) => /^(15|16)/.test(value), label: "East Coast", coordinate: { latitude: 1.3035, longitude: 103.9110 } },
+  { test: (value) => /^(17|18|19|20|21|22)/.test(value), label: "City / Orchard / Bugis", coordinate: { latitude: 1.3048, longitude: 103.8380 } },
+  { test: (value) => /^(23|24|25|26|27)/.test(value), label: "Bukit Timah / Holland", coordinate: { latitude: 1.3255, longitude: 103.7950 } },
+  { test: (value) => /^(28|29|30|31|32|33)/.test(value), label: "Novena / Toa Payoh", coordinate: { latitude: 1.3340, longitude: 103.8460 } },
+  { test: (value) => /^(34|35|36|37|38|39|40|41)/.test(value), label: "Geylang / Kallang", coordinate: { latitude: 1.3180, longitude: 103.8840 } },
+  { test: (value) => /^(42|43|44|45|46|47|48|49|50)/.test(value), label: "Katong / Bedok / Changi", coordinate: { latitude: 1.3270, longitude: 103.9380 } },
+  { test: (value) => /^(51|52)/.test(value), label: "Tampines / Pasir Ris", coordinate: { latitude: 1.3555, longitude: 103.9440 } },
+  { test: (value) => /^(53|54|55)/.test(value), label: "Serangoon / Hougang", coordinate: { latitude: 1.3650, longitude: 103.8860 } },
+  { test: (value) => /^(56|57)/.test(value), label: "Bishan / Ang Mo Kio", coordinate: { latitude: 1.3695, longitude: 103.8465 } },
+  { test: (value) => /^(58|59)/.test(value), label: "Clementi / West Coast", coordinate: { latitude: 1.3150, longitude: 103.7650 } },
+  { test: (value) => /^(60|61|62|63|64)/.test(value), label: "Jurong", coordinate: { latitude: 1.3330, longitude: 103.7100 } },
+  { test: (value) => /^(65|66|67|68)/.test(value), label: "Bukit Batok / Choa Chu Kang", coordinate: { latitude: 1.3780, longitude: 103.7440 } },
+  { test: (value) => /^(69|70|71|72|73)/.test(value), label: "Choa Chu Kang / Woodlands", coordinate: { latitude: 1.4200, longitude: 103.7570 } },
+  { test: (value) => /^(75|76)/.test(value), label: "Yishun / Sembawang", coordinate: { latitude: 1.4350, longitude: 103.8200 } },
+  { test: (value) => /^(77|78|79|80|81|82|83)/.test(value), label: "Seletar / Punggol / Sengkang", coordinate: { latitude: 1.4030, longitude: 103.9020 } },
+];
+
+const namedAreaCoordinates: Array<{ keywords: string[]; label: string; coordinate: Coordinate }> = [
+  { keywords: ["orchard", "somerset", "dhoby"], label: "Orchard", coordinate: { latitude: 1.3048, longitude: 103.8318 } },
+  { keywords: ["jurong", "jcube", "jem"], label: "Jurong", coordinate: { latitude: 1.3330, longitude: 103.7430 } },
+  { keywords: ["woodlands"], label: "Woodlands", coordinate: { latitude: 1.4360, longitude: 103.7860 } },
+  { keywords: ["tuas"], label: "Tuas", coordinate: { latitude: 1.3290, longitude: 103.6480 } },
+  { keywords: ["tampines"], label: "Tampines", coordinate: { latitude: 1.3547, longitude: 103.9437 } },
+  { keywords: ["punggol"], label: "Punggol", coordinate: { latitude: 1.4051, longitude: 103.9023 } },
+  { keywords: ["yishun"], label: "Yishun", coordinate: { latitude: 1.4294, longitude: 103.8354 } },
+  { keywords: ["clementi"], label: "Clementi", coordinate: { latitude: 1.3151, longitude: 103.7651 } },
+];
+
+function estimateApproachMinutes(position: Coordinate | null, checkpoint: Checkpoint, fallback: number) {
   if (!position) return fallback;
   const km = distanceKm(position, checkpointCoordinates[checkpoint]);
   return Math.max(8, Math.round((km / 48) * 60 + 8));
+}
+
+function estimateLocationFromInput(value: string): { label: string; coordinate: Coordinate; precision: string } | null {
+  const cleaned = value.trim().toLowerCase();
+  const postal = cleaned.match(/\b\d{6}\b/)?.[0];
+  if (postal) {
+    const match = postalSectorCoordinates.find((entry) => entry.test(postal));
+    if (match) return { label: `${postal} · ${match.label}`, coordinate: match.coordinate, precision: "postal-sector" };
+  }
+  const named = namedAreaCoordinates.find((entry) => entry.keywords.some((keyword) => cleaned.includes(keyword)));
+  if (named) return { label: named.label, coordinate: named.coordinate, precision: "area" };
+  return null;
 }
 
 function camerasForCheckpoint(live: LiveTraffic | null, checkpoint: Checkpoint, fallbackImage: string): LiveCamera[] {
@@ -265,11 +320,13 @@ function camerasForCheckpoint(live: LiveTraffic | null, checkpoint: Checkpoint, 
 function CameraCarousel({
   cameras,
   title,
+  fallbackImage,
   compact = false,
   auto = false,
 }: {
   cameras: LiveCamera[];
   title: string;
+  fallbackImage: string;
   compact?: boolean;
   auto?: boolean;
 }) {
@@ -305,7 +362,14 @@ function CameraCarousel({
       onPointerDown={() => setInteracted(true)}
     >
       <div className="camera-frame">
-        <img src={current.imageUrl} alt={`${title}: ${current.label ?? current.cameraId}`} />
+        <img
+          src={current.imageUrl || fallbackImage}
+          alt={`${title}: ${current.label ?? current.cameraId}`}
+          onError={(event) => {
+            if (event.currentTarget.src.endsWith(fallbackImage)) return;
+            event.currentTarget.src = fallbackImage;
+          }}
+        />
         <div className="camera-shade" />
         <div className="camera-meta">
           <span><i aria-hidden="true" /> {current.label ?? title}</span>
@@ -332,6 +396,7 @@ function CheckpointCard({
   trendTone,
   condition,
   cameras,
+  fallbackImage,
 }: {
   name: Checkpoint;
   recommended: boolean;
@@ -341,6 +406,7 @@ function CheckpointCard({
   trendTone: string;
   condition: string;
   cameras: LiveCamera[];
+  fallbackImage: string;
 }) {
   return (
     <article className={`checkpoint-card ${recommended ? "recommended" : ""}`}>
@@ -376,7 +442,7 @@ function CheckpointCard({
         </div>
       </div>
 
-      <CameraCarousel cameras={cameras} title={`${name} official cameras`} compact />
+      <CameraCarousel cameras={cameras} title={`${name} official cameras`} fallbackImage={fallbackImage} compact />
     </article>
   );
 }
@@ -465,9 +531,9 @@ function WaitTimeChart({
 
       context.textAlign = "center";
       context.textBaseline = "top";
+      context.font = width < 440 ? "7px Arial, sans-serif" : "8px Arial, sans-serif";
       selected.times.forEach((label, index) => {
-        const labelStep = width < 440 ? 8 : 4;
-        if (index % labelStep !== 0 && index !== selected.times.length - 1) return;
+        if (!label) return;
         context.fillText(label, x(index), padding.top + plotHeight + 12);
       });
 
@@ -647,8 +713,15 @@ function apiBase() {
     : "";
 }
 
+function initialDirection(): Direction {
+  if (typeof window === "undefined") return "sg-my";
+  return new URLSearchParams(window.location.search).get("direction") === "my-sg"
+    ? "my-sg"
+    : "sg-my";
+}
+
 export default function Home() {
-  const [direction, setDirection] = useState<Direction>("sg-my");
+  const [direction, setDirection] = useState<Direction>(() => initialDirection());
   const [refreshing, setRefreshing] = useState(false);
   const [lastChecked, setLastChecked] = useState("12:29 pm");
   const [liveTraffic, setLiveTraffic] = useState<LiveTraffic | null>(null);
@@ -659,8 +732,9 @@ export default function Home() {
   const [showSignals, setShowSignals] = useState(false);
   const [estimateMode, setEstimateMode] = useState<EstimateMode>("border");
   const [approachSource, setApproachSource] = useState<ApproachSource>("fixed");
-  const [userLocation, setUserLocation] = useState<GeolocationCoordinates | null>(null);
-  const [locationStatus, setLocationStatus] = useState<"idle" | "detecting" | "ready" | "denied">("idle");
+  const [userLocation, setUserLocation] = useState<Coordinate | null>(null);
+  const [addressLocation, setAddressLocation] = useState<{ label: string; coordinate: Coordinate; precision: string } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [locationInput, setLocationInput] = useState("");
 
   const loadTraffic = useCallback(async () => {
@@ -724,8 +798,13 @@ export default function Home() {
   }, [direction, liveTraffic]);
 
   const selectedRoute = data.route as Checkpoint;
-  const approachMinutes = gpsApproachMinutes(
-    approachSource === "gps" ? userLocation : null,
+  const activeStartCoordinate = approachSource === "gps"
+    ? userLocation
+    : approachSource === "address"
+      ? addressLocation?.coordinate ?? null
+      : null;
+  const approachMinutes = estimateApproachMinutes(
+    activeStartCoordinate,
     selectedRoute,
     data.drive,
   );
@@ -743,9 +822,9 @@ export default function Home() {
     ? "Border crossing only"
     : approachSource === "gps" && userLocation
       ? "Location-adjusted approach"
-      : approachSource === "address" && locationInput.trim()
-        ? "Address saved · fixed approach until geocoding is connected"
-        : "Fixed approach estimate";
+      : approachSource === "address" && addressLocation
+        ? `${addressLocation.precision === "postal-sector" ? "Postal-sector" : "Area"} approach estimate`
+      : "Fixed approach estimate";
 
   const liveSeries = useMemo<Record<Checkpoint, Record<ForecastWindow, ChartSeries>>>(() => {
     const fallback = Object.fromEntries((["Tuas", "Woodlands"] as Checkpoint[]).map((checkpoint) => [
@@ -772,9 +851,8 @@ export default function Home() {
         }, { index: 0, difference: Number.POSITIVE_INFINITY }).index
         : null;
       const times = future.map((point, index) => {
-        if (index === 0) return "00:00";
-        if (index === future.length - 1) return "24:00";
-        return point.time;
+        if (index % 2 !== 0) return "";
+        return formatHourTick(point.timestamp);
       });
       const actual = future.map((_, index) => index === nowIndex && forecastWindow === "current"
         ? savedHistory[0]?.observed ?? current
@@ -827,11 +905,13 @@ export default function Home() {
         name: "Tuas" as Checkpoint,
         ...data.tuas,
         cameras: camerasForCheckpoint(liveTraffic, "Tuas", "tuas.jpg"),
+        fallbackImage: "tuas.jpg",
       },
       {
         name: "Woodlands" as Checkpoint,
         ...data.woodlands,
         cameras: camerasForCheckpoint(liveTraffic, "Woodlands", "woodlands.jpg"),
+        fallbackImage: "woodlands.jpg",
       },
     ],
     [data, liveTraffic],
@@ -856,7 +936,11 @@ export default function Home() {
     setLocationStatus("detecting");
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setUserLocation(position.coords);
+        setUserLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setAddressLocation(null);
         setLocationStatus("ready");
       },
       () => {
@@ -865,6 +949,15 @@ export default function Home() {
       },
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 },
     );
+  }
+
+  function estimateAddressLocation() {
+    setEstimateMode("approach");
+    setApproachSource("address");
+    const estimate = estimateLocationFromInput(locationInput);
+    setAddressLocation(estimate);
+    setUserLocation(null);
+    setLocationStatus(estimate ? "estimated" : "not-found");
   }
 
   async function submitFeedback() {
@@ -936,7 +1029,7 @@ export default function Home() {
             </p>
             <div className="answer-metrics">
               <span><strong>{data.border} min</strong> border crossing only</span>
-              <span><strong>{approachMinutes} min</strong> {approachSource === "gps" && userLocation ? "estimated from GPS" : "approach estimate"}</span>
+              <span><strong>{approachMinutes} min</strong> {approachSource === "gps" && userLocation ? "estimated from GPS" : approachSource === "address" && addressLocation ? `from ${addressLocation.label}` : "approach estimate"}</span>
               <span><strong>{displayedRange} min</strong> {estimateMode === "border" ? "shown in border-only mode" : "shown incl. approach"}</span>
               <span><strong>Save {data.saving} min</strong> vs the other checkpoint</span>
             </div>
@@ -944,6 +1037,7 @@ export default function Home() {
           <CameraCarousel
             cameras={recommendedCameras}
             title={`${recommendedCameraName} official cameras`}
+            fallbackImage={data.route === "Tuas" ? "tuas.jpg" : "woodlands.jpg"}
             auto
           />
         </div>
@@ -984,17 +1078,29 @@ export default function Home() {
                   onChange={(event) => {
                     setLocationInput(event.target.value);
                     setApproachSource("address");
+                    setLocationStatus("idle");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") estimateAddressLocation();
                   }}
                   placeholder="e.g. 238863 or Orchard Road"
                 />
               </label>
+              <button
+                className={approachSource === "address" && Boolean(addressLocation) ? "active" : ""}
+                onClick={estimateAddressLocation}
+              >
+                Estimate from input
+              </button>
               <small>
                 {locationStatus === "ready"
                   ? "GPS estimate active for the approach leg."
                   : locationStatus === "denied"
                     ? "Location not available; using fixed approach estimate."
-                    : locationInput.trim()
-                      ? "Address saved. Geocoding is the next backend connection."
+                    : locationStatus === "estimated" && addressLocation
+                      ? `${addressLocation.label} is active. This is an approximate ${addressLocation.precision} drive-time estimate.`
+                      : locationStatus === "not-found"
+                        ? "Couldn’t match that yet. Try a 6-digit Singapore postal code or a major area like Orchard, Jurong, Woodlands, Tampines."
                       : "Choose GPS or enter a start point to make approach time explicit."}
               </small>
             </div>

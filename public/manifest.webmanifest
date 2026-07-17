@@ -1,0 +1,38 @@
+{
+  "name": "CrossBorder.sg",
+  "short_name": "CrossBorder",
+  "description": "Singapore-Johor checkpoint recommendation, camera feeds, and wait-time forecast.",
+  "start_url": "/crossborder-sg/",
+  "scope": "/crossborder-sg/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4faf9",
+  "theme_color": "#0d9488",
+  "categories": ["navigation", "travel", "utilities"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "maskable-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "SG to Johor",
+      "short_name": "To JB",
+      "url": "/crossborder-sg/?direction=sg-my"
+    },
+    {
+      "name": "Johor to SG",
+      "short_name": "To SG",
+      "url": "/crossborder-sg/?direction=my-sg"
+    }
+  ]
+}
