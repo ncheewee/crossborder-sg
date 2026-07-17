@@ -26,6 +26,7 @@ type ChartSeries = {
   nowIndex: number | null;
   windowLabel: string;
   insight: string;
+  errorLabel?: string;
 };
 
 type LiveCheckpoint = {
@@ -102,7 +103,8 @@ const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
       uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "amber", "good", "good", "good", "amber", "amber", "amber"],
       nowIndex: 3,
-      windowLabel: "Today 00:00–24:00",
+      windowLabel: "Today 00:00–23:59",
+      errorLabel: "Mock ±12 min band",
       insight: "Depart between 12:00–1:30 pm for the shortest predicted wait.",
     },
     Woodlands: {
@@ -112,7 +114,8 @@ const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
       uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "amber", "amber", "amber", "amber", "amber", "amber", "amber"],
       nowIndex: 3,
-      windowLabel: "Today 00:00–24:00",
+      windowLabel: "Today 00:00–23:59",
+      errorLabel: "Mock ±12 min band",
       insight: "Woodlands remains elevated; Tuas is the better departure choice now.",
     },
   },
@@ -124,7 +127,8 @@ const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
       uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "amber", "amber", "amber", "amber", "amber", "amber", "amber"],
       nowIndex: 3,
-      windowLabel: "Today 00:00–24:00",
+      windowLabel: "Today 00:00–23:59",
+      errorLabel: "Mock ±12 min band",
       insight: "Tuas is expected to stay moderate through the afternoon.",
     },
     Woodlands: {
@@ -134,7 +138,8 @@ const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
       uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "good", "good", "good", "good", "good", "amber", "amber"],
       nowIndex: 3,
-      windowLabel: "Today 00:00–24:00",
+      windowLabel: "Today 00:00–23:59",
+      errorLabel: "Mock ±12 min band",
       insight: "Depart between 11:30 am–2:00 pm while the predicted queue is lower.",
     },
   },
@@ -237,6 +242,13 @@ function crossingMidpoint(value: string) {
   const [low, high] = value.split("–").map((part) => Number.parseInt(part, 10));
   if (!Number.isFinite(low)) return 0;
   return Math.round((low + (Number.isFinite(high) ? high : low)) / 2);
+}
+
+function parseMinuteRange(value: string): [number, number] {
+  const [low, high] = value.split("–").map((part) => Number.parseInt(part, 10));
+  const safeLow = Number.isFinite(low) ? low : 0;
+  const safeHigh = Number.isFinite(high) ? high : safeLow;
+  return [safeLow, safeHigh];
 }
 
 function distanceKm(from: Coordinate, to: Coordinate) {
@@ -475,7 +487,7 @@ function WaitTimeChart({
 
     const draw = () => {
       const width = Math.max(280, container.clientWidth);
-      const height = width < 520 ? 178 : 230;
+      const height = width < 520 ? 218 : 250;
       const ratio = window.devicePixelRatio || 1;
       canvas.width = width * ratio;
       canvas.height = height * ratio;
@@ -496,7 +508,7 @@ function WaitTimeChart({
       const nowColor = styles.getPropertyValue("--teal-bright").trim();
       const bandFill = styles.getPropertyValue("--error-band").trim();
 
-      const padding = { top: 20, right: 12, bottom: 32, left: 34 };
+      const padding = { top: 22, right: 12, bottom: 34, left: 38 };
       const plotWidth = width - padding.left - padding.right;
       const plotHeight = height - padding.top - padding.bottom;
       const maxWait = Math.max(100, Math.ceil(Math.max(...selected.prediction.map((value, index) => (
@@ -587,9 +599,9 @@ function WaitTimeChart({
       };
 
       const drawLine = (values: Array<number | null>, color: string, dashed: boolean) => {
-        context.lineWidth = dashed ? 2 : 2.5;
+        context.lineWidth = dashed ? 3.2 : 2.8;
         context.strokeStyle = color;
-        context.setLineDash(dashed ? [6, 5] : []);
+        context.setLineDash([]);
         const points = curvePath(values);
         context.stroke();
         context.setLineDash([]);
@@ -597,7 +609,7 @@ function WaitTimeChart({
         points.forEach((point) => {
           context.beginPath();
           context.fillStyle = color;
-          context.arc(point.x, point.y, dashed ? 2.2 : 3, 0, Math.PI * 2);
+          context.arc(point.x, point.y, dashed ? 0 : 3, 0, Math.PI * 2);
           context.fill();
         });
       };
@@ -672,8 +684,8 @@ function WaitTimeChart({
         <div className="window-label">{selected.windowLabel}</div>
         <div className="chart-legend" aria-label="Chart legend">
           <span><i className="legend-line legend-actual" aria-hidden="true" /> Actual wait</span>
-          <span><i className="legend-line legend-ai" aria-hidden="true" /> AI prediction</span>
-          <span><i className="legend-zone legend-error" aria-hidden="true" /> Error band</span>
+          <span><i className="legend-line legend-ai" aria-hidden="true" /> Forecast curve</span>
+          <span><i className="legend-zone legend-error" aria-hidden="true" /> {selected.errorLabel ?? "Mock error band"}</span>
           <span><i className="legend-zone legend-good" aria-hidden="true" /> Good to depart</span>
           <span><i className="legend-zone legend-amber" aria-hidden="true" /> Less ideal</span>
         </div>
@@ -816,8 +828,10 @@ export default function Home() {
     ? data.border
     : `${Math.max(15, displayedMinutes - 7)}–${displayedMinutes + 9}`;
   const departureAt = data.departAt ? new Date(data.departAt) : new Date();
-  const displayedClearAt = roundUpToQuarter(new Date(departureAt.getTime() + displayedMinutes * 60000));
-  const displayedClearTime = formatTimeLabel(displayedClearAt.toISOString());
+  const [displayedLow, displayedHigh] = parseMinuteRange(displayedRange);
+  const clearRangeStart = roundUpToQuarter(new Date(departureAt.getTime() + displayedLow * 60000));
+  const clearRangeEnd = roundUpToQuarter(new Date(departureAt.getTime() + displayedHigh * 60000));
+  const displayedClearRange = `${formatTimeLabel(clearRangeStart.toISOString())}–${formatTimeLabel(clearRangeEnd.toISOString())}`;
   const approachBasis = estimateMode === "border"
     ? "Border crossing only"
     : approachSource === "gps" && userLocation
@@ -860,7 +874,11 @@ export default function Home() {
       const prediction = future.map((point, index) => index === nowIndex && forecastWindow === "current"
         ? current
         : point.predicted);
-      const uncertainty = future.map((point) => point.uncertaintyMinutes ?? liveTraffic.checkpoints[checkpoint].uncertainty?.minutes ?? 12);
+      const uncertainty = future.map((point) => (
+        liveTraffic.checkpoints[checkpoint].uncertainty?.isSevenDayReady
+          ? point.uncertaintyMinutes ?? liveTraffic.checkpoints[checkpoint].uncertainty?.minutes ?? 12
+          : 12
+      ));
       const low = Math.min(...future.map((point) => point.predicted));
       const windows = future.slice(0, -1).map((point) => (
         point.predicted <= low + 4 ? "good" as const : "amber" as const
@@ -875,6 +893,9 @@ export default function Home() {
         windows,
         nowIndex,
         windowLabel: formatDayWindow(future[0]?.timestamp),
+        errorLabel: liveTraffic.checkpoints[checkpoint].uncertainty?.isSevenDayReady
+          ? liveTraffic.checkpoints[checkpoint].uncertainty?.label
+          : "Mock ±12 min error zone",
         insight: best
           ? `The lowest ${checkpoint} estimate in the ${label} is ${best.predicted} minutes around ${best.time}.`
           : `The current ${checkpoint} estimate is ${current} minutes.`,
@@ -1018,28 +1039,31 @@ export default function Home() {
           <span><i aria-hidden="true" /> {feedState === "live" ? "Live recommendation" : "Baseline recommendation"}</span>
           <span>{feedState === "live" ? "Official data checked" : "Last check attempted"} {lastChecked}</span>
         </div>
-        <div className="recommendation-layout">
-          <div className="recommendation-answer">
-            <p className="recommendation-kicker">Best time to depart</p>
-            <h1 id="recommendation-title">{data.depart}</h1>
-            <p className="recommendation-route">via <strong>{data.route}</strong></p>
-            <p className="clearance-line">
-              Expected to clear {data.clearDestination ?? "the border"} around <strong>{displayedClearTime}</strong>
-              <span> · {approachBasis}</span>
-            </p>
-            <div className="answer-metrics">
-              <span><strong>{data.border} min</strong> border crossing only</span>
-              <span><strong>{approachMinutes} min</strong> {approachSource === "gps" && userLocation ? "estimated from GPS" : approachSource === "address" && addressLocation ? `from ${addressLocation.label}` : "approach estimate"}</span>
-              <span><strong>{displayedRange} min</strong> {estimateMode === "border" ? "shown in border-only mode" : "shown incl. approach"}</span>
-              <span><strong>Save {data.saving} min</strong> vs the other checkpoint</span>
-            </div>
+        <div className="recommendation-answer">
+          <p className="recommendation-kicker">What to do</p>
+          <h1 id="recommendation-title">{data.depart}</h1>
+          <p className="recommendation-route">Use <strong>{data.route}</strong></p>
+        </div>
+
+        <div className="decision-stack" aria-label="Crossing recommendation summary">
+          <div className="decision-card primary">
+            <span>Leave</span>
+            <strong>{data.depart.replace("Leave ", "")}</strong>
           </div>
-          <CameraCarousel
-            cameras={recommendedCameras}
-            title={`${recommendedCameraName} official cameras`}
-            fallbackImage={data.route === "Tuas" ? "tuas.jpg" : "woodlands.jpg"}
-            auto
-          />
+          <div className="decision-card">
+            <span>Checkpoint</span>
+            <strong>{data.route}</strong>
+          </div>
+          <div className="decision-card">
+            <span>Clear {data.clearDestination ?? "border"}</span>
+            <strong>{displayedClearRange}</strong>
+          </div>
+        </div>
+
+        <div className="big-range-card">
+          <span>{estimateMode === "border" ? "Border crossing estimate" : "Total estimate incl. approach"}</span>
+          <strong>{displayedRange} min</strong>
+          <em>{approachBasis}</em>
         </div>
 
         <div className="reason-row">
@@ -1106,6 +1130,22 @@ export default function Home() {
             </div>
           )}
         </div>
+      </section>
+
+      <section className="camera-section" aria-labelledby="camera-title">
+        <div className="section-heading">
+          <div>
+            <p className="section-kicker">Live view</p>
+            <h2 id="camera-title">{recommendedCameraName}</h2>
+          </div>
+          <span className="updated-badge">Auto carousel</span>
+        </div>
+        <CameraCarousel
+          cameras={recommendedCameras}
+          title={`${recommendedCameraName} official cameras`}
+          fallbackImage={data.route === "Tuas" ? "tuas.jpg" : "woodlands.jpg"}
+          auto
+        />
       </section>
 
       <WaitTimeChart
