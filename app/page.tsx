@@ -449,6 +449,18 @@ function toneFromTrend(label: string, fallback: string) {
   return fallback || "neutral";
 }
 
+function trafficSignalTone(minutes: number, trend: string) {
+  const slowing = trend.toLowerCase().includes("slow");
+  const easing = trend.toLowerCase().includes("eas");
+  if (minutes >= 70 && slowing) return "bad";
+  if (minutes >= 75) return "bad";
+  if (minutes <= 45 && !slowing) return "good";
+  if (minutes <= 45 && slowing) return "warn";
+  if (easing && minutes <= 65) return "good";
+  if (slowing || minutes >= 58) return "warn";
+  return "good";
+}
+
 function compactCheckpointData(
   traffic: LiveTraffic | undefined,
   direction: Direction,
@@ -469,10 +481,10 @@ function compactCheckpointData(
 
 function sparklinePoints(
   trafficByDirection: TrafficByDirection,
+  direction: Direction,
   checkpoint: Checkpoint,
 ): SparkPoint[] {
-  const livePoints = trafficByDirection["sg-my"]?.forecasts[checkpoint]
-    ?? trafficByDirection["my-sg"]?.forecasts[checkpoint];
+  const livePoints = trafficByDirection[direction]?.forecasts[checkpoint];
   if (livePoints?.length) {
     return livePoints.slice(0, 49).map((point) => ({
       timestamp: point.timestamp,
@@ -481,7 +493,7 @@ function sparklinePoints(
     }));
   }
 
-  const fallback = chartSeries["sg-my"][checkpoint];
+  const fallback = chartSeries[direction][checkpoint];
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   return fallback.prediction.map((predicted, index) => ({
@@ -508,8 +520,8 @@ function Sparkline24h({
     if (!canvas || !container || !points.length) return;
 
     const draw = () => {
-      const width = Math.max(118, container.clientWidth);
-      const height = 94;
+      const width = Math.max(180, container.clientWidth);
+      const height = Math.max(74, container.clientHeight || 82);
       const ratio = window.devicePixelRatio || 1;
       canvas.width = width * ratio;
       canvas.height = height * ratio;
@@ -527,9 +539,8 @@ function Sparkline24h({
       const amber = styles.getPropertyValue("--amber-zone").trim();
       const good = styles.getPropertyValue("--good-zone").trim();
       const grid = styles.getPropertyValue("--chart-grid").trim();
-      const muted = styles.getPropertyValue("--muted").trim();
 
-      const padding = { top: 12, right: 8, bottom: 17, left: 8 };
+      const padding = { top: 13, right: 10, bottom: 12, left: 10 };
       const plotWidth = width - padding.left - padding.right;
       const plotHeight = height - padding.top - padding.bottom;
       const maxWait = Math.max(80, Math.ceil(Math.max(...points.map((point) => point.predicted), current) / 20) * 20);
@@ -580,23 +591,36 @@ function Sparkline24h({
       context.stroke();
 
       const nowX = padding.left + nowRatio * plotWidth;
+      const nearest = plotted.reduce((closest, point) => {
+        const distance = Math.abs(point.x - nowX);
+        return distance < closest.distance ? { point, distance } : closest;
+      }, { point: plotted[0], distance: Number.POSITIVE_INFINITY });
       context.beginPath();
-      context.strokeStyle = nowColor;
-      context.lineWidth = 2;
+      context.strokeStyle = "rgba(15, 118, 110, 0.44)";
+      context.lineWidth = 1.4;
       context.moveTo(nowX, padding.top - 4);
       context.lineTo(nowX, padding.top + plotHeight + 4);
       context.stroke();
+      if (nearest.point) {
+        context.save();
+        context.shadowColor = "rgba(20, 184, 166, 0.95)";
+        context.shadowBlur = 13;
+        context.beginPath();
+        context.fillStyle = nowColor;
+        context.arc(nowX, nearest.point.y, 5.8, 0, Math.PI * 2);
+        context.fill();
+        context.shadowBlur = 0;
+        context.beginPath();
+        context.fillStyle = "#ffffff";
+        context.arc(nowX, nearest.point.y, 2.2, 0, Math.PI * 2);
+        context.fill();
+        context.restore();
+      }
       context.fillStyle = nowColor;
       context.font = "800 9px Arial, sans-serif";
       context.textAlign = "center";
       context.textBaseline = "bottom";
       context.fillText("NOW", nowX, padding.top - 5);
-
-      context.fillStyle = muted;
-      context.font = "700 9px Arial, sans-serif";
-      context.textAlign = "left";
-      context.textBaseline = "top";
-      context.fillText("24h", padding.left, padding.top + plotHeight + 6);
     };
 
     draw();
@@ -624,40 +648,44 @@ function LandingCheckpointCard({
   const cameraTraffic = trafficByDirection["sg-my"] ?? trafficByDirection["my-sg"] ?? null;
   const fallbackImage = checkpoint === "Tuas" ? "tuas.jpg" : "woodlands.jpg";
   const cameras = camerasForCheckpoint(cameraTraffic, checkpoint, fallbackImage);
-  const points = sparklinePoints(trafficByDirection, checkpoint);
-  const overallTone = sgMy.waitMinutes <= mySg.waitMinutes ? sgMy.trendTone : mySg.trendTone;
+  const sgMyPoints = sparklinePoints(trafficByDirection, "sg-my", checkpoint);
+  const mySgPoints = sparklinePoints(trafficByDirection, "my-sg", checkpoint);
+  const sgMyTone = trafficSignalTone(sgMy.waitMinutes, sgMy.trend);
+  const mySgTone = trafficSignalTone(mySg.waitMinutes, mySg.trend);
 
   return (
     <article className="landing-checkpoint-card">
       <div className="landing-card-top">
         <div>
-          <p>{checkpoint === "Woodlands" ? "Woodlands Causeway" : "Tuas Second Link"}</p>
           <h1>{checkpoint}</h1>
         </div>
-        <span className={`trend trend-${overallTone}`}>
-          <span className="trend-dot" aria-hidden="true" />
-          Live estimate
-        </span>
       </div>
 
       <div className="landing-card-body">
-        <div className="duration-stack">
+        <div className="direction-signal-row">
           <div className="duration-row">
             <span>Towards JB</span>
             <strong>{sgMy.crossing} <em>min</em></strong>
-            <small className={`trend-text trend-text-${sgMy.trendTone}`}>{sgMy.trend}</small>
+            <small className={`trend-chip trend-chip-${sgMyTone}`}>{sgMy.trend}</small>
           </div>
+          <Sparkline24h
+            points={sgMyPoints}
+            current={sgMy.waitMinutes}
+            label={`${checkpoint} 24-hour forecast towards Johor with current time marker`}
+          />
+        </div>
+        <div className="direction-signal-row">
           <div className="duration-row">
             <span>Towards SG</span>
             <strong>{mySg.crossing} <em>min</em></strong>
-            <small className={`trend-text trend-text-${mySg.trendTone}`}>{mySg.trend}</small>
+            <small className={`trend-chip trend-chip-${mySgTone}`}>{mySg.trend}</small>
           </div>
+          <Sparkline24h
+            points={mySgPoints}
+            current={mySg.waitMinutes}
+            label={`${checkpoint} 24-hour forecast towards Singapore with current time marker`}
+          />
         </div>
-        <Sparkline24h
-          points={points}
-          current={Math.min(sgMy.waitMinutes, mySg.waitMinutes)}
-          label={`${checkpoint} 24-hour forecast with current time marker`}
-        />
       </div>
 
       <CameraCarousel
@@ -1291,26 +1319,14 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
-          <small>Pull down to refresh</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
         </a>
       </header>
 
-      <section className="landing-intro" id="top" aria-labelledby="landing-title">
-        <div>
-          <p className="section-kicker">Compare checkpoints</p>
-          <h2 id="landing-title">Pick your crossing at a glance.</h2>
-        </div>
-        <span className="updated-badge">
-          {feedState === "loading" ? "Checking feed" : feedState === "live" ? "Official feed live" : "Baseline active"}
-        </span>
-      </section>
-
-      <section className="landing-card-stack" aria-label="Checkpoint comparison">
+      <section className="landing-card-stack single-card" id="top" aria-label="Woodlands checkpoint">
         <LandingCheckpointCard checkpoint="Woodlands" trafficByDirection={trafficByDirection} />
-        <LandingCheckpointCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
       </section>
 
       <footer>
