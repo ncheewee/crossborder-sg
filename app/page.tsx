@@ -93,6 +93,8 @@ type LiveTraffic = {
 };
 
 type FeedbackStatus = "idle" | "saving" | "saved" | "error";
+type TrafficByDirection = Partial<Record<Direction, LiveTraffic>>;
+type SparkPoint = { timestamp: string; predicted: number; zone?: "good" | "amber" };
 
 const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
   "sg-my": {
@@ -432,6 +434,243 @@ function CameraCarousel({
   );
 }
 
+function normalizeTrend(label: string) {
+  const lower = label.toLowerCase();
+  if (lower.includes("eas") || lower.includes("fast") || lower.includes("clear")) return "Easing";
+  if (lower.includes("build") || lower.includes("slow") || lower.includes("rising")) return "Slowing";
+  if (lower.includes("steady") || lower.includes("hold")) return "Steady";
+  return label.replace(/^Queue\s+/i, "");
+}
+
+function toneFromTrend(label: string, fallback: string) {
+  const lower = label.toLowerCase();
+  if (lower.includes("eas") || lower.includes("fast") || lower.includes("clear")) return "good";
+  if (lower.includes("build") || lower.includes("slow") || lower.includes("rising")) return "warn";
+  return fallback || "neutral";
+}
+
+function compactCheckpointData(
+  traffic: LiveTraffic | undefined,
+  direction: Direction,
+  checkpoint: Checkpoint,
+) {
+  const fallback = checkpoint === "Tuas"
+    ? tripData[direction].tuas
+    : tripData[direction].woodlands;
+  const live = traffic?.checkpoints[checkpoint];
+  const trendLabel = live?.trend.label ?? fallback.trend;
+  return {
+    crossing: live ? `${live.crossingRange[0]}–${live.crossingRange[1]}` : fallback.crossing,
+    waitMinutes: live?.waitMinutes ?? crossingMidpoint(fallback.crossing),
+    trend: normalizeTrend(trendLabel),
+    trendTone: toneFromTrend(trendLabel, live?.trend.tone ?? fallback.trendTone),
+  };
+}
+
+function sparklinePoints(
+  trafficByDirection: TrafficByDirection,
+  checkpoint: Checkpoint,
+): SparkPoint[] {
+  const livePoints = trafficByDirection["sg-my"]?.forecasts[checkpoint]
+    ?? trafficByDirection["my-sg"]?.forecasts[checkpoint];
+  if (livePoints?.length) {
+    return livePoints.slice(0, 49).map((point) => ({
+      timestamp: point.timestamp,
+      predicted: point.predicted,
+      zone: point.zone,
+    }));
+  }
+
+  const fallback = chartSeries["sg-my"][checkpoint];
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  return fallback.prediction.map((predicted, index) => ({
+    timestamp: new Date(start.getTime() + index * 3 * 60 * 60 * 1000).toISOString(),
+    predicted: predicted ?? 50,
+    zone: fallback.windows[Math.min(index, fallback.windows.length - 1)] ?? "amber",
+  }));
+}
+
+function Sparkline24h({
+  points,
+  current,
+  label,
+}: {
+  points: SparkPoint[];
+  current: number;
+  label: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = canvas?.parentElement;
+    if (!canvas || !container || !points.length) return;
+
+    const draw = () => {
+      const width = Math.max(118, container.clientWidth);
+      const height = 94;
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = width * ratio;
+      canvas.height = height * ratio;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.scale(ratio, ratio);
+      context.clearRect(0, 0, width, height);
+
+      const styles = getComputedStyle(document.documentElement);
+      const teal = styles.getPropertyValue("--teal").trim();
+      const nowColor = styles.getPropertyValue("--teal-bright").trim();
+      const amber = styles.getPropertyValue("--amber-zone").trim();
+      const good = styles.getPropertyValue("--good-zone").trim();
+      const grid = styles.getPropertyValue("--chart-grid").trim();
+      const muted = styles.getPropertyValue("--muted").trim();
+
+      const padding = { top: 12, right: 8, bottom: 17, left: 8 };
+      const plotWidth = width - padding.left - padding.right;
+      const plotHeight = height - padding.top - padding.bottom;
+      const maxWait = Math.max(80, Math.ceil(Math.max(...points.map((point) => point.predicted), current) / 20) * 20);
+      const dayStart = new Date(points[0].timestamp);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setHours(23, 59, 59, 999);
+      const dayMs = dayEnd.getTime() - dayStart.getTime();
+      const nowTime = Date.now();
+      const nowRatio = Math.min(1, Math.max(0, (nowTime - dayStart.getTime()) / dayMs));
+
+      const x = (timestamp: string) => {
+        const ratioX = Math.min(1, Math.max(0, (new Date(timestamp).getTime() - dayStart.getTime()) / dayMs));
+        return padding.left + ratioX * plotWidth;
+      };
+      const y = (value: number) => padding.top + plotHeight - (value / maxWait) * plotHeight;
+
+      points.slice(0, -1).forEach((point, index) => {
+        const next = points[index + 1];
+        context.fillStyle = point.zone === "good" ? good : amber;
+        context.fillRect(x(point.timestamp), padding.top, Math.max(1, x(next.timestamp) - x(point.timestamp)), plotHeight);
+      });
+
+      context.strokeStyle = grid;
+      context.lineWidth = 1;
+      [0, 0.5, 1].forEach((ratioLine) => {
+        const lineY = padding.top + ratioLine * plotHeight;
+        context.beginPath();
+        context.moveTo(padding.left, lineY);
+        context.lineTo(width - padding.right, lineY);
+        context.stroke();
+      });
+
+      const plotted = points.map((point) => ({ x: x(point.timestamp), y: y(point.predicted) }));
+      context.beginPath();
+      plotted.forEach((point, index) => {
+        if (index === 0) {
+          context.moveTo(point.x, point.y);
+          return;
+        }
+        const previous = plotted[index - 1];
+        const control = (point.x - previous.x) / 2;
+        context.bezierCurveTo(previous.x + control, previous.y, point.x - control, point.y, point.x, point.y);
+      });
+      context.strokeStyle = teal;
+      context.lineWidth = 3.2;
+      context.lineCap = "round";
+      context.stroke();
+
+      const nowX = padding.left + nowRatio * plotWidth;
+      context.beginPath();
+      context.strokeStyle = nowColor;
+      context.lineWidth = 2;
+      context.moveTo(nowX, padding.top - 4);
+      context.lineTo(nowX, padding.top + plotHeight + 4);
+      context.stroke();
+      context.fillStyle = nowColor;
+      context.font = "800 9px Arial, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "bottom";
+      context.fillText("NOW", nowX, padding.top - 5);
+
+      context.fillStyle = muted;
+      context.font = "700 9px Arial, sans-serif";
+      context.textAlign = "left";
+      context.textBaseline = "top";
+      context.fillText("24h", padding.left, padding.top + plotHeight + 6);
+    };
+
+    draw();
+    const observer = new ResizeObserver(draw);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [current, points]);
+
+  return (
+    <div className="sparkline-card">
+      <canvas ref={canvasRef} role="img" aria-label={label} />
+    </div>
+  );
+}
+
+function LandingCheckpointCard({
+  checkpoint,
+  trafficByDirection,
+}: {
+  checkpoint: Checkpoint;
+  trafficByDirection: TrafficByDirection;
+}) {
+  const sgMy = compactCheckpointData(trafficByDirection["sg-my"], "sg-my", checkpoint);
+  const mySg = compactCheckpointData(trafficByDirection["my-sg"], "my-sg", checkpoint);
+  const cameraTraffic = trafficByDirection["sg-my"] ?? trafficByDirection["my-sg"] ?? null;
+  const fallbackImage = checkpoint === "Tuas" ? "tuas.jpg" : "woodlands.jpg";
+  const cameras = camerasForCheckpoint(cameraTraffic, checkpoint, fallbackImage);
+  const points = sparklinePoints(trafficByDirection, checkpoint);
+  const overallTone = sgMy.waitMinutes <= mySg.waitMinutes ? sgMy.trendTone : mySg.trendTone;
+
+  return (
+    <article className="landing-checkpoint-card">
+      <div className="landing-card-top">
+        <div>
+          <p>{checkpoint === "Woodlands" ? "Woodlands Causeway" : "Tuas Second Link"}</p>
+          <h1>{checkpoint}</h1>
+        </div>
+        <span className={`trend trend-${overallTone}`}>
+          <span className="trend-dot" aria-hidden="true" />
+          Live estimate
+        </span>
+      </div>
+
+      <div className="landing-card-body">
+        <div className="duration-stack">
+          <div className="duration-row">
+            <span>Towards JB</span>
+            <strong>{sgMy.crossing} <em>min</em></strong>
+            <small className={`trend-text trend-text-${sgMy.trendTone}`}>{sgMy.trend}</small>
+          </div>
+          <div className="duration-row">
+            <span>Towards SG</span>
+            <strong>{mySg.crossing} <em>min</em></strong>
+            <small className={`trend-text trend-text-${mySg.trendTone}`}>{mySg.trend}</small>
+          </div>
+        </div>
+        <Sparkline24h
+          points={points}
+          current={Math.min(sgMy.waitMinutes, mySg.waitMinutes)}
+          label={`${checkpoint} 24-hour forecast with current time marker`}
+        />
+      </div>
+
+      <CameraCarousel
+        cameras={cameras}
+        title={`${checkpoint} official cameras`}
+        fallbackImage={fallbackImage}
+        compact
+        auto
+      />
+    </article>
+  );
+}
+
 function CheckpointCard({
   name,
   recommended,
@@ -725,6 +964,7 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastChecked, setLastChecked] = useState("12:29 pm");
   const [liveTraffic, setLiveTraffic] = useState<LiveTraffic | null>(null);
+  const [trafficByDirection, setTrafficByDirection] = useState<TrafficByDirection>({});
   const [feedState, setFeedState] = useState<"loading" | "live" | "fallback">("loading");
   const [feedbackCheckpoint, setFeedbackCheckpoint] = useState<Checkpoint>("Tuas");
   const [actualWaitMinutes, setActualWaitMinutes] = useState(45);
@@ -743,19 +983,26 @@ export default function Home() {
   const loadTraffic = useCallback(async () => {
     setRefreshing(true);
     try {
-      const response = await fetch(`${apiBase()}/api/traffic?direction=${direction}`, {
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error(`Traffic API returned ${response.status}`);
-      const payload = await response.json() as LiveTraffic;
-      setLiveTraffic(payload);
+      const directions: Direction[] = ["sg-my", "my-sg"];
+      const responses = await Promise.all(directions.map(async (travelDirection) => {
+        const response = await fetch(`${apiBase()}/api/traffic?direction=${travelDirection}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`Traffic API returned ${response.status}`);
+        return [travelDirection, await response.json() as LiveTraffic] as const;
+      }));
+      const nextTraffic = Object.fromEntries(responses) as TrafficByDirection;
+      const primary = nextTraffic[direction] ?? nextTraffic["sg-my"] ?? nextTraffic["my-sg"] ?? null;
+      setTrafficByDirection(nextTraffic);
+      setLiveTraffic(primary);
       setFeedState("live");
       setLastChecked(new Intl.DateTimeFormat("en-SG", {
         hour: "numeric",
         minute: "2-digit",
-      }).format(new Date(payload.generatedAt)));
+      }).format(new Date(primary?.generatedAt ?? Date.now())));
     } catch {
       setLiveTraffic(null);
+      setTrafficByDirection({});
       setFeedState("fallback");
       setLastChecked(new Intl.DateTimeFormat("en-SG", {
         hour: "numeric",
@@ -1040,7 +1287,7 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+    <main className="app-shell landing-shell" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
@@ -1051,289 +1298,24 @@ export default function Home() {
         </a>
       </header>
 
-      <section className="controls" id="top">
-        <div className="direction-tabs" aria-label="Travel direction">
-          <button
-            className={direction === "sg-my" ? "active" : ""}
-            onClick={() => setDirection("sg-my")}
-          >
-            Singapore <span>→</span> Johor
-          </button>
-          <button
-            className={direction === "my-sg" ? "active" : ""}
-            onClick={() => setDirection("my-sg")}
-          >
-            Johor <span>→</span> Singapore
-          </button>
-        </div>
-      </section>
-
-      <section className="recommendation-panel" aria-labelledby="recommendation-title">
-        <div className="recommendation-head">
-          <p className="recommendation-kicker">What to do</p>
-          <div className="route-toggle" aria-label="Choose checkpoint">
-            {(["Woodlands", "Tuas"] as Checkpoint[]).map((checkpoint) => (
-              <button
-                key={checkpoint}
-                className={selectedRoute === checkpoint ? "active" : ""}
-                onClick={() => setRouteChoice(checkpoint)}
-                aria-pressed={selectedRoute === checkpoint}
-              >
-                {checkpoint}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="departure-actions" aria-label="Choose departure time">
-          <button
-            className={selectedDeparture === "now" ? "active" : ""}
-            onClick={() => setSelectedDeparture("now")}
-            aria-pressed={selectedDeparture === "now"}
-          >
-            {recommendedDeparture === "now" && <span className="recommend-chip">Recommended</span>}
-            <strong>Leave now</strong>
-            <small>{nowDurationRange} min</small>
-          </button>
-          <button
-            className={selectedDeparture === "later" ? "active" : ""}
-            onClick={() => setSelectedDeparture("later")}
-            aria-pressed={selectedDeparture === "later"}
-          >
-            {recommendedDeparture === "later" && <span className="recommend-chip">Recommended</span>}
-            <strong>Leave at {formatTimeLabel(laterDepartAt.toISOString())}</strong>
-            <small>{laterDurationRange} min</small>
-          </button>
-        </div>
-
-        <div className="eta-card">
-          <span>Expected to clear {data.clearDestination ?? "border"}</span>
-          <strong>{selectedDeparture === "now" ? displayedClearRange : laterClearRange}</strong>
-          <em>{selectedRoute} · {approachBasis}</em>
-        </div>
-
-        <div className="reason-row">
-          <span className="spark" aria-hidden="true">✦</span>
-          <p>{selectedRoute === data.route ? data.reason : `${selectedRoute} selected. Estimates below use that checkpoint instead of the fastest route.`}</p>
-        </div>
-        <div className="estimate-panel" aria-label="Estimate mode">
-          <div className="estimate-toggle">
-            <button
-              className={estimateMode === "border" ? "active" : ""}
-              onClick={() => setEstimateMode("border")}
-              aria-pressed={estimateMode === "border"}
-            >
-              Border only
-            </button>
-            <button
-              className={estimateMode === "approach" ? "active" : ""}
-              onClick={() => setEstimateMode("approach")}
-              aria-pressed={estimateMode === "approach"}
-            >
-              Include approach
-            </button>
-          </div>
-          {estimateMode === "approach" && (
-            <div className="approach-tools">
-              <button
-                className={approachSource === "gps" ? "active" : ""}
-                onClick={detectLocation}
-              >
-                {locationStatus === "detecting" ? "Detecting…" : "Use current location"}
-              </button>
-              <label>
-                <span>Address / postal code</span>
-                <input
-                  value={locationInput}
-                  onChange={(event) => {
-                    setLocationInput(event.target.value);
-                    setApproachSource("address");
-                    setLocationStatus("idle");
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") estimateAddressLocation();
-                  }}
-                  placeholder="e.g. 238863 or Orchard Road"
-                />
-              </label>
-              <button
-                className={approachSource === "address" && Boolean(addressLocation) ? "active" : ""}
-                onClick={estimateAddressLocation}
-              >
-                Estimate from input
-              </button>
-              <small>
-                {locationStatus === "ready"
-                  ? "GPS estimate active for the approach leg."
-                  : locationStatus === "denied"
-                    ? "Location not available; using fixed approach estimate."
-                    : locationStatus === "estimated" && addressLocation
-                      ? `${addressLocation.label} is active. This is an approximate ${addressLocation.precision} drive-time estimate.`
-                      : locationStatus === "not-found"
-                        ? "Couldn’t match that yet. Try a 6-digit Singapore postal code or a major area like Orchard, Jurong, Woodlands, Tampines."
-                      : "Choose GPS or enter a start point to make approach time explicit."}
-              </small>
-            </div>
-          )}
-          <div className="approach-summary">
-            <span>{estimateMode === "border" ? "Approach not included" : activeLocationLabel}</span>
-            <strong>ETA to {data.clearDestination ?? "destination"}: {selectedEtaRange}</strong>
-          </div>
-        </div>
-      </section>
-
-      <WaitTimeChart
-        series={liveSeries}
-      />
-
-      <section className="camera-section" aria-labelledby="camera-title">
-        <div className="section-heading">
-          <div>
-            <p className="section-kicker">Live view</p>
-            <h2 id="camera-title">{recommendedCameraName}</h2>
-          </div>
-          <span className="updated-badge">Auto carousel</span>
-        </div>
-        <CameraCarousel
-          cameras={recommendedCameras}
-          title={`${recommendedCameraName} official cameras`}
-          fallbackImage={selectedRoute === "Tuas" ? "tuas.jpg" : "woodlands.jpg"}
-          auto
-        />
-      </section>
-
-      <section className="checkpoint-section" aria-labelledby="compare-title">
-        <div className="section-heading">
-          <div>
-            <p className="section-kicker">Your two options</p>
-            <h2 id="compare-title">Compare checkpoints</h2>
-          </div>
-          <span className="updated-badge">
-            {feedState === "loading" ? "Checking official feed" : feedState === "live" ? "Official feed live" : "Baseline active"}
-          </span>
-        </div>
-
-        <div className="checkpoint-grid">
-          {cards
-            .sort((a, b) => Number(b.name === data.route) - Number(a.name === data.route))
-            .map((card) => (
-              <CheckpointCard
-                key={`${direction}-${card.name}`}
-                {...card}
-                recommended={card.name === selectedRoute}
-              />
-            ))}
-        </div>
-      </section>
-
-      <section className="method-card">
-        <div className="method-icon" aria-hidden="true">✦</div>
+      <section className="landing-intro" id="top" aria-labelledby="landing-title">
         <div>
-          <h2>How we reached this recommendation</h2>
-          <p>
-            {liveTraffic?.model.description ?? "A time-of-week baseline remains active while the official feed reconnects."}
-          </p>
-          <button
-            onClick={() => setShowSignals((value) => !value)}
-            aria-expanded={showSignals}
-          >
-            {showSignals ? "Hide signals" : "See the signals"} <span aria-hidden="true">→</span>
-          </button>
-          {showSignals && (
-            <div className="signals-panel">
-              <div>
-                <span>Official source</span>
-                <strong>{liveTraffic?.source.status ?? "fallback"}</strong>
-              </div>
-              <div>
-                <span>Camera updated</span>
-                <strong>{liveTraffic ? formatTimeLabel(liveTraffic.source.officialUpdatedAt) : "—"}</strong>
-              </div>
-              <div>
-                <span>Recommendation route</span>
-                <strong>{data.route}</strong>
-              </div>
-              <div>
-                <span>Approach basis</span>
-                <strong>{approachBasis}</strong>
-              </div>
-              <div>
-                <span>Uncertainty band</span>
-                <strong>{liveTraffic?.checkpoints[data.route as Checkpoint].uncertainty?.label ?? "Collecting 7-day data"}</strong>
-              </div>
-              <div>
-                <span>Model status</span>
-                <strong>{liveTraffic?.model.status ?? "baseline"}</strong>
-              </div>
-              <div>
-                <span>Driver reports</span>
-                <strong>
-                  {liveTraffic
-                    ? liveTraffic.checkpoints[data.route as Checkpoint].travelerReports.count24h
-                    : 0} in 24h
-                </strong>
-              </div>
-            </div>
-          )}
+          <p className="section-kicker">Compare checkpoints</p>
+          <h2 id="landing-title">Pick your crossing at a glance.</h2>
         </div>
+        <span className="updated-badge">
+          {feedState === "loading" ? "Checking feed" : feedState === "live" ? "Official feed live" : "Baseline active"}
+        </span>
       </section>
 
-      <section className="feedback-card">
-        <div>
-          <span className="feedback-kicker">Help improve estimates</span>
-          <h2>Crossed recently?</h2>
-          <p>
-            {feedbackStatus === "saved"
-              ? "Report saved. Future estimates get sharper as these build up."
-              : feedbackStatus === "error"
-                ? "Couldn’t save that report. Try again after the next refresh."
-                : "Share your actual crossing time in two taps."}
-          </p>
-        </div>
-        <div className="feedback-controls">
-          <div className="mini-tabs" aria-label="Checkpoint crossed">
-            {(["Tuas", "Woodlands"] as Checkpoint[]).map((checkpoint) => (
-              <button
-                key={checkpoint}
-                className={feedbackCheckpoint === checkpoint ? "active" : ""}
-                onClick={() => {
-                  setFeedbackCheckpoint(checkpoint);
-                  setFeedbackStatus("idle");
-                }}
-                aria-pressed={feedbackCheckpoint === checkpoint}
-              >
-                {checkpoint}
-              </button>
-            ))}
-          </div>
-          <div className="wait-chips" aria-label="Actual crossing time">
-            {[20, 35, 50, 75, 100].map((minutes) => (
-              <button
-                key={minutes}
-                className={actualWaitMinutes === minutes ? "active" : ""}
-                onClick={() => {
-                  setActualWaitMinutes(minutes);
-                  setFeedbackStatus("idle");
-                }}
-                aria-pressed={actualWaitMinutes === minutes}
-              >
-                {minutes}m
-              </button>
-            ))}
-          </div>
-          <button
-            className="submit-feedback"
-            onClick={submitFeedback}
-            disabled={feedbackStatus === "saving"}
-          >
-            {feedbackStatus === "saving" ? "Saving" : "I’ve crossed"}
-          </button>
-        </div>
+      <section className="landing-card-stack" aria-label="Checkpoint comparison">
+        <LandingCheckpointCard checkpoint="Woodlands" trafficByDirection={trafficByDirection} />
+        <LandingCheckpointCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
       </section>
 
       <footer>
         <span>CrossBorder.sg preview</span>
-        <span>Codex build · Live beta 0.5</span>
+        <span>Codex build · Live beta 0.6</span>
       </footer>
     </main>
   );
