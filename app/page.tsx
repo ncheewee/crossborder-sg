@@ -1,11 +1,63 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
 
-const chartSeries = {
+type ChartSeries = {
+  times: string[];
+  actual: Array<number | null>;
+  prediction: Array<number | null>;
+  windows: Array<"good" | "amber">;
+  insight: string;
+};
+
+type LiveCheckpoint = {
+  imageUrl: string;
+  cameraUpdatedAt: string;
+  crossingRange: [number, number];
+  waitMinutes: number;
+  driveMinutes: number;
+  condition: string;
+  trend: { label: string; tone: string };
+  accuracy: {
+    sampleSize: number;
+    meanAbsoluteErrorMinutes: number | null;
+    label: string;
+  };
+  history: Array<{ timestamp: string; observed: number }>;
+};
+
+type LiveTraffic = {
+  generatedAt: string;
+  source: {
+    name: string;
+    status: string;
+    officialUpdatedAt: string;
+    updateFrequency: string;
+  };
+  model: { name: string; status: string; description: string };
+  recommendation: {
+    action: "go" | "wait";
+    depart: string;
+    route: Checkpoint;
+    totalRange: [number, number];
+    savingMinutes: number;
+    reason: string;
+    confidenceLabel: string;
+  };
+  checkpoints: Record<Checkpoint, LiveCheckpoint>;
+  forecasts: Record<Checkpoint, Array<{
+    time: string;
+    timestamp: string;
+    predicted: number;
+    observed: number | null;
+    zone: "good" | "amber";
+  }>>;
+};
+
+const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
   "sg-my": {
     Tuas: {
       times: ["11:00", "11:30", "12:00", "12:30", "1:00", "1:30", "2:00", "2:30", "3:00"],
@@ -156,14 +208,22 @@ function CheckpointCard({
   );
 }
 
-function WaitTimeChart({ direction, recommended }: { direction: Direction; recommended: Checkpoint }) {
+function WaitTimeChart({
+  recommended,
+  series,
+  accuracy,
+}: {
+  recommended: Checkpoint;
+  series: Record<Checkpoint, ChartSeries>;
+  accuracy?: Record<Checkpoint, LiveCheckpoint["accuracy"]>;
+}) {
   const [checkpoint, setCheckpoint] = useState<Checkpoint>(recommended);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const selected = chartSeries[direction][checkpoint];
+  const selected = series[checkpoint];
 
   useEffect(() => {
     setCheckpoint(recommended);
-  }, [direction, recommended]);
+  }, [recommended]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -261,7 +321,11 @@ function WaitTimeChart({ direction, recommended }: { direction: Direction; recom
       drawLine(selected.prediction, predictionColor, true);
       drawLine(selected.actual, actualColor, false);
 
-      const nowX = x(3);
+      const currentIndex = Math.max(0, selected.actual.reduce(
+        (last, value, index) => value === null ? last : index,
+        0,
+      ));
+      const nowX = x(currentIndex);
       context.beginPath();
       context.strokeStyle = nowColor;
       context.lineWidth = 1;
@@ -321,7 +385,13 @@ function WaitTimeChart({ direction, recommended }: { direction: Direction; recom
         </div>
         <div className="chart-insight">
           <span aria-hidden="true">✦</span>
-          <p>{selected.insight}</p>
+          <p>
+            {selected.insight}
+            {accuracy?.[checkpoint]?.meanAbsoluteErrorMinutes !== null &&
+              accuracy?.[checkpoint]?.meanAbsoluteErrorMinutes !== undefined
+              ? ` Typical 30-minute error: ±${accuracy[checkpoint].meanAbsoluteErrorMinutes} min across ${accuracy[checkpoint].sampleSize} samples.`
+              : ` ${accuracy?.[checkpoint]?.label ?? "Collecting baseline samples"}.`}
+          </p>
         </div>
       </div>
     </section>
@@ -332,40 +402,142 @@ export default function Home() {
   const [direction, setDirection] = useState<Direction>("sg-my");
   const [refreshing, setRefreshing] = useState(false);
   const [lastChecked, setLastChecked] = useState("12:29 pm");
-  const data = tripData[direction];
+  const [liveTraffic, setLiveTraffic] = useState<LiveTraffic | null>(null);
+  const [feedState, setFeedState] = useState<"loading" | "live" | "fallback">("loading");
+
+  const loadTraffic = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const apiBase = window.location.hostname.endsWith("github.io")
+        ? "https://crossborder-sg-mvp.ncheewee.chatgpt.site"
+        : "";
+      const response = await fetch(`${apiBase}/api/traffic?direction=${direction}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`Traffic API returned ${response.status}`);
+      const payload = await response.json() as LiveTraffic;
+      setLiveTraffic(payload);
+      setFeedState("live");
+      setLastChecked(new Intl.DateTimeFormat("en-SG", {
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date(payload.generatedAt)));
+    } catch {
+      setLiveTraffic(null);
+      setFeedState("fallback");
+      setLastChecked(new Intl.DateTimeFormat("en-SG", {
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date()));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [direction]);
+
+  useEffect(() => {
+    void loadTraffic();
+  }, [loadTraffic]);
+
+  const data = useMemo(() => {
+    if (!liveTraffic) return tripData[direction];
+    const checkpointData = (checkpoint: Checkpoint) => {
+      const live = liveTraffic.checkpoints[checkpoint];
+      return {
+        crossing: `${live.crossingRange[0]}–${live.crossingRange[1]}`,
+        drive: live.driveMinutes,
+        trend: live.trend.label,
+        trendTone: live.trend.tone,
+        condition: live.condition,
+      };
+    };
+    return {
+      route: liveTraffic.recommendation.route,
+      depart: liveTraffic.recommendation.depart,
+      saving: liveTraffic.recommendation.savingMinutes,
+      total: `${liveTraffic.recommendation.totalRange[0]}–${liveTraffic.recommendation.totalRange[1]}`,
+      leaveWindow: liveTraffic.recommendation.depart,
+      reason: liveTraffic.recommendation.reason,
+      tuas: checkpointData("Tuas"),
+      woodlands: checkpointData("Woodlands"),
+    };
+  }, [direction, liveTraffic]);
+
+  const liveSeries = useMemo<Record<Checkpoint, ChartSeries>>(() => {
+    if (!liveTraffic) return chartSeries[direction];
+    return Object.fromEntries((["Tuas", "Woodlands"] as Checkpoint[]).map((checkpoint) => {
+      const savedHistory = liveTraffic.checkpoints[checkpoint].history.slice(-4);
+      const future = liveTraffic.forecasts[checkpoint].slice(1, 6);
+      const current = liveTraffic.checkpoints[checkpoint].waitMinutes;
+      const history = savedHistory.length
+        ? savedHistory
+        : [{ timestamp: liveTraffic.generatedAt, observed: current }];
+      const times = [
+        ...history.map((point) => new Intl.DateTimeFormat("en-SG", {
+          hour: "numeric",
+          minute: "2-digit",
+        }).format(new Date(point.timestamp))),
+        ...future.map((point) => point.time),
+      ];
+      const actual = [
+        ...history.map((point) => point.observed),
+        ...future.map(() => null),
+      ];
+      if (actual.length) actual[Math.max(0, history.length - 1)] = current;
+      const prediction = [
+        ...history.map(() => null),
+        ...future.map((point) => point.predicted),
+      ];
+      if (prediction.length && history.length) prediction[history.length - 1] = current;
+      const allPredictions = future.map((point) => point.predicted);
+      const low = Math.min(current, ...allPredictions);
+      const windows = Array.from({ length: Math.max(0, times.length - 1) }, (_, index) => {
+        const predicted = index < history.length - 1
+          ? history[index]?.observed ?? current
+          : future[Math.max(0, index - history.length + 1)]?.predicted ?? current;
+        return predicted <= low + 4 ? "good" as const : "amber" as const;
+      });
+      const best = future.reduce((lowest, point) => point.predicted < lowest.predicted ? point : lowest, future[0]);
+      return [checkpoint, {
+        times,
+        actual,
+        prediction,
+        windows,
+        insight: best
+          ? `The lowest ${checkpoint} estimate in this window is ${best.predicted} minutes around ${best.time}.`
+          : `The current ${checkpoint} estimate is ${current} minutes.`,
+      }];
+    })) as Record<Checkpoint, ChartSeries>;
+  }, [direction, liveTraffic]);
+
   const recommendedCamera = data.route === "Tuas"
-    ? { image: "tuas.jpg", name: "Tuas Second Link" }
-    : { image: "woodlands.jpg", name: "Woodlands Causeway" };
+    ? { image: liveTraffic?.checkpoints.Tuas.imageUrl ?? "tuas.jpg", name: "Tuas Second Link" }
+    : { image: liveTraffic?.checkpoints.Woodlands.imageUrl ?? "woodlands.jpg", name: "Woodlands Causeway" };
+
+  const cameraTime = (checkpoint: Checkpoint) => liveTraffic
+    ? new Intl.DateTimeFormat("en-SG", { hour: "numeric", minute: "2-digit" })
+        .format(new Date(liveTraffic.checkpoints[checkpoint].cameraUpdatedAt))
+    : "12:27 pm";
 
   const cards = useMemo(
     () => [
       {
         name: "Tuas",
         ...data.tuas,
-        image: "tuas.jpg",
-        cameraTime: "12:27 pm",
+        image: liveTraffic?.checkpoints.Tuas.imageUrl ?? "tuas.jpg",
+        cameraTime: cameraTime("Tuas"),
       },
       {
         name: "Woodlands",
         ...data.woodlands,
-        image: "woodlands.jpg",
-        cameraTime: "12:27 pm",
+        image: liveTraffic?.checkpoints.Woodlands.imageUrl ?? "woodlands.jpg",
+        cameraTime: cameraTime("Woodlands"),
       },
     ],
-    [data],
+    [data, liveTraffic],
   );
 
   function refresh() {
-    setRefreshing(true);
-    window.setTimeout(() => {
-      setRefreshing(false);
-      setLastChecked(
-        new Intl.DateTimeFormat("en-SG", {
-          hour: "numeric",
-          minute: "2-digit",
-        }).format(new Date()),
-      );
-    }, 700);
+    void loadTraffic();
   }
 
   return (
@@ -400,8 +572,8 @@ export default function Home() {
 
       <section className="recommendation-panel" aria-labelledby="recommendation-title">
         <div className="signal-line">
-          <span><i aria-hidden="true" /> Live recommendation</span>
-          <span>Official data checked {lastChecked}</span>
+          <span><i aria-hidden="true" /> {feedState === "live" ? "Live recommendation" : "Baseline recommendation"}</span>
+          <span>{feedState === "live" ? "Official data checked" : "Last check attempted"} {lastChecked}</span>
         </div>
         <div className="recommendation-layout">
           <div className="recommendation-answer">
@@ -418,7 +590,7 @@ export default function Home() {
             <div className="camera-shade" />
             <div className="camera-meta">
               <span><i aria-hidden="true" /> {recommendedCamera.name}</span>
-              <span>12:27 pm</span>
+              <span>{cameraTime(data.route as Checkpoint)}</span>
             </div>
           </div>
         </div>
@@ -429,7 +601,14 @@ export default function Home() {
         </div>
       </section>
 
-      <WaitTimeChart direction={direction} recommended={data.route as Checkpoint} />
+      <WaitTimeChart
+        recommended={data.route as Checkpoint}
+        series={liveSeries}
+        accuracy={liveTraffic ? {
+          Tuas: liveTraffic.checkpoints.Tuas.accuracy,
+          Woodlands: liveTraffic.checkpoints.Woodlands.accuracy,
+        } : undefined}
+      />
 
       <section className="checkpoint-section" aria-labelledby="compare-title">
         <div className="section-heading">
@@ -437,7 +616,9 @@ export default function Home() {
             <p className="section-kicker">Your two options</p>
             <h2 id="compare-title">Compare checkpoints</h2>
           </div>
-          <span className="updated-badge">Updated just now</span>
+          <span className="updated-badge">
+            {feedState === "loading" ? "Checking official feed" : feedState === "live" ? "Official feed live" : "Baseline active"}
+          </span>
         </div>
 
         <div className="checkpoint-grid">
@@ -458,7 +639,7 @@ export default function Home() {
         <div>
           <h2>How we reached this recommendation</h2>
           <p>
-            Live checkpoint cameras, approach-road traffic, current queue movement and typical conditions for this time.
+            {liveTraffic?.model.description ?? "A time-of-week baseline remains active while the official feed reconnects."}
           </p>
           <button>See the signals <span aria-hidden="true">→</span></button>
         </div>
@@ -475,7 +656,7 @@ export default function Home() {
 
       <footer>
         <span>CrossBorder.sg preview</span>
-        <span>Codex build · MVP 0.3</span>
+        <span>Codex build · Live beta 0.4</span>
       </footer>
     </main>
   );
