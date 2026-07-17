@@ -5,6 +5,7 @@ import {
   createRecommendation,
   driveTime,
   estimateWait,
+  relatedCamerasFor,
   type Checkpoint,
   type Direction,
   type ForecastPoint,
@@ -241,6 +242,10 @@ async function handleTraffic(request: Request, env: Env) {
       Woodlands: cameraFor("Woodlands", item.cameras),
       Tuas: cameraFor("Tuas", item.cameras),
     };
+    const relatedCameras = {
+      Woodlands: relatedCamerasFor("Woodlands", item.cameras),
+      Tuas: relatedCamerasFor("Tuas", item.cameras),
+    };
     const recommendation = createRecommendation(direction, now, cameras);
     const since = new Date(now.getTime() - 6 * 60 * 60000).toISOString();
     const reportSince = new Date(now.getTime() - 24 * 60 * 60000).toISOString();
@@ -283,6 +288,7 @@ async function handleTraffic(request: Request, env: Env) {
           cameraId: cameras[checkpoint].cameraId,
           imageUrl: cameras[checkpoint].imageUrl,
           cameraUpdatedAt: cameras[checkpoint].updatedAt,
+          cameras: relatedCameras[checkpoint],
           crossingRange: [Math.max(15, details.wait - 7), details.wait + 9],
           waitMinutes: details.wait,
           driveMinutes: driveTime(direction, checkpoint),
@@ -318,8 +324,13 @@ async function handleTraffic(request: Request, env: Env) {
       recommendation: {
         action: recommendation.action,
         depart: recommendation.depart,
+        departAt: recommendation.departAt,
         route: recommendation.route,
+        totalMinutes: recommendation.totalMinutes,
         totalRange: recommendation.totalRange,
+        clearAt: recommendation.clearAt,
+        clearTime: recommendation.clearTime,
+        clearDestination: recommendation.clearDestination,
         savingMinutes: recommendation.savingMinutes,
         reason: recommendation.reason,
         confidenceLabel: recommendation.confidenceLabel,
