@@ -4,7 +4,7 @@
 
 - Public frontend: https://ncheewee.github.io/crossborder-sg/
 - Public source repository: https://github.com/ncheewee/crossborder-sg
-- Temporary public traffic API: https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=sg-my
+- Public traffic API: https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=sg-my
 - Alternate direction: replace `sg-my` with `my-sg`.
 - UI build marker: `Codex build · Live beta 0.5`.
 
@@ -13,13 +13,11 @@ camera, and forecast graph. The graph uses teal “good to depart” and amber
 “less ideal” regions. A compact “I’ve crossed” feedback control now posts
 actual traveler crossing times to the backend.
 
-The target backend is now Cloudflare Worker + Neon Postgres. The Worker API has
-been scaffolded in `worker-api/index.ts`, with schema in `neon/schema.sql` and
-Wrangler config in `wrangler.api.toml`. The `chatgpt.site` backend should be
-treated as temporary until the Worker URL is deployed and wired into the
-frontend build. After deployment, set GitHub repository variable
-`TRAFFIC_API_BASE` to the Worker URL so the scheduled collector stops warming
-the temporary backend.
+The backend is now Cloudflare Worker + Neon Postgres. The Worker API lives in
+`worker-api/index.ts`, with schema in `neon/schema.sql` and Wrangler config in
+`wrangler.api.toml`. The previous `chatgpt.site` backend should be treated as
+retired MVP scaffolding. GitHub Pages and the scheduled collector now default
+to `https://crossborder-sg-api.ncheewee.workers.dev`.
 
 ## Repository state at handoff
 
@@ -164,12 +162,13 @@ npm run build
 Useful live checks:
 
 ```bash
-curl --fail "https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=sg-my"
-curl --fail "https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=my-sg"
+curl --fail "https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=sg-my"
+curl --fail "https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=my-sg"
 ```
 
-If the D1 schema changes, run `npm run db:generate`, inspect the generated SQL,
-and deploy the migration with the backend.
+If the Neon schema changes, update `neon/schema.sql`, apply it to Neon, run
+`npm run api:deploy`, and rebuild the Pages bundle if the public API URL
+changes.
 
 ## Files to port into another project
 

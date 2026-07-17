@@ -417,7 +417,7 @@ function apiBase() {
     : undefined;
   if (configuredBase) return configuredBase.replace(/\/$/, "");
   return window.location.hostname.endsWith("github.io")
-    ? "https://crossborder-sg-mvp.ncheewee.chatgpt.site"
+    ? "https://crossborder-sg-api.ncheewee.workers.dev"
     : "";
 }
 

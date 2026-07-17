@@ -16,7 +16,7 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     env:
-      TRAFFIC_API_BASE: ${{ vars.TRAFFIC_API_BASE || 'https://crossborder-sg-mvp.ncheewee.chatgpt.site' }}
+      TRAFFIC_API_BASE: ${{ vars.TRAFFIC_API_BASE || 'https://crossborder-sg-api.ncheewee.workers.dev' }}
     steps:
       - name: Collect both travel directions
         run: |

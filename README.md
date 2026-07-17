@@ -31,6 +31,10 @@ The old `chatgpt.site` backend was useful for the first live beta, but should be
 treated as temporary scaffolding. The Cloudflare Worker backend lives in
 `worker-api/index.ts`; its Postgres schema is in `neon/schema.sql`.
 
+Live Cloudflare Worker API:
+
+https://crossborder-sg-api.ncheewee.workers.dev
+
 ## Development
 
 ```bash
@@ -57,8 +61,10 @@ npx wrangler secret put DATABASE_URL --config wrangler.api.toml
 npm run api:deploy
 ```
 
-5. Set `NEXT_PUBLIC_API_BASE` to the deployed Worker URL, rebuild with
-   `npm run build:pages`, commit `docs/`, and push to GitHub Pages.
+5. Set `NEXT_PUBLIC_API_BASE` to the deployed Worker URL if you are changing
+   API hosts, rebuild with `npm run build:pages`, commit `docs/`, and push to
+   GitHub Pages. The current default is
+   `https://crossborder-sg-api.ncheewee.workers.dev`.
 6. Set the GitHub Actions repository variable `TRAFFIC_API_BASE` to the same
    Worker URL so the five-minute collector warms the Neon-backed API instead of
    the temporary backend.
