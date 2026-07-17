@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -251,6 +251,10 @@ function parseMinuteRange(value: string): [number, number] {
   return [safeLow, safeHigh];
 }
 
+function rangeText(low: number, high: number) {
+  return `${Math.max(5, Math.round(low))}–${Math.max(5, Math.round(high))}`;
+}
+
 function distanceKm(from: Coordinate, to: Coordinate) {
   const radius = 6371;
   const lat1 = from.latitude * Math.PI / 180;
@@ -344,6 +348,7 @@ function CameraCarousel({
 }) {
   const [index, setIndex] = useState(0);
   const [interacted, setInteracted] = useState(false);
+  const swipeStartX = useRef<number | null>(null);
   const safeCameras = cameras.length ? cameras : [];
   const current = safeCameras[Math.min(index, Math.max(0, safeCameras.length - 1))];
 
@@ -366,12 +371,31 @@ function CameraCarousel({
     setIndex((value) => (value + direction + safeCameras.length) % safeCameras.length);
   };
 
+  const handleCameraTouchStart = (event: TouchEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    setInteracted(true);
+    swipeStartX.current = event.touches[0]?.clientX ?? null;
+  };
+
+  const handleCameraTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (swipeStartX.current == null) return;
+    const endX = event.changedTouches[0]?.clientX ?? swipeStartX.current;
+    const delta = endX - swipeStartX.current;
+    if (Math.abs(delta) > 38) {
+      move(delta < 0 ? 1 : -1);
+    }
+    swipeStartX.current = null;
+  };
+
   if (!current) return null;
 
   return (
     <div
       className={`camera-carousel ${compact ? "compact" : ""}`}
       onPointerDown={() => setInteracted(true)}
+      onTouchStart={handleCameraTouchStart}
+      onTouchEnd={handleCameraTouchEnd}
     >
       <div className="camera-frame">
         <img
@@ -389,10 +413,19 @@ function CameraCarousel({
         </div>
       </div>
       {safeCameras.length > 1 && (
-        <div className="camera-controls" aria-label={`${title} camera controls`}>
-          <button onClick={() => move(-1)} aria-label="Previous camera">‹</button>
-          <span>{index + 1}/{safeCameras.length}</span>
-          <button onClick={() => move(1)} aria-label="Next camera">›</button>
+        <div className="camera-dots" aria-label={`${title} camera position`}>
+          {safeCameras.map((camera, dotIndex) => (
+            <button
+              key={camera.cameraId}
+              className={dotIndex === index ? "active" : ""}
+              onClick={() => {
+                setInteracted(true);
+                setIndex(dotIndex);
+              }}
+              aria-label={`Show camera ${dotIndex + 1}`}
+              aria-pressed={dotIndex === index}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -459,25 +492,14 @@ function CheckpointCard({
   );
 }
 
-function WaitTimeChart({
-  recommended,
-  series,
-  accuracy,
-  travelerReports,
+function ForecastMiniChart({
+  checkpoint,
+  selected,
 }: {
-  recommended: Checkpoint;
-  series: Record<Checkpoint, Record<ForecastWindow, ChartSeries>>;
-  accuracy?: Record<Checkpoint, LiveCheckpoint["accuracy"]>;
-  travelerReports?: Record<Checkpoint, LiveCheckpoint["travelerReports"]>;
+  checkpoint: Checkpoint;
+  selected: ChartSeries;
 }) {
-  const [checkpoint, setCheckpoint] = useState<Checkpoint>(recommended);
-  const [forecastWindow, setForecastWindow] = useState<ForecastWindow>("current");
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const selected = series[checkpoint][forecastWindow];
-
-  useEffect(() => {
-    setCheckpoint(recommended);
-  }, [recommended]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -487,7 +509,7 @@ function WaitTimeChart({
 
     const draw = () => {
       const width = Math.max(280, container.clientWidth);
-      const height = width < 520 ? 218 : 250;
+      const height = 196;
       const ratio = window.devicePixelRatio || 1;
       canvas.width = width * ratio;
       canvas.height = height * ratio;
@@ -499,7 +521,6 @@ function WaitTimeChart({
       context.scale(ratio, ratio);
 
       const styles = getComputedStyle(document.documentElement);
-      const actualColor = styles.getPropertyValue("--chart-actual").trim();
       const predictionColor = styles.getPropertyValue("--teal").trim();
       const gridColor = styles.getPropertyValue("--chart-grid").trim();
       const labelColor = styles.getPropertyValue("--muted").trim();
@@ -508,7 +529,7 @@ function WaitTimeChart({
       const nowColor = styles.getPropertyValue("--teal-bright").trim();
       const bandFill = styles.getPropertyValue("--error-band").trim();
 
-      const padding = { top: 22, right: 12, bottom: 34, left: 38 };
+      const padding = { top: 14, right: 8, bottom: 32, left: 34 };
       const plotWidth = width - padding.left - padding.right;
       const plotHeight = height - padding.top - padding.bottom;
       const maxWait = Math.max(100, Math.ceil(Math.max(...selected.prediction.map((value, index) => (
@@ -524,6 +545,19 @@ function WaitTimeChart({
         const right = x(index + 1);
         context.fillStyle = windowType === "good" ? goodFill : amberFill;
         context.fillRect(left, padding.top, right - left, plotHeight);
+      });
+
+      selected.prediction.forEach((_, index) => {
+        if (index % 2 !== 0) return;
+        const tickX = x(index);
+        context.beginPath();
+        context.strokeStyle = index % 8 === 0 || index === selected.prediction.length - 1
+          ? "rgba(48, 83, 78, 0.18)"
+          : "rgba(48, 83, 78, 0.07)";
+        context.lineWidth = index % 8 === 0 || index === selected.prediction.length - 1 ? 1 : 0.6;
+        context.moveTo(tickX, padding.top);
+        context.lineTo(tickX, padding.top + plotHeight);
+        context.stroke();
       });
 
       context.lineWidth = 1;
@@ -543,7 +577,7 @@ function WaitTimeChart({
 
       context.textAlign = "center";
       context.textBaseline = "top";
-      context.font = width < 440 ? "7px Arial, sans-serif" : "8px Arial, sans-serif";
+      context.font = "10px Arial, sans-serif";
       selected.times.forEach((label, index) => {
         if (!label) return;
         context.fillText(label, x(index), padding.top + plotHeight + 12);
@@ -598,25 +632,16 @@ function WaitTimeChart({
         context.fill();
       };
 
-      const drawLine = (values: Array<number | null>, color: string, dashed: boolean) => {
-        context.lineWidth = dashed ? 3.2 : 2.8;
+      const drawLine = (values: Array<number | null>, color: string) => {
+        context.lineWidth = 3.4;
         context.strokeStyle = color;
         context.setLineDash([]);
         const points = curvePath(values);
         context.stroke();
-        context.setLineDash([]);
-
-        points.forEach((point) => {
-          context.beginPath();
-          context.fillStyle = color;
-          context.arc(point.x, point.y, dashed ? 0 : 3, 0, Math.PI * 2);
-          context.fill();
-        });
       };
 
       drawBand();
-      drawLine(selected.prediction, predictionColor, true);
-      drawLine(selected.actual, actualColor, false);
+      drawLine(selected.prediction, predictionColor);
 
       if (selected.nowIndex !== null) {
         const nowX = x(selected.nowIndex);
@@ -642,74 +667,37 @@ function WaitTimeChart({
   }, [selected]);
 
   return (
+    <article className="forecast-card">
+      <div className="graph-title-row">
+        <h3>{checkpoint}</h3>
+        <span>{selected.windowLabel}</span>
+      </div>
+      <div className="chart-wrap">
+        <canvas
+          ref={canvasRef}
+          role="img"
+          aria-label={`${checkpoint} smooth wait-time forecast from midnight to 11:59 pm.`}
+        />
+      </div>
+    </article>
+  );
+}
+
+function WaitTimeChart({
+  series,
+}: {
+  series: Record<Checkpoint, Record<ForecastWindow, ChartSeries>>;
+}) {
+  return (
     <section className="forecast-section" aria-labelledby="forecast-title">
       <div className="section-heading forecast-heading">
         <div>
-          <p className="section-kicker">24-hour AI departure forecast</p>
-          <h2 id="forecast-title">When should you leave?</h2>
-        </div>
-        <div className="forecast-controls">
-          <div className="chart-tabs" aria-label="Choose forecast window">
-            <button
-              className={forecastWindow === "current" ? "active" : ""}
-              onClick={() => setForecastWindow("current")}
-              aria-pressed={forecastWindow === "current"}
-            >
-              This 24h
-            </button>
-            <button
-              className={forecastWindow === "next" ? "active" : ""}
-              onClick={() => setForecastWindow("next")}
-              aria-pressed={forecastWindow === "next"}
-            >
-              Next 24h
-            </button>
-          </div>
-          <div className="chart-tabs" aria-label="Choose checkpoint">
-            {(["Tuas", "Woodlands"] as Checkpoint[]).map((name) => (
-              <button
-                key={name}
-                className={checkpoint === name ? "active" : ""}
-                onClick={() => setCheckpoint(name)}
-                aria-pressed={checkpoint === name}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
+          <p className="section-kicker">Forecast</p>
+          <h2 id="forecast-title">Today’s wait pattern</h2>
         </div>
       </div>
-
-      <div className="forecast-card">
-        <div className="window-label">{selected.windowLabel}</div>
-        <div className="chart-legend" aria-label="Chart legend">
-          <span><i className="legend-line legend-actual" aria-hidden="true" /> Actual wait</span>
-          <span><i className="legend-line legend-ai" aria-hidden="true" /> Forecast curve</span>
-          <span><i className="legend-zone legend-error" aria-hidden="true" /> {selected.errorLabel ?? "Mock error band"}</span>
-          <span><i className="legend-zone legend-good" aria-hidden="true" /> Good to depart</span>
-          <span><i className="legend-zone legend-amber" aria-hidden="true" /> Less ideal</span>
-        </div>
-        <div className="chart-wrap">
-          <span className="chart-unit">Wait time · minutes</span>
-          <canvas
-            ref={canvasRef}
-            role="img"
-            aria-label={`${checkpoint} 24-hour wait-time chart showing actual waits until now, AI predictions, and shaded recommended departure windows.`}
-          />
-        </div>
-        <div className="chart-insight">
-          <span aria-hidden="true">✦</span>
-          <p>
-            {selected.insight}
-            {travelerReports?.[checkpoint]?.count24h
-              ? ` ${travelerReports[checkpoint].count24h} traveler reports in the last 24h; average reported crossing ${travelerReports[checkpoint].averageActualWaitMinutes} min.`
-              : accuracy?.[checkpoint]?.meanAbsoluteErrorMinutes !== null &&
-              accuracy?.[checkpoint]?.meanAbsoluteErrorMinutes !== undefined
-              ? ` Typical 30-minute error: ±${accuracy[checkpoint].meanAbsoluteErrorMinutes} min across ${accuracy[checkpoint].sampleSize} samples.`
-              : ` ${accuracy?.[checkpoint]?.label ?? "Collecting baseline samples"}.`}
-          </p>
-        </div>
-      </div>
+      <ForecastMiniChart checkpoint="Woodlands" selected={series.Woodlands.current} />
+      <ForecastMiniChart checkpoint="Tuas" selected={series.Tuas.current} />
     </section>
   );
 }
@@ -744,10 +732,13 @@ export default function Home() {
   const [showSignals, setShowSignals] = useState(false);
   const [estimateMode, setEstimateMode] = useState<EstimateMode>("border");
   const [approachSource, setApproachSource] = useState<ApproachSource>("fixed");
+  const [routeChoice, setRouteChoice] = useState<Checkpoint | null>(null);
+  const [selectedDeparture, setSelectedDeparture] = useState<"now" | "later">("now");
   const [userLocation, setUserLocation] = useState<Coordinate | null>(null);
   const [addressLocation, setAddressLocation] = useState<{ label: string; coordinate: Coordinate; precision: string } | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [locationInput, setLocationInput] = useState("");
+  const pullStartY = useRef<number | null>(null);
 
   const loadTraffic = useCallback(async () => {
     setRefreshing(true);
@@ -809,29 +800,50 @@ export default function Home() {
     };
   }, [direction, liveTraffic]);
 
-  const selectedRoute = data.route as Checkpoint;
+  const selectedRoute = routeChoice ?? data.route as Checkpoint;
+  const selectedCheckpointData = selectedRoute === "Tuas" ? data.tuas : data.woodlands;
   const activeStartCoordinate = approachSource === "gps"
     ? userLocation
     : approachSource === "address"
       ? addressLocation?.coordinate ?? null
-      : null;
+    : null;
   const approachMinutes = estimateApproachMinutes(
     activeStartCoordinate,
     selectedRoute,
-    data.drive,
+    selectedCheckpointData.drive,
   );
-  const borderMid = crossingMidpoint(data.border);
+  const selectedBorderRange = selectedCheckpointData.crossing;
+  const borderMid = crossingMidpoint(selectedBorderRange);
   const displayedMinutes = estimateMode === "border"
     ? borderMid
     : borderMid + approachMinutes;
   const displayedRange = estimateMode === "border"
-    ? data.border
+    ? selectedBorderRange
     : `${Math.max(15, displayedMinutes - 7)}–${displayedMinutes + 9}`;
   const departureAt = data.departAt ? new Date(data.departAt) : new Date();
   const [displayedLow, displayedHigh] = parseMinuteRange(displayedRange);
   const clearRangeStart = roundUpToQuarter(new Date(departureAt.getTime() + displayedLow * 60000));
   const clearRangeEnd = roundUpToQuarter(new Date(departureAt.getTime() + displayedHigh * 60000));
   const displayedClearRange = `${formatTimeLabel(clearRangeStart.toISOString())}–${formatTimeLabel(clearRangeEnd.toISOString())}`;
+  const nowDurationRange = displayedRange;
+  const selectedForecast = liveTraffic?.forecasts[selectedRoute] ?? [];
+  const futureBest = selectedForecast
+    .filter((point) => new Date(point.timestamp).getTime() > Date.now() + 30 * 60000)
+    .sort((a, b) => a.predicted - b.predicted)[0];
+  const laterDepartAt = futureBest ? new Date(futureBest.timestamp) : new Date(Date.now() + 60 * 60000);
+  const laterBaseMinutes = futureBest?.predicted ?? borderMid;
+  const laterTotalMid = estimateMode === "border" ? laterBaseMinutes : laterBaseMinutes + approachMinutes;
+  const laterDurationRange = rangeText(laterTotalMid - 7, laterTotalMid + 9);
+  const laterClearStart = roundUpToQuarter(new Date(laterDepartAt.getTime() + (laterTotalMid - 7) * 60000));
+  const laterClearEnd = roundUpToQuarter(new Date(laterDepartAt.getTime() + (laterTotalMid + 9) * 60000));
+  const laterClearRange = `${formatTimeLabel(laterClearStart.toISOString())}–${formatTimeLabel(laterClearEnd.toISOString())}`;
+  const recommendedDeparture = laterTotalMid <= displayedMinutes - 15 ? "later" : "now";
+  const activeLocationLabel = approachSource === "gps" && userLocation
+    ? "Current location"
+    : approachSource === "address" && addressLocation
+      ? addressLocation.label
+      : "Fixed Singapore approach";
+  const selectedEtaRange = selectedDeparture === "now" ? displayedClearRange : laterClearRange;
   const approachBasis = estimateMode === "border"
     ? "Border crossing only"
     : approachSource === "gps" && userLocation
@@ -865,7 +877,8 @@ export default function Home() {
         }, { index: 0, difference: Number.POSITIVE_INFINITY }).index
         : null;
       const times = future.map((point, index) => {
-        if (index % 2 !== 0) return "";
+        if (index === future.length - 1) return "11.59pm";
+        if (index % 8 !== 0) return "";
         return formatHourTick(point.timestamp);
       });
       const actual = future.map((_, index) => index === nowIndex && forecastWindow === "current"
@@ -912,11 +925,11 @@ export default function Home() {
 
   const recommendedCameras = camerasForCheckpoint(
     liveTraffic,
-    data.route as Checkpoint,
-    data.route === "Tuas" ? "tuas.jpg" : "woodlands.jpg",
+    selectedRoute,
+    selectedRoute === "Tuas" ? "tuas.jpg" : "woodlands.jpg",
   );
 
-  const recommendedCameraName = data.route === "Tuas"
+  const recommendedCameraName = selectedRoute === "Tuas"
     ? "Tuas Second Link"
     : "Woodlands Causeway";
 
@@ -943,8 +956,30 @@ export default function Home() {
     setFeedbackStatus("idle");
   }, [data.route, direction]);
 
+  useEffect(() => {
+    setSelectedDeparture(recommendedDeparture);
+  }, [recommendedDeparture, selectedRoute]);
+
   function refresh() {
     void loadTraffic();
+  }
+
+  function handleTouchStart(event: TouchEvent<HTMLElement>) {
+    if (window.scrollY <= 0) {
+      pullStartY.current = event.touches[0]?.clientY ?? null;
+    }
+  }
+
+  function handleTouchEnd(event: TouchEvent<HTMLElement>) {
+    if (pullStartY.current == null || refreshing) {
+      pullStartY.current = null;
+      return;
+    }
+    const endY = event.changedTouches[0]?.clientY ?? pullStartY.current;
+    if (endY - pullStartY.current > 86) {
+      refresh();
+    }
+    pullStartY.current = null;
   }
 
   function detectLocation() {
@@ -1005,16 +1040,15 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="CrossBorder.sg home">
-          <span className="brand-mark">CB</span>
+        <div className="updated-line">
+          <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
+          <small>Pull down to refresh</small>
+        </div>
+        <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
         </a>
-        <button className="refresh-button" onClick={refresh} disabled={refreshing}>
-          <span className={refreshing ? "spin" : ""} aria-hidden="true">↻</span>
-          {refreshing ? "Checking" : "Refresh"}
-        </button>
       </header>
 
       <section className="controls" id="top">
@@ -1035,40 +1069,52 @@ export default function Home() {
       </section>
 
       <section className="recommendation-panel" aria-labelledby="recommendation-title">
-        <div className="signal-line">
-          <span><i aria-hidden="true" /> {feedState === "live" ? "Live recommendation" : "Baseline recommendation"}</span>
-          <span>{feedState === "live" ? "Official data checked" : "Last check attempted"} {lastChecked}</span>
-        </div>
-        <div className="recommendation-answer">
+        <div className="recommendation-head">
           <p className="recommendation-kicker">What to do</p>
-          <h1 id="recommendation-title">{data.depart}</h1>
-          <p className="recommendation-route">Use <strong>{data.route}</strong></p>
-        </div>
-
-        <div className="decision-stack" aria-label="Crossing recommendation summary">
-          <div className="decision-card primary">
-            <span>Leave</span>
-            <strong>{data.depart.replace("Leave ", "")}</strong>
-          </div>
-          <div className="decision-card">
-            <span>Checkpoint</span>
-            <strong>{data.route}</strong>
-          </div>
-          <div className="decision-card">
-            <span>Clear {data.clearDestination ?? "border"}</span>
-            <strong>{displayedClearRange}</strong>
+          <div className="route-toggle" aria-label="Choose checkpoint">
+            {(["Woodlands", "Tuas"] as Checkpoint[]).map((checkpoint) => (
+              <button
+                key={checkpoint}
+                className={selectedRoute === checkpoint ? "active" : ""}
+                onClick={() => setRouteChoice(checkpoint)}
+                aria-pressed={selectedRoute === checkpoint}
+              >
+                {checkpoint}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="big-range-card">
-          <span>{estimateMode === "border" ? "Border crossing estimate" : "Total estimate incl. approach"}</span>
-          <strong>{displayedRange} min</strong>
-          <em>{approachBasis}</em>
+        <div className="departure-actions" aria-label="Choose departure time">
+          <button
+            className={selectedDeparture === "now" ? "active" : ""}
+            onClick={() => setSelectedDeparture("now")}
+            aria-pressed={selectedDeparture === "now"}
+          >
+            {recommendedDeparture === "now" && <span className="recommend-chip">Recommended</span>}
+            <strong>Leave now</strong>
+            <small>{nowDurationRange} min</small>
+          </button>
+          <button
+            className={selectedDeparture === "later" ? "active" : ""}
+            onClick={() => setSelectedDeparture("later")}
+            aria-pressed={selectedDeparture === "later"}
+          >
+            {recommendedDeparture === "later" && <span className="recommend-chip">Recommended</span>}
+            <strong>Leave at {formatTimeLabel(laterDepartAt.toISOString())}</strong>
+            <small>{laterDurationRange} min</small>
+          </button>
+        </div>
+
+        <div className="eta-card">
+          <span>Expected to clear {data.clearDestination ?? "border"}</span>
+          <strong>{selectedDeparture === "now" ? displayedClearRange : laterClearRange}</strong>
+          <em>{selectedRoute} · {approachBasis}</em>
         </div>
 
         <div className="reason-row">
           <span className="spark" aria-hidden="true">✦</span>
-          <p>{data.reason}</p>
+          <p>{selectedRoute === data.route ? data.reason : `${selectedRoute} selected. Estimates below use that checkpoint instead of the fastest route.`}</p>
         </div>
         <div className="estimate-panel" aria-label="Estimate mode">
           <div className="estimate-toggle">
@@ -1129,8 +1175,16 @@ export default function Home() {
               </small>
             </div>
           )}
+          <div className="approach-summary">
+            <span>{estimateMode === "border" ? "Approach not included" : activeLocationLabel}</span>
+            <strong>ETA to {data.clearDestination ?? "destination"}: {selectedEtaRange}</strong>
+          </div>
         </div>
       </section>
+
+      <WaitTimeChart
+        series={liveSeries}
+      />
 
       <section className="camera-section" aria-labelledby="camera-title">
         <div className="section-heading">
@@ -1143,23 +1197,10 @@ export default function Home() {
         <CameraCarousel
           cameras={recommendedCameras}
           title={`${recommendedCameraName} official cameras`}
-          fallbackImage={data.route === "Tuas" ? "tuas.jpg" : "woodlands.jpg"}
+          fallbackImage={selectedRoute === "Tuas" ? "tuas.jpg" : "woodlands.jpg"}
           auto
         />
       </section>
-
-      <WaitTimeChart
-        recommended={data.route as Checkpoint}
-        series={liveSeries}
-        accuracy={liveTraffic ? {
-          Tuas: liveTraffic.checkpoints.Tuas.accuracy,
-          Woodlands: liveTraffic.checkpoints.Woodlands.accuracy,
-        } : undefined}
-        travelerReports={liveTraffic ? {
-          Tuas: liveTraffic.checkpoints.Tuas.travelerReports,
-          Woodlands: liveTraffic.checkpoints.Woodlands.travelerReports,
-        } : undefined}
-      />
 
       <section className="checkpoint-section" aria-labelledby="compare-title">
         <div className="section-heading">
@@ -1179,7 +1220,7 @@ export default function Home() {
               <CheckpointCard
                 key={`${direction}-${card.name}`}
                 {...card}
-                recommended={card.name === data.route}
+                recommended={card.name === selectedRoute}
               />
             ))}
         </div>
