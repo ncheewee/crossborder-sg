@@ -412,6 +412,10 @@ function WaitTimeChart({
 
 function apiBase() {
   if (typeof window === "undefined") return "";
+  const configuredBase = typeof process !== "undefined"
+    ? process.env.NEXT_PUBLIC_API_BASE
+    : undefined;
+  if (configuredBase) return configuredBase.replace(/\/$/, "");
   return window.location.hostname.endsWith("github.io")
     ? "https://crossborder-sg-mvp.ncheewee.chatgpt.site"
     : "";

@@ -15,12 +15,14 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
+    env:
+      TRAFFIC_API_BASE: ${{ vars.TRAFFIC_API_BASE || 'https://crossborder-sg-mvp.ncheewee.chatgpt.site' }}
     steps:
       - name: Collect both travel directions
         run: |
           curl --fail --silent --show-error --retry 3 \
-            "https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=sg-my" \
+            "$TRAFFIC_API_BASE/api/traffic?direction=sg-my" \
             > /dev/null
           curl --fail --silent --show-error --retry 3 \
-            "https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=my-sg" \
+            "$TRAFFIC_API_BASE/api/traffic?direction=my-sg" \
             > /dev/null

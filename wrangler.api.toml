@@ -1,0 +1,10 @@
+name = "crossborder-sg-api"
+main = "worker-api/index.ts"
+compatibility_date = "2026-07-17"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ALLOWED_ORIGIN = "https://ncheewee.github.io"
+
+[triggers]
+crons = ["*/5 * * * *"]

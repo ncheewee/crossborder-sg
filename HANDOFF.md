@@ -4,7 +4,7 @@
 
 - Public frontend: https://ncheewee.github.io/crossborder-sg/
 - Public source repository: https://github.com/ncheewee/crossborder-sg
-- Public traffic API: https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=sg-my
+- Temporary public traffic API: https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=sg-my
 - Alternate direction: replace `sg-my` with `my-sg`.
 - UI build marker: `Codex build · Live beta 0.5`.
 
@@ -12,6 +12,14 @@ The first mobile viewport contains the recommendation, recommended official
 camera, and forecast graph. The graph uses teal “good to depart” and amber
 “less ideal” regions. A compact “I’ve crossed” feedback control now posts
 actual traveler crossing times to the backend.
+
+The target backend is now Cloudflare Worker + Neon Postgres. The Worker API has
+been scaffolded in `worker-api/index.ts`, with schema in `neon/schema.sql` and
+Wrangler config in `wrangler.api.toml`. The `chatgpt.site` backend should be
+treated as temporary until the Worker URL is deployed and wired into the
+frontend build. After deployment, set GitHub repository variable
+`TRAFFIC_API_BASE` to the Worker URL so the scheduled collector stops warming
+the temporary backend.
 
 ## Repository state at handoff
 
@@ -48,6 +56,22 @@ Public Sites API /api/traffic
         +--> D1 traffic_observations history
         |
         +--> D1 traveler_reports feedback
+```
+
+Target replacement:
+
+```text
+GitHub Pages frontend
+        |
+        | CORS GET/POST
+        v
+Cloudflare Worker API
+        |
+        +--> LTA Traffic Images via data.gov.sg
+        |
+        +--> recommendation + forecast engine
+        |
+        +--> Neon Postgres traffic_observations + traveler_reports
 ```
 
 ### Public frontend
@@ -166,6 +190,13 @@ For a standalone GitHub Pages frontend, also port:
 - `static-entry/`
 - `vite.pages.config.ts`
 - the `build:pages` package script
+
+For the target Cloudflare + Neon backend, also port:
+
+- `worker-api/index.ts`
+- `wrangler.api.toml`
+- `neon/schema.sql`
+- the `api:dev` and `api:deploy` package scripts
 
 For the same Sites/Cloudflare backend, also preserve:
 
