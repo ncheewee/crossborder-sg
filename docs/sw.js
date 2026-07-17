@@ -1,9 +1,13 @@
-const CACHE_NAME = "crossborder-sg-v1";
+const CACHE_NAME = "crossborder-sg-v2";
 const SHELL_ASSETS = [
   "/crossborder-sg/",
   "/crossborder-sg/index.html",
   "/crossborder-sg/icon.svg",
+  "/crossborder-sg/icon-192.png",
+  "/crossborder-sg/icon-512.png",
+  "/crossborder-sg/apple-touch-icon.png",
   "/crossborder-sg/maskable-icon.svg",
+  "/crossborder-sg/maskable-icon-512.png",
   "/crossborder-sg/tuas.jpg",
   "/crossborder-sg/woodlands.jpg"
 ];
