@@ -24,3 +24,24 @@ export const trafficObservations = sqliteTable(
     ),
   ],
 );
+
+export const travelerReports = sqliteTable(
+  "traveler_reports",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    reportedAt: text("reported_at").notNull(),
+    direction: text("direction").notNull(),
+    checkpoint: text("checkpoint").notNull(),
+    actualWaitMinutes: integer("actual_wait_minutes").notNull(),
+    estimatedWaitMinutes: integer("estimated_wait_minutes"),
+    sourceUpdatedAt: text("source_updated_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("traveler_reports_lookup_idx").on(
+      table.direction,
+      table.checkpoint,
+      table.reportedAt,
+    ),
+  ],
+);

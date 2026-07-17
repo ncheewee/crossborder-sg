@@ -8,11 +8,13 @@ Live mockup: https://ncheewee.github.io/crossborder-sg/
 
 ## Status
 
-Live beta. Camera images and freshness timestamps come from LTA's official
+Live beta 0.5. Camera images and freshness timestamps come from LTA's official
 Traffic Images dataset via data.gov.sg. Crossing estimates and recommendations
 currently use an early time-of-week baseline model; they are not official wait
 times. The service stores observations so rolling forecast-error reporting can
-replace the initial “collecting samples” state.
+replace the initial “collecting samples” state. Drivers can also submit actual
+crossing times through the “I’ve crossed” feedback control; those reports are
+stored separately for later calibration.
 
 ## Development
 

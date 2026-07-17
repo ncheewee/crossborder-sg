@@ -6,24 +6,26 @@
 - Public source repository: https://github.com/ncheewee/crossborder-sg
 - Public traffic API: https://crossborder-sg-mvp.ncheewee.chatgpt.site/api/traffic?direction=sg-my
 - Alternate direction: replace `sg-my` with `my-sg`.
-- UI build marker: `Codex build · Live beta 0.4`.
+- UI build marker: `Codex build · Live beta 0.5`.
 
 The first mobile viewport contains the recommendation, recommended official
 camera, and forecast graph. The graph uses teal “good to depart” and amber
-“less ideal” regions.
+“less ideal” regions. A compact “I’ve crossed” feedback control now posts
+actual traveler crossing times to the backend.
 
 ## Repository state at handoff
 
 - `origin/main` is at `2b1d310` and contains the public Pages frontend, live
   traffic API implementation, D1 schema/migration, and updated README.
-- The local branch also contains commit `1b52796`, which adds a five-minute
-  GitHub Actions collector. That commit has **not** reached GitHub because the
-  current GitHub CLI authorization does not have the `workflow` scope.
+- The local branch also contains commits after `2b1d310`: a five-minute GitHub
+  Actions collector, this handoff guide, and the beta 0.5 traveler feedback
+  work. These commits have **not** reached GitHub because the current GitHub
+  CLI authorization does not have the `workflow` scope.
 - GitHub CLI authentication is currently invalid after the interrupted scope
   refresh. Re-authenticate before pushing the local scheduler commit.
-- The deployed Sites backend source is at `927c319`. Later commits only change
-  documentation and add the unpushed collector; the deployed application code
-  is current.
+- The deployed Sites backend source is at `927c319`. The beta 0.5 report
+  endpoint and `traveler_reports` migration have been built locally, but are
+  not deployed until a new Sites version is saved/deployed.
 - Working tree should be clean after this handoff file is committed locally.
 
 Do not assume scheduled collection is active until `.github/workflows/collect-traffic.yml`
@@ -44,6 +46,8 @@ Public Sites API /api/traffic
         +--> recommendation + forecast engine
         |
         +--> D1 traffic_observations history
+        |
+        +--> D1 traveler_reports feedback
 ```
 
 ### Public frontend
@@ -60,9 +64,11 @@ Public Sites API /api/traffic
 ### Backend
 
 - Route: `app/api/traffic/route.ts`.
+- Traveler report route: `app/api/reports/route.ts`.
 - Model: `lib/traffic-engine.ts`.
 - Storage schema: `db/schema.ts`.
-- Initial migration: `drizzle/0000_colossal_phantom_reporter.sql`.
+- Migrations: `drizzle/0000_colossal_phantom_reporter.sql` and
+  `drizzle/0001_grey_mentallo.sql`.
 - Logical D1 binding: `DB` in `.openai/hosting.json`.
 - The API permits public cross-origin `GET` and `OPTIONS` requests.
 - Responses are cached for 60 seconds in browsers and 90 seconds at the edge.
@@ -98,9 +104,14 @@ The response contains:
 - `recommendation`: `go` or `wait`, departure time, checkpoint, total range,
   saving versus the other checkpoint, reason, and confidence label.
 - `checkpoints`: camera URL/time, crossing range, drive time, condition, trend,
-  stored history, and rolling accuracy state for Woodlands and Tuas.
+  stored history, rolling accuracy state, and 24-hour traveler report summary
+  for Woodlands and Tuas.
 - `forecasts`: timestamped predicted waits and good/amber zones for each
   checkpoint.
+
+`POST /api/reports` accepts `direction`, `checkpoint`, `actualWaitMinutes`,
+and optional `estimatedWaitMinutes` / `sourceUpdatedAt`. It stores driver
+feedback in `traveler_reports` without collecting user identity.
 
 ## Automatic collection
 
@@ -144,6 +155,7 @@ Minimum product surface:
 - `app/globals.css`
 - `lib/traffic-engine.ts`
 - `app/api/traffic/route.ts`
+- `app/api/reports/route.ts`
 - `db/index.ts`
 - `db/schema.ts`
 - `drizzle/`
@@ -170,8 +182,8 @@ Create the new project/bindings, then update the frontend API base.
 1. Replace the time-of-week prior with calibrated camera-derived or reported
    crossing observations.
 2. Add real vehicle/queue analysis; current v1 does not perform computer vision.
-3. Add a functional “I’ve crossed” ground-truth submission flow. The current
-   button is visual only.
+3. Use `traveler_reports` to train/calibrate the route estimates once enough
+   real submissions accumulate.
 4. The rolling error compares a prior estimate with a later estimate. It is not
    genuine traveller-confirmed accuracy yet.
 5. Add API rate limiting or a dedicated ingestion endpoint before significant

@@ -1,6 +1,6 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "../../../db";
-import { trafficObservations } from "../../../db/schema";
+import { trafficObservations, travelerReports } from "../../../db/schema";
 import {
   buildForecast,
   cameraFor,
@@ -82,6 +82,23 @@ async function saveObservation(values: typeof trafficObservations.$inferInsert) 
   }
 }
 
+async function loadTravelerReports(direction: Direction, checkpoint: Checkpoint, since: string) {
+  try {
+    return await getDb()
+      .select()
+      .from(travelerReports)
+      .where(and(
+        eq(travelerReports.direction, direction),
+        eq(travelerReports.checkpoint, checkpoint),
+        gte(travelerReports.reportedAt, since),
+      ))
+      .orderBy(desc(travelerReports.reportedAt))
+      .limit(80);
+  } catch {
+    return [];
+  }
+}
+
 function accuracy(rows: Awaited<ReturnType<typeof loadHistory>>) {
   const ordered = [...rows].reverse();
   const errors: number[] = [];
@@ -100,6 +117,27 @@ function accuracy(rows: Awaited<ReturnType<typeof loadHistory>>) {
       ? Math.round(errors.reduce((sum, value) => sum + value, 0) / errors.length)
       : null,
     label: errors.length >= 12 ? "Rolling 30-minute backtest" : "Collecting baseline samples",
+  };
+}
+
+function travelerSummary(rows: Awaited<ReturnType<typeof loadTravelerReports>>) {
+  const withEstimate = rows.filter((row) => row.estimatedWaitMinutes != null);
+  const averageActualWaitMinutes = rows.length
+    ? Math.round(rows.reduce((sum, row) => sum + row.actualWaitMinutes, 0) / rows.length)
+    : null;
+  const meanAbsoluteErrorMinutes = withEstimate.length
+    ? Math.round(withEstimate.reduce((sum, row) => (
+        sum + Math.abs(row.actualWaitMinutes - (row.estimatedWaitMinutes ?? row.actualWaitMinutes))
+      ), 0) / withEstimate.length)
+    : null;
+
+  return {
+    count24h: rows.length,
+    averageActualWaitMinutes,
+    meanAbsoluteErrorMinutes,
+    label: rows.length
+      ? "Traveler reports in the last 24 hours"
+      : "Awaiting traveler reports",
   };
 }
 
@@ -134,6 +172,7 @@ export async function GET(request: Request) {
     };
     const recommendation = createRecommendation(direction, now, cameras);
     const since = new Date(now.getTime() - 6 * 60 * 60000).toISOString();
+    const reportSince = new Date(now.getTime() - 24 * 60 * 60000).toISOString();
     const historyEntries = await Promise.all(
       checkpoints.map(async (checkpoint) => {
         const forecast = buildForecast(checkpoint, direction, now, cameras[checkpoint]);
@@ -150,12 +189,18 @@ export async function GET(request: Request) {
           method: "historical-baseline-v1+official-camera-freshness",
         });
         const rows = await loadHistory(direction, checkpoint, since);
-        return [checkpoint, { rows, forecast, wait }] as const;
+        const reports = await loadTravelerReports(direction, checkpoint, reportSince);
+        return [checkpoint, { rows, reports, forecast, wait }] as const;
       }),
     );
     const history = Object.fromEntries(historyEntries) as Record<
       Checkpoint,
-      { rows: Awaited<ReturnType<typeof loadHistory>>; forecast: ReturnType<typeof buildForecast>; wait: number }
+      {
+        rows: Awaited<ReturnType<typeof loadHistory>>;
+        reports: Awaited<ReturnType<typeof loadTravelerReports>>;
+        forecast: ReturnType<typeof buildForecast>;
+        wait: number;
+      }
     >;
 
     const checkpointPayload = Object.fromEntries(
@@ -172,6 +217,7 @@ export async function GET(request: Request) {
           condition: condition(details.wait),
           trend: trend(details.wait, next),
           accuracy: accuracy(details.rows),
+          travelerReports: travelerSummary(details.reports),
           history: details.rows
             .slice(0, 8)
             .reverse()

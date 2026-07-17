@@ -26,6 +26,12 @@ type LiveCheckpoint = {
     meanAbsoluteErrorMinutes: number | null;
     label: string;
   };
+  travelerReports: {
+    count24h: number;
+    averageActualWaitMinutes: number | null;
+    meanAbsoluteErrorMinutes: number | null;
+    label: string;
+  };
   history: Array<{ timestamp: string; observed: number }>;
 };
 
@@ -56,6 +62,8 @@ type LiveTraffic = {
     zone: "good" | "amber";
   }>>;
 };
+
+type FeedbackStatus = "idle" | "saving" | "saved" | "error";
 
 const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
   "sg-my": {
@@ -212,10 +220,12 @@ function WaitTimeChart({
   recommended,
   series,
   accuracy,
+  travelerReports,
 }: {
   recommended: Checkpoint;
   series: Record<Checkpoint, ChartSeries>;
   accuracy?: Record<Checkpoint, LiveCheckpoint["accuracy"]>;
+  travelerReports?: Record<Checkpoint, LiveCheckpoint["travelerReports"]>;
 }) {
   const [checkpoint, setCheckpoint] = useState<Checkpoint>(recommended);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -387,7 +397,9 @@ function WaitTimeChart({
           <span aria-hidden="true">✦</span>
           <p>
             {selected.insight}
-            {accuracy?.[checkpoint]?.meanAbsoluteErrorMinutes !== null &&
+            {travelerReports?.[checkpoint]?.count24h
+              ? ` ${travelerReports[checkpoint].count24h} traveler reports in the last 24h; average reported crossing ${travelerReports[checkpoint].averageActualWaitMinutes} min.`
+              : accuracy?.[checkpoint]?.meanAbsoluteErrorMinutes !== null &&
               accuracy?.[checkpoint]?.meanAbsoluteErrorMinutes !== undefined
               ? ` Typical 30-minute error: ±${accuracy[checkpoint].meanAbsoluteErrorMinutes} min across ${accuracy[checkpoint].sampleSize} samples.`
               : ` ${accuracy?.[checkpoint]?.label ?? "Collecting baseline samples"}.`}
@@ -398,20 +410,27 @@ function WaitTimeChart({
   );
 }
 
+function apiBase() {
+  if (typeof window === "undefined") return "";
+  return window.location.hostname.endsWith("github.io")
+    ? "https://crossborder-sg-mvp.ncheewee.chatgpt.site"
+    : "";
+}
+
 export default function Home() {
   const [direction, setDirection] = useState<Direction>("sg-my");
   const [refreshing, setRefreshing] = useState(false);
   const [lastChecked, setLastChecked] = useState("12:29 pm");
   const [liveTraffic, setLiveTraffic] = useState<LiveTraffic | null>(null);
   const [feedState, setFeedState] = useState<"loading" | "live" | "fallback">("loading");
+  const [feedbackCheckpoint, setFeedbackCheckpoint] = useState<Checkpoint>("Tuas");
+  const [actualWaitMinutes, setActualWaitMinutes] = useState(45);
+  const [feedbackStatus, setFeedbackStatus] = useState<FeedbackStatus>("idle");
 
   const loadTraffic = useCallback(async () => {
     setRefreshing(true);
     try {
-      const apiBase = window.location.hostname.endsWith("github.io")
-        ? "https://crossborder-sg-mvp.ncheewee.chatgpt.site"
-        : "";
-      const response = await fetch(`${apiBase}/api/traffic?direction=${direction}`, {
+      const response = await fetch(`${apiBase()}/api/traffic?direction=${direction}`, {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`Traffic API returned ${response.status}`);
@@ -536,8 +555,36 @@ export default function Home() {
     [data, liveTraffic],
   );
 
+  useEffect(() => {
+    setFeedbackCheckpoint(data.route as Checkpoint);
+    setFeedbackStatus("idle");
+  }, [data.route, direction]);
+
   function refresh() {
     void loadTraffic();
+  }
+
+  async function submitFeedback() {
+    setFeedbackStatus("saving");
+    try {
+      const checkpoint = liveTraffic?.checkpoints[feedbackCheckpoint];
+      const response = await fetch(`${apiBase()}/api/reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          direction,
+          checkpoint: feedbackCheckpoint,
+          actualWaitMinutes,
+          estimatedWaitMinutes: checkpoint?.waitMinutes,
+          sourceUpdatedAt: checkpoint?.cameraUpdatedAt,
+        }),
+      });
+      if (!response.ok) throw new Error(`Report API returned ${response.status}`);
+      setFeedbackStatus("saved");
+      void loadTraffic();
+    } catch {
+      setFeedbackStatus("error");
+    }
   }
 
   return (
@@ -608,6 +655,10 @@ export default function Home() {
           Tuas: liveTraffic.checkpoints.Tuas.accuracy,
           Woodlands: liveTraffic.checkpoints.Woodlands.accuracy,
         } : undefined}
+        travelerReports={liveTraffic ? {
+          Tuas: liveTraffic.checkpoints.Tuas.travelerReports,
+          Woodlands: liveTraffic.checkpoints.Woodlands.travelerReports,
+        } : undefined}
       />
 
       <section className="checkpoint-section" aria-labelledby="compare-title">
@@ -649,14 +700,58 @@ export default function Home() {
         <div>
           <span className="feedback-kicker">Help improve estimates</span>
           <h2>Crossed recently?</h2>
-          <p>Share your actual crossing time in two taps.</p>
+          <p>
+            {feedbackStatus === "saved"
+              ? "Report saved. Future estimates get sharper as these build up."
+              : feedbackStatus === "error"
+                ? "Couldn’t save that report. Try again after the next refresh."
+                : "Share your actual crossing time in two taps."}
+          </p>
         </div>
-        <button>I’ve crossed</button>
+        <div className="feedback-controls">
+          <div className="mini-tabs" aria-label="Checkpoint crossed">
+            {(["Tuas", "Woodlands"] as Checkpoint[]).map((checkpoint) => (
+              <button
+                key={checkpoint}
+                className={feedbackCheckpoint === checkpoint ? "active" : ""}
+                onClick={() => {
+                  setFeedbackCheckpoint(checkpoint);
+                  setFeedbackStatus("idle");
+                }}
+                aria-pressed={feedbackCheckpoint === checkpoint}
+              >
+                {checkpoint}
+              </button>
+            ))}
+          </div>
+          <div className="wait-chips" aria-label="Actual crossing time">
+            {[20, 35, 50, 75, 100].map((minutes) => (
+              <button
+                key={minutes}
+                className={actualWaitMinutes === minutes ? "active" : ""}
+                onClick={() => {
+                  setActualWaitMinutes(minutes);
+                  setFeedbackStatus("idle");
+                }}
+                aria-pressed={actualWaitMinutes === minutes}
+              >
+                {minutes}m
+              </button>
+            ))}
+          </div>
+          <button
+            className="submit-feedback"
+            onClick={submitFeedback}
+            disabled={feedbackStatus === "saving"}
+          >
+            {feedbackStatus === "saving" ? "Saving" : "I’ve crossed"}
+          </button>
+        </div>
       </section>
 
       <footer>
         <span>CrossBorder.sg preview</span>
-        <span>Codex build · Live beta 0.4</span>
+        <span>Codex build · Live beta 0.5</span>
       </footer>
     </main>
   );
