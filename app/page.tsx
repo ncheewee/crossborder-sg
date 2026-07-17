@@ -43,6 +43,7 @@ const chartSeries = {
 const tripData = {
   "sg-my": {
     route: "Tuas",
+    depart: "Now–1:30 pm",
     saving: 24,
     total: "54–69",
     leaveWindow: "Best window: now–1:10 pm",
@@ -65,6 +66,7 @@ const tripData = {
   },
   "my-sg": {
     route: "Woodlands",
+    depart: "Now–2:00 pm",
     saving: 18,
     total: "48–63",
     leaveWindow: "Best window: now–1:25 pm",
@@ -171,7 +173,7 @@ function WaitTimeChart({ direction, recommended }: { direction: Direction; recom
 
     const draw = () => {
       const width = Math.max(280, container.clientWidth);
-      const height = width < 520 ? 240 : 270;
+      const height = width < 520 ? 178 : 230;
       const ratio = window.devicePixelRatio || 1;
       canvas.width = width * ratio;
       canvas.height = height * ratio;
@@ -191,7 +193,7 @@ function WaitTimeChart({ direction, recommended }: { direction: Direction; recom
       const amberFill = styles.getPropertyValue("--amber-zone").trim();
       const nowColor = styles.getPropertyValue("--teal-bright").trim();
 
-      const padding = { top: 22, right: 16, bottom: 38, left: 37 };
+      const padding = { top: 20, right: 12, bottom: 32, left: 34 };
       const plotWidth = width - padding.left - padding.right;
       const plotHeight = height - padding.top - padding.bottom;
       const maxWait = 100;
@@ -330,8 +332,10 @@ export default function Home() {
   const [direction, setDirection] = useState<Direction>("sg-my");
   const [refreshing, setRefreshing] = useState(false);
   const [lastChecked, setLastChecked] = useState("12:29 pm");
-  const [locationEnabled, setLocationEnabled] = useState(false);
   const data = tripData[direction];
+  const recommendedCamera = data.route === "Tuas"
+    ? { image: "/tuas.jpg", name: "Tuas Second Link" }
+    : { image: "/woodlands.jpg", name: "Woodlands Causeway" };
 
   const cards = useMemo(
     () => [
@@ -392,34 +396,30 @@ export default function Home() {
             Johor <span>→</span> Singapore
           </button>
         </div>
-        <button
-          className={`location-chip ${locationEnabled ? "enabled" : ""}`}
-          onClick={() => setLocationEnabled((value) => !value)}
-        >
-          <span aria-hidden="true">⌖</span>
-          {locationEnabled ? "From your location" : "Use my location"}
-        </button>
       </section>
 
       <section className="recommendation-panel" aria-labelledby="recommendation-title">
         <div className="signal-line">
           <span><i aria-hidden="true" /> Live recommendation</span>
-          <span>4 signals aligned</span>
+          <span>Official data checked {lastChecked}</span>
         </div>
-        <p className="recommendation-kicker">Leave now via</p>
-        <h1 id="recommendation-title">{data.route}</h1>
-        <p className="recommendation-copy">
-          Save about <strong>{data.saving} minutes</strong> compared with the other checkpoint.
-        </p>
-
-        <div className="arrival-estimate">
-          <div>
-            <span>Total time to cross</span>
-            <strong>{data.total} <small>min</small></strong>
+        <div className="recommendation-layout">
+          <div className="recommendation-answer">
+            <p className="recommendation-kicker">Best time to depart</p>
+            <h1 id="recommendation-title">{data.depart}</h1>
+            <p className="recommendation-route">via <strong>{data.route}</strong></p>
+            <div className="answer-metrics">
+              <span><strong>{data.total} min</strong> total to cross</span>
+              <span><strong>Save {data.saving} min</strong> vs the other checkpoint</span>
+            </div>
           </div>
-          <div className="leave-window">
-            <span aria-hidden="true">◷</span>
-            {data.leaveWindow}
+          <div className="hero-camera">
+            <img src={recommendedCamera.image} alt={`Official camera at ${recommendedCamera.name}`} />
+            <div className="camera-shade" />
+            <div className="camera-meta">
+              <span><i aria-hidden="true" /> {recommendedCamera.name}</span>
+              <span>12:27 pm</span>
+            </div>
           </div>
         </div>
 
@@ -428,14 +428,6 @@ export default function Home() {
           <p>{data.reason}</p>
         </div>
       </section>
-
-      <div className="freshness-bar">
-        <span className="freshness-icon" aria-hidden="true">●</span>
-        <div>
-          <strong>Official traffic data checked {lastChecked}</strong>
-          <span>Latest camera images available from 12:27 pm</span>
-        </div>
-      </div>
 
       <WaitTimeChart direction={direction} recommended={data.route as Checkpoint} />
 
@@ -483,7 +475,7 @@ export default function Home() {
 
       <footer>
         <span>CrossBorder.sg preview</span>
-        <span>Codex build · MVP 0.2</span>
+        <span>Codex build · MVP 0.3</span>
       </footer>
     </main>
   );
