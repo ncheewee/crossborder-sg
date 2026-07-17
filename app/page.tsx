@@ -334,21 +334,21 @@ export default function Home() {
   const [lastChecked, setLastChecked] = useState("12:29 pm");
   const data = tripData[direction];
   const recommendedCamera = data.route === "Tuas"
-    ? { image: "/tuas.jpg", name: "Tuas Second Link" }
-    : { image: "/woodlands.jpg", name: "Woodlands Causeway" };
+    ? { image: "tuas.jpg", name: "Tuas Second Link" }
+    : { image: "woodlands.jpg", name: "Woodlands Causeway" };
 
   const cards = useMemo(
     () => [
       {
         name: "Tuas",
         ...data.tuas,
-        image: "/tuas.jpg",
+        image: "tuas.jpg",
         cameraTime: "12:27 pm",
       },
       {
         name: "Woodlands",
         ...data.woodlands,
-        image: "/woodlands.jpg",
+        image: "woodlands.jpg",
         cameraTime: "12:27 pm",
       },
     ],
