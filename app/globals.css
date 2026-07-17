@@ -1,16 +1,22 @@
 @import "tailwindcss";
 
 :root {
-  --ink: #f6f8f7;
-  --muted: #93a09b;
-  --muted-2: #6f7b76;
-  --surface: #101714;
-  --surface-2: #151e1a;
-  --line: rgba(223, 242, 232, 0.1);
-  --emerald: #4ee29b;
-  --emerald-dark: #0c2b1e;
+  --ink: #f2fbfa;
+  --muted: #8ca6a3;
+  --muted-2: #65817d;
+  --surface: #0a1b1a;
+  --surface-2: #0e2422;
+  --line: rgba(191, 239, 233, 0.11);
+  --teal: #2dd4bf;
+  --teal-bright: #5eead4;
+  --emerald: var(--teal);
+  --emerald-dark: #073b36;
   --amber: #ffbb62;
-  --background: #070b09;
+  --background: #03100f;
+  --chart-actual: #e6fffb;
+  --chart-grid: rgba(180, 220, 214, 0.12);
+  --good-zone: rgba(45, 212, 191, 0.11);
+  --amber-zone: rgba(255, 187, 98, 0.075);
 }
 
 * {
@@ -25,7 +31,7 @@ html {
 body {
   margin: 0;
   background:
-    radial-gradient(circle at 50% -15%, rgba(41, 122, 84, 0.16), transparent 30rem),
+    radial-gradient(circle at 50% -15%, rgba(17, 148, 137, 0.2), transparent 30rem),
     var(--background);
   color: var(--ink);
   font-family: var(--font-geist-sans), Arial, sans-serif;
@@ -76,9 +82,9 @@ button {
   width: 32px;
   height: 32px;
   place-items: center;
-  border: 1px solid rgba(78, 226, 155, 0.35);
+  border: 1px solid rgba(45, 212, 191, 0.38);
   border-radius: 9px;
-  background: linear-gradient(145deg, #163827, #0b2117);
+  background: linear-gradient(145deg, #0b4641, #062b28);
   color: var(--emerald);
   font-size: 11px;
   font-weight: 850;
@@ -106,7 +112,7 @@ button {
 
 .refresh-button:hover,
 .location-chip:hover {
-  border-color: rgba(78, 226, 155, 0.34);
+  border-color: rgba(45, 212, 191, 0.34);
   color: var(--ink);
 }
 
@@ -181,8 +187,8 @@ button {
 }
 
 .location-chip.enabled {
-  border-color: rgba(78, 226, 155, 0.26);
-  background: rgba(78, 226, 155, 0.08);
+  border-color: rgba(45, 212, 191, 0.28);
+  background: rgba(45, 212, 191, 0.09);
   color: #dff8eb;
 }
 
@@ -190,11 +196,11 @@ button {
   position: relative;
   overflow: hidden;
   padding: 22px;
-  border: 1px solid rgba(78, 226, 155, 0.24);
+  border: 1px solid rgba(45, 212, 191, 0.28);
   border-radius: 24px;
   background:
-    radial-gradient(circle at 88% 18%, rgba(78, 226, 155, 0.16), transparent 38%),
-    linear-gradient(145deg, #11241a 0%, #0c1511 64%);
+    radial-gradient(circle at 88% 18%, rgba(45, 212, 191, 0.18), transparent 38%),
+    linear-gradient(145deg, #0b302d 0%, #071b19 64%);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.34);
 }
 
@@ -205,7 +211,7 @@ button {
   height: 180px;
   right: -115px;
   bottom: -120px;
-  border: 26px solid rgba(78, 226, 155, 0.045);
+  border: 26px solid rgba(45, 212, 191, 0.055);
   border-radius: 50%;
 }
 
@@ -240,7 +246,7 @@ button {
   margin-right: 6px;
   border-radius: 50%;
   background: var(--emerald);
-  box-shadow: 0 0 14px rgba(78, 226, 155, 0.8);
+  box-shadow: 0 0 14px rgba(45, 212, 191, 0.75);
 }
 
 .recommendation-kicker {
@@ -309,7 +315,7 @@ button {
 .leave-window {
   padding: 8px 10px;
   border-radius: 10px;
-  background: rgba(78, 226, 155, 0.08);
+  background: rgba(45, 212, 191, 0.09);
   color: #b9e8ce;
   font-size: 11px;
   font-weight: 650;
@@ -345,9 +351,9 @@ button {
   padding: 12px 14px;
   display: flex;
   align-items: center;
-  border: 1px solid rgba(78, 226, 155, 0.09);
+  border: 1px solid rgba(45, 212, 191, 0.11);
   border-radius: 14px;
-  background: rgba(78, 226, 155, 0.035);
+  background: rgba(45, 212, 191, 0.045);
 }
 
 .freshness-icon {
@@ -370,6 +376,133 @@ button {
 .freshness-bar span:last-child {
   color: var(--muted-2);
   font-size: 11px;
+}
+
+.forecast-section {
+  margin: 0 0 32px;
+}
+
+.forecast-heading {
+  gap: 14px;
+}
+
+.chart-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.chart-tabs button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.chart-tabs button.active {
+  background: rgba(45, 212, 191, 0.12);
+  color: var(--teal-bright);
+}
+
+.forecast-card {
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid rgba(45, 212, 191, 0.17);
+  border-radius: 20px;
+  background: linear-gradient(155deg, rgba(11, 35, 33, 0.94), rgba(5, 19, 18, 0.98));
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-line {
+  width: 17px;
+  height: 0;
+  border-top: 2px solid var(--chart-actual);
+}
+
+.legend-ai {
+  border-top-color: var(--teal);
+  border-top-style: dashed;
+}
+
+.legend-zone {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.legend-good {
+  border: 1px solid rgba(45, 212, 191, 0.24);
+  background: var(--good-zone);
+}
+
+.legend-amber {
+  border: 1px solid rgba(255, 187, 98, 0.19);
+  background: var(--amber-zone);
+}
+
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.chart-wrap canvas {
+  display: block;
+  max-width: 100%;
+}
+
+.chart-unit {
+  position: absolute;
+  z-index: 1;
+  top: 2px;
+  left: 38px;
+  color: var(--muted-2);
+  font-size: 9px;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.chart-insight {
+  min-height: 42px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border-top: 1px solid var(--line);
+  color: #b9cfcb;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.chart-insight span {
+  color: var(--teal-bright);
+}
+
+.chart-insight p {
+  margin: 0;
 }
 
 .checkpoint-section {
@@ -419,7 +552,7 @@ button {
 }
 
 .checkpoint-card.recommended {
-  border-color: rgba(78, 226, 155, 0.27);
+  border-color: rgba(45, 212, 191, 0.29);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
 }
 
@@ -488,7 +621,7 @@ button {
 }
 
 .trend-good {
-  background: rgba(78, 226, 155, 0.08);
+  background: rgba(45, 212, 191, 0.09);
   color: #9eeac1;
 }
 
@@ -609,7 +742,7 @@ button {
   height: 34px;
   place-items: center;
   border-radius: 10px;
-  background: rgba(78, 226, 155, 0.08);
+  background: rgba(45, 212, 191, 0.09);
   color: var(--emerald);
 }
 
@@ -662,9 +795,9 @@ button {
   flex: 0 0 auto;
   min-height: 42px;
   padding: 0 14px;
-  border: 1px solid rgba(78, 226, 155, 0.25);
+  border: 1px solid rgba(45, 212, 191, 0.27);
   border-radius: 11px;
-  background: rgba(78, 226, 155, 0.1);
+  background: rgba(45, 212, 191, 0.11);
   color: #baf0d2;
   cursor: pointer;
   font-size: 11px;
@@ -732,6 +865,28 @@ a:focus-visible {
 
   .location-chip {
     width: 100%;
+  }
+
+  .forecast-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .chart-tabs {
+    width: 100%;
+  }
+
+  .chart-tabs button {
+    flex: 1;
+  }
+
+  .forecast-card {
+    padding: 14px 10px 10px;
+  }
+
+  .chart-legend {
+    padding-inline: 4px;
+    gap: 8px 12px;
   }
 
   .recommendation-panel {
