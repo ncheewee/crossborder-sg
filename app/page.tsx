@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
 type ForecastWindow = "current" | "next";
+type EstimateMode = "border" | "approach";
+type ApproachSource = "fixed" | "gps" | "address";
 
 type LiveCamera = {
   cameraId: string;
@@ -17,7 +19,10 @@ type ChartSeries = {
   times: string[];
   actual: Array<number | null>;
   prediction: Array<number | null>;
+  uncertainty: Array<number | null>;
   windows: Array<"good" | "amber">;
+  nowIndex: number | null;
+  windowLabel: string;
   insight: string;
 };
 
@@ -34,6 +39,12 @@ type LiveCheckpoint = {
     sampleSize: number;
     meanAbsoluteErrorMinutes: number | null;
     label: string;
+  };
+  uncertainty?: {
+    minutes: number;
+    sampleSize: number;
+    label: string;
+    isSevenDayReady: boolean;
   };
   travelerReports: {
     count24h: number;
@@ -74,6 +85,7 @@ type LiveTraffic = {
     predicted: number;
     observed: number | null;
     zone: "good" | "amber";
+    uncertaintyMinutes?: number;
   }>>;
 };
 
@@ -85,14 +97,20 @@ const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
       times: ["11:00", "11:30", "12:00", "12:30", "1:00", "1:30", "2:00", "2:30", "3:00"],
       actual: [64, 56, 49, 41, null, null, null, null, null],
       prediction: [67, 58, 47, 39, 34, 41, 56, 73, 86],
+      uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "amber", "good", "good", "good", "amber", "amber", "amber"],
+      nowIndex: 3,
+      windowLabel: "Today 00:00–24:00",
       insight: "Depart between 12:00–1:30 pm for the shortest predicted wait.",
     },
     Woodlands: {
       times: ["11:00", "11:30", "12:00", "12:30", "1:00", "1:30", "2:00", "2:30", "3:00"],
       actual: [49, 57, 66, 74, null, null, null, null, null],
       prediction: [51, 59, 68, 76, 82, 85, 77, 66, 55],
+      uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "amber", "amber", "amber", "amber", "amber", "amber", "amber"],
+      nowIndex: 3,
+      windowLabel: "Today 00:00–24:00",
       insight: "Woodlands remains elevated; Tuas is the better departure choice now.",
     },
   },
@@ -101,14 +119,20 @@ const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
       times: ["11:00", "11:30", "12:00", "12:30", "1:00", "1:30", "2:00", "2:30", "3:00"],
       actual: [43, 48, 54, 58, null, null, null, null, null],
       prediction: [45, 49, 55, 59, 64, 68, 61, 53, 47],
+      uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "amber", "amber", "amber", "amber", "amber", "amber", "amber"],
+      nowIndex: 3,
+      windowLabel: "Today 00:00–24:00",
       insight: "Tuas is expected to stay moderate through the afternoon.",
     },
     Woodlands: {
       times: ["11:00", "11:30", "12:00", "12:30", "1:00", "1:30", "2:00", "2:30", "3:00"],
       actual: [48, 43, 39, 36, null, null, null, null, null],
       prediction: [50, 45, 40, 36, 33, 38, 49, 61, 70],
+      uncertainty: [12, 12, 12, 12, 12, 12, 12, 12, 12],
       windows: ["amber", "good", "good", "good", "good", "good", "amber", "amber"],
+      nowIndex: 3,
+      windowLabel: "Today 00:00–24:00",
       insight: "Depart between 11:30 am–2:00 pm while the predicted queue is lower.",
     },
   },
@@ -177,6 +201,53 @@ function formatTimeLabel(value?: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatDayWindow(value?: string) {
+  if (!value) return "00:00–24:00";
+  const date = new Date(value);
+  const day = new Intl.DateTimeFormat("en-SG", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(date);
+  return `${day} · 00:00–24:00`;
+}
+
+function roundUpToQuarter(date: Date) {
+  const next = new Date(date);
+  const remainder = next.getMinutes() % 15;
+  if (remainder) next.setMinutes(next.getMinutes() + (15 - remainder));
+  next.setSeconds(0, 0);
+  return next;
+}
+
+function crossingMidpoint(value: string) {
+  const [low, high] = value.split("–").map((part) => Number.parseInt(part, 10));
+  if (!Number.isFinite(low)) return 0;
+  return Math.round((low + (Number.isFinite(high) ? high : low)) / 2);
+}
+
+function distanceKm(from: GeolocationCoordinates, to: { latitude: number; longitude: number }) {
+  const radius = 6371;
+  const lat1 = from.latitude * Math.PI / 180;
+  const lat2 = to.latitude * Math.PI / 180;
+  const dLat = (to.latitude - from.latitude) * Math.PI / 180;
+  const dLon = (to.longitude - from.longitude) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * radius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const checkpointCoordinates: Record<Checkpoint, { latitude: number; longitude: number }> = {
+  Woodlands: { latitude: 1.4456, longitude: 103.7683 },
+  Tuas: { latitude: 1.3478, longitude: 103.6376 },
+};
+
+function gpsApproachMinutes(position: GeolocationCoordinates | null, checkpoint: Checkpoint, fallback: number) {
+  if (!position) return fallback;
+  const km = distanceKm(position, checkpointCoordinates[checkpoint]);
+  return Math.max(8, Math.round((km / 48) * 60 + 8));
 }
 
 function camerasForCheckpoint(live: LiveTraffic | null, checkpoint: Checkpoint, fallbackImage: string): LiveCamera[] {
@@ -357,11 +428,14 @@ function WaitTimeChart({
       const goodFill = styles.getPropertyValue("--good-zone").trim();
       const amberFill = styles.getPropertyValue("--amber-zone").trim();
       const nowColor = styles.getPropertyValue("--teal-bright").trim();
+      const bandFill = styles.getPropertyValue("--error-band").trim();
 
       const padding = { top: 20, right: 12, bottom: 32, left: 34 };
       const plotWidth = width - padding.left - padding.right;
       const plotHeight = height - padding.top - padding.bottom;
-      const maxWait = Math.max(100, Math.ceil(Math.max(...selected.prediction.filter((value): value is number => value !== null), 80) / 25) * 25);
+      const maxWait = Math.max(100, Math.ceil(Math.max(...selected.prediction.map((value, index) => (
+        value == null ? 80 : value + (selected.uncertainty[index] ?? 0)
+      ))) / 25) * 25);
       const x = (index: number) => padding.left + (index / (selected.times.length - 1)) * plotWidth;
       const y = (value: number) => padding.top + plotHeight - (value / maxWait) * plotHeight;
 
@@ -397,54 +471,90 @@ function WaitTimeChart({
         context.fillText(label, x(index), padding.top + plotHeight + 12);
       });
 
-      const drawLine = (values: Array<number | null>, color: string, dashed: boolean) => {
+      const curvePath = (values: Array<number | null>) => {
         context.beginPath();
+        const points = values
+          .map((value, index) => value === null ? null : { x: x(index), y: y(value) })
+          .filter((value): value is { x: number; y: number } => value !== null);
+        if (!points.length) return points;
+        context.moveTo(points[0].x, points[0].y);
+        for (let index = 0; index < points.length - 1; index += 1) {
+          const current = points[index];
+          const next = points[index + 1];
+          const control = (next.x - current.x) / 2;
+          context.bezierCurveTo(current.x + control, current.y, next.x - control, next.y, next.x, next.y);
+        }
+        return points;
+      };
+
+      const drawBand = () => {
+        const upper = selected.prediction.map((value, index) => (
+          value == null ? null : Math.max(0, value - (selected.uncertainty[index] ?? 0))
+        ));
+        const lower = selected.prediction.map((value, index) => (
+          value == null ? null : value + (selected.uncertainty[index] ?? 0)
+        ));
+        const upperPoints = upper
+          .map((value, index) => value === null ? null : { x: x(index), y: y(value) })
+          .filter((value): value is { x: number; y: number } => value !== null);
+        const lowerPoints = lower
+          .map((value, index) => value === null ? null : { x: x(index), y: y(value) })
+          .filter((value): value is { x: number; y: number } => value !== null);
+        if (!upperPoints.length || !lowerPoints.length) return;
+        context.beginPath();
+        context.moveTo(upperPoints[0].x, upperPoints[0].y);
+        for (let index = 0; index < upperPoints.length - 1; index += 1) {
+          const current = upperPoints[index];
+          const next = upperPoints[index + 1];
+          const control = (next.x - current.x) / 2;
+          context.bezierCurveTo(current.x + control, current.y, next.x - control, next.y, next.x, next.y);
+        }
+        for (let index = lowerPoints.length - 1; index > 0; index -= 1) {
+          const current = lowerPoints[index];
+          const next = lowerPoints[index - 1];
+          const control = (current.x - next.x) / 2;
+          context.bezierCurveTo(current.x - control, current.y, next.x + control, next.y, next.x, next.y);
+        }
+        context.closePath();
+        context.fillStyle = bandFill;
+        context.fill();
+      };
+
+      const drawLine = (values: Array<number | null>, color: string, dashed: boolean) => {
         context.lineWidth = dashed ? 2 : 2.5;
         context.strokeStyle = color;
         context.setLineDash(dashed ? [6, 5] : []);
-        let started = false;
-        values.forEach((value, index) => {
-          if (value === null) return;
-          if (!started) {
-            context.moveTo(x(index), y(value));
-            started = true;
-          } else {
-            context.lineTo(x(index), y(value));
-          }
-        });
+        const points = curvePath(values);
         context.stroke();
         context.setLineDash([]);
 
-        values.forEach((value, index) => {
-          if (value === null) return;
+        points.forEach((point) => {
           context.beginPath();
           context.fillStyle = color;
-          context.arc(x(index), y(value), dashed ? 2.5 : 3, 0, Math.PI * 2);
+          context.arc(point.x, point.y, dashed ? 2.2 : 3, 0, Math.PI * 2);
           context.fill();
         });
       };
 
+      drawBand();
       drawLine(selected.prediction, predictionColor, true);
       drawLine(selected.actual, actualColor, false);
 
-      const currentIndex = Math.max(0, selected.actual.reduce(
-        (last, value, index) => value === null ? last : index,
-        0,
-      ));
-      const nowX = x(currentIndex);
-      context.beginPath();
-      context.strokeStyle = nowColor;
-      context.lineWidth = 1;
-      context.setLineDash([3, 4]);
-      context.moveTo(nowX, padding.top - 4);
-      context.lineTo(nowX, padding.top + plotHeight);
-      context.stroke();
-      context.setLineDash([]);
-      context.fillStyle = nowColor;
-      context.font = "10px Arial, sans-serif";
-      context.textAlign = "center";
-      context.textBaseline = "bottom";
-      context.fillText("NOW", nowX, padding.top - 7);
+      if (selected.nowIndex !== null) {
+        const nowX = x(selected.nowIndex);
+        context.beginPath();
+        context.strokeStyle = nowColor;
+        context.lineWidth = 2;
+        context.setLineDash([]);
+        context.moveTo(nowX, padding.top - 4);
+        context.lineTo(nowX, padding.top + plotHeight);
+        context.stroke();
+        context.fillStyle = nowColor;
+        context.font = "10px Arial, sans-serif";
+        context.textAlign = "center";
+        context.textBaseline = "bottom";
+        context.fillText("NOW", nowX, padding.top - 7);
+      }
     };
 
     draw();
@@ -493,9 +603,11 @@ function WaitTimeChart({
       </div>
 
       <div className="forecast-card">
+        <div className="window-label">{selected.windowLabel}</div>
         <div className="chart-legend" aria-label="Chart legend">
           <span><i className="legend-line legend-actual" aria-hidden="true" /> Actual wait</span>
           <span><i className="legend-line legend-ai" aria-hidden="true" /> AI prediction</span>
+          <span><i className="legend-zone legend-error" aria-hidden="true" /> Error band</span>
           <span><i className="legend-zone legend-good" aria-hidden="true" /> Good to depart</span>
           <span><i className="legend-zone legend-amber" aria-hidden="true" /> Less ideal</span>
         </div>
@@ -545,6 +657,11 @@ export default function Home() {
   const [actualWaitMinutes, setActualWaitMinutes] = useState(45);
   const [feedbackStatus, setFeedbackStatus] = useState<FeedbackStatus>("idle");
   const [showSignals, setShowSignals] = useState(false);
+  const [estimateMode, setEstimateMode] = useState<EstimateMode>("border");
+  const [approachSource, setApproachSource] = useState<ApproachSource>("fixed");
+  const [userLocation, setUserLocation] = useState<GeolocationCoordinates | null>(null);
+  const [locationStatus, setLocationStatus] = useState<"idle" | "detecting" | "ready" | "denied">("idle");
+  const [locationInput, setLocationInput] = useState("");
 
   const loadTraffic = useCallback(async () => {
     setRefreshing(true);
@@ -606,6 +723,30 @@ export default function Home() {
     };
   }, [direction, liveTraffic]);
 
+  const selectedRoute = data.route as Checkpoint;
+  const approachMinutes = gpsApproachMinutes(
+    approachSource === "gps" ? userLocation : null,
+    selectedRoute,
+    data.drive,
+  );
+  const borderMid = crossingMidpoint(data.border);
+  const displayedMinutes = estimateMode === "border"
+    ? borderMid
+    : borderMid + approachMinutes;
+  const displayedRange = estimateMode === "border"
+    ? data.border
+    : `${Math.max(15, displayedMinutes - 7)}–${displayedMinutes + 9}`;
+  const departureAt = data.departAt ? new Date(data.departAt) : new Date();
+  const displayedClearAt = roundUpToQuarter(new Date(departureAt.getTime() + displayedMinutes * 60000));
+  const displayedClearTime = formatTimeLabel(displayedClearAt.toISOString());
+  const approachBasis = estimateMode === "border"
+    ? "Border crossing only"
+    : approachSource === "gps" && userLocation
+      ? "Location-adjusted approach"
+      : approachSource === "address" && locationInput.trim()
+        ? "Address saved · fixed approach until geocoding is connected"
+        : "Fixed approach estimate";
+
   const liveSeries = useMemo<Record<Checkpoint, Record<ForecastWindow, ChartSeries>>>(() => {
     const fallback = Object.fromEntries((["Tuas", "Woodlands"] as Checkpoint[]).map((checkpoint) => [
       checkpoint,
@@ -623,16 +764,25 @@ export default function Home() {
       const savedHistory = forecastWindow === "current"
         ? liveTraffic.checkpoints[checkpoint].history.slice(-1)
         : [];
+      const nowTime = new Date(liveTraffic.generatedAt).getTime();
+      const nowIndex = forecastWindow === "current"
+        ? future.reduce((nearest, point, index) => {
+          const difference = Math.abs(new Date(point.timestamp).getTime() - nowTime);
+          return difference < nearest.difference ? { index, difference } : nearest;
+        }, { index: 0, difference: Number.POSITIVE_INFINITY }).index
+        : null;
       const times = future.map((point, index) => {
-        if (index === 0 && forecastWindow === "current") return "Now";
+        if (index === 0) return "00:00";
+        if (index === future.length - 1) return "24:00";
         return point.time;
       });
-      const actual = future.map((_, index) => index === 0 && forecastWindow === "current"
+      const actual = future.map((_, index) => index === nowIndex && forecastWindow === "current"
         ? savedHistory[0]?.observed ?? current
         : null);
-      const prediction = future.map((point, index) => index === 0 && forecastWindow === "current"
+      const prediction = future.map((point, index) => index === nowIndex && forecastWindow === "current"
         ? current
         : point.predicted);
+      const uncertainty = future.map((point) => point.uncertaintyMinutes ?? liveTraffic.checkpoints[checkpoint].uncertainty?.minutes ?? 12);
       const low = Math.min(...future.map((point) => point.predicted));
       const windows = future.slice(0, -1).map((point) => (
         point.predicted <= low + 4 ? "good" as const : "amber" as const
@@ -643,7 +793,10 @@ export default function Home() {
         times,
         actual,
         prediction,
+        uncertainty,
         windows,
+        nowIndex,
+        windowLabel: formatDayWindow(future[0]?.timestamp),
         insight: best
           ? `The lowest ${checkpoint} estimate in the ${label} is ${best.predicted} minutes around ${best.time}.`
           : `The current ${checkpoint} estimate is ${current} minutes.`,
@@ -691,6 +844,27 @@ export default function Home() {
 
   function refresh() {
     void loadTraffic();
+  }
+
+  function detectLocation() {
+    if (!("geolocation" in navigator)) {
+      setLocationStatus("denied");
+      return;
+    }
+    setEstimateMode("approach");
+    setApproachSource("gps");
+    setLocationStatus("detecting");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation(position.coords);
+        setLocationStatus("ready");
+      },
+      () => {
+        setUserLocation(null);
+        setLocationStatus("denied");
+      },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 },
+    );
   }
 
   async function submitFeedback() {
@@ -757,12 +931,13 @@ export default function Home() {
             <h1 id="recommendation-title">{data.depart}</h1>
             <p className="recommendation-route">via <strong>{data.route}</strong></p>
             <p className="clearance-line">
-              Expected to clear {data.clearDestination ?? "the border"} around <strong>{data.clearTime ?? "—"}</strong>
+              Expected to clear {data.clearDestination ?? "the border"} around <strong>{displayedClearTime}</strong>
+              <span> · {approachBasis}</span>
             </p>
             <div className="answer-metrics">
               <span><strong>{data.border} min</strong> border crossing only</span>
-              <span><strong>{data.drive} min</strong> fixed approach estimate</span>
-              <span><strong>{data.total} min</strong> combined approach + border</span>
+              <span><strong>{approachMinutes} min</strong> {approachSource === "gps" && userLocation ? "estimated from GPS" : "approach estimate"}</span>
+              <span><strong>{displayedRange} min</strong> {estimateMode === "border" ? "shown in border-only mode" : "shown incl. approach"}</span>
               <span><strong>Save {data.saving} min</strong> vs the other checkpoint</span>
             </div>
           </div>
@@ -776,6 +951,54 @@ export default function Home() {
         <div className="reason-row">
           <span className="spark" aria-hidden="true">✦</span>
           <p>{data.reason}</p>
+        </div>
+        <div className="estimate-panel" aria-label="Estimate mode">
+          <div className="estimate-toggle">
+            <button
+              className={estimateMode === "border" ? "active" : ""}
+              onClick={() => setEstimateMode("border")}
+              aria-pressed={estimateMode === "border"}
+            >
+              Border only
+            </button>
+            <button
+              className={estimateMode === "approach" ? "active" : ""}
+              onClick={() => setEstimateMode("approach")}
+              aria-pressed={estimateMode === "approach"}
+            >
+              Include approach
+            </button>
+          </div>
+          {estimateMode === "approach" && (
+            <div className="approach-tools">
+              <button
+                className={approachSource === "gps" ? "active" : ""}
+                onClick={detectLocation}
+              >
+                {locationStatus === "detecting" ? "Detecting…" : "Use current location"}
+              </button>
+              <label>
+                <span>Address / postal code</span>
+                <input
+                  value={locationInput}
+                  onChange={(event) => {
+                    setLocationInput(event.target.value);
+                    setApproachSource("address");
+                  }}
+                  placeholder="e.g. 238863 or Orchard Road"
+                />
+              </label>
+              <small>
+                {locationStatus === "ready"
+                  ? "GPS estimate active for the approach leg."
+                  : locationStatus === "denied"
+                    ? "Location not available; using fixed approach estimate."
+                    : locationInput.trim()
+                      ? "Address saved. Geocoding is the next backend connection."
+                      : "Choose GPS or enter a start point to make approach time explicit."}
+              </small>
+            </div>
+          )}
         </div>
       </section>
 
@@ -845,7 +1068,11 @@ export default function Home() {
               </div>
               <div>
                 <span>Approach basis</span>
-                <strong>Fixed estimate, not your GPS</strong>
+                <strong>{approachBasis}</strong>
+              </div>
+              <div>
+                <span>Uncertainty band</span>
+                <strong>{liveTraffic?.checkpoints[data.route as Checkpoint].uncertainty?.label ?? "Collecting 7-day data"}</strong>
               </div>
               <div>
                 <span>Model status</span>

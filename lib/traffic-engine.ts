@@ -14,6 +14,7 @@ export type ForecastPoint = {
   predicted: number;
   observed: number | null;
   zone: "good" | "amber";
+  uncertaintyMinutes?: number;
 };
 
 const cameraIds: Record<Checkpoint, string> = {
@@ -89,6 +90,20 @@ function formatSingaporeTime(date: Date) {
   }).format(date);
 }
 
+function singaporeMidnight(date: Date, offsetDays = 0) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "01";
+  const midnight = new Date(`${value("year")}-${value("month")}-${value("day")}T00:00:00+08:00`);
+  midnight.setDate(midnight.getDate() + offsetDays);
+  return midnight;
+}
+
 function roundUpToQuarterHour(date: Date) {
   const rounded = new Date(date);
   const minutes = rounded.getMinutes();
@@ -113,8 +128,7 @@ export function buildForecast(
   now: Date,
   camera: OfficialCamera,
 ) {
-  const start = new Date(now);
-  start.setMinutes(Math.floor(start.getMinutes() / 30) * 30, 0, 0);
+  const start = singaporeMidnight(now);
   const raw = Array.from({ length: 97 }, (_, index) => {
     const at = new Date(start.getTime() + index * 30 * 60000);
     return { at, predicted: estimateWait(checkpoint, direction, at, camera) };
@@ -143,22 +157,28 @@ export function createRecommendation(
   ) as Record<Checkpoint, ForecastPoint[]>;
 
   const candidates = checkpoints.flatMap((checkpoint) =>
-    forecasts[checkpoint].slice(0, 49).map((point, index) => ({
+    forecasts[checkpoint].map((point) => ({
       checkpoint,
       point,
-      index,
       total: point.predicted + driveMinutes[direction][checkpoint],
+      timestamp: new Date(point.timestamp).getTime(),
     })),
-  );
-  const nowCandidates = candidates.filter((candidate) => candidate.index === 0);
+  ).filter((candidate) => {
+    const next24h = now.getTime() + 24 * 60 * 60000;
+    return candidate.timestamp >= now.getTime() - 30 * 60000 && candidate.timestamp <= next24h;
+  });
+  const nowCandidates = candidates.filter((candidate) => (
+    Math.abs(candidate.timestamp - now.getTime()) <= 30 * 60000
+  ));
   const nowBest = nowCandidates.sort((a, b) => a.total - b.total)[0];
   const futureBest = candidates
-    .filter((candidate) => candidate.index > 0)
+    .filter((candidate) => candidate.timestamp > now.getTime() + 30 * 60000)
     .sort((a, b) => a.total - b.total)[0];
-  const shouldWait = futureBest.total <= nowBest.total - 15;
-  const best = shouldWait ? futureBest : nowBest;
+  const fallbackBest = candidates.sort((a, b) => a.total - b.total)[0];
+  const shouldWait = Boolean(futureBest && nowBest && futureBest.total <= nowBest.total - 15);
+  const best = shouldWait && futureBest ? futureBest : nowBest ?? fallbackBest;
   const sameTimeAlternative = candidates.find(
-    (candidate) => candidate.index === best.index && candidate.checkpoint !== best.checkpoint,
+    (candidate) => candidate.timestamp === best.timestamp && candidate.checkpoint !== best.checkpoint,
   );
   const saving = Math.max(0, (sameTimeAlternative?.total ?? best.total) - best.total);
   const departureAt = shouldWait ? new Date(best.point.timestamp) : now;

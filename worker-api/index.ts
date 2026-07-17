@@ -129,6 +129,28 @@ function travelerSummary(rows: TravelerReportRow[]) {
   };
 }
 
+function uncertaintyBand(rows: TrafficObservationRow[], reports: TravelerReportRow[]) {
+  const backtest = accuracy(rows);
+  const traveler = travelerSummary(reports);
+  const sampleSize = backtest.sampleSize + traveler.count24h;
+  const candidateErrors = [
+    backtest.meanAbsoluteErrorMinutes,
+    traveler.meanAbsoluteErrorMinutes,
+  ].filter((value): value is number => value != null);
+  const minutes = candidateErrors.length
+    ? Math.max(6, Math.round(candidateErrors.reduce((sum, value) => sum + value, 0) / candidateErrors.length))
+    : 12;
+
+  return {
+    minutes,
+    sampleSize,
+    label: sampleSize >= 24
+      ? `±${minutes} min band from recent backtests and traveler reports`
+      : `±${minutes} min provisional band · collecting 7-day data`,
+    isSevenDayReady: sampleSize >= 24,
+  };
+}
+
 async function loadHistory(
   sql: ReturnType<typeof neon>,
   direction: Direction,
@@ -247,7 +269,7 @@ async function handleTraffic(request: Request, env: Env) {
       Tuas: relatedCamerasFor("Tuas", item.cameras),
     };
     const recommendation = createRecommendation(direction, now, cameras);
-    const since = new Date(now.getTime() - 6 * 60 * 60000).toISOString();
+    const since = new Date(now.getTime() - 7 * 24 * 60 * 60000).toISOString();
     const reportSince = new Date(now.getTime() - 24 * 60 * 60000).toISOString();
 
     const historyEntries = await Promise.all(
@@ -284,6 +306,7 @@ async function handleTraffic(request: Request, env: Env) {
       checkpoints.map((checkpoint) => {
         const details = history[checkpoint];
         const next = details.forecast[1]?.predicted ?? details.wait;
+        const band = uncertaintyBand(details.rows, details.reports);
         return [checkpoint, {
           cameraId: cameras[checkpoint].cameraId,
           imageUrl: cameras[checkpoint].imageUrl,
@@ -295,6 +318,7 @@ async function handleTraffic(request: Request, env: Env) {
           condition: condition(details.wait),
           trend: trend(details.wait, next),
           accuracy: accuracy(details.rows),
+          uncertainty: band,
           travelerReports: travelerSummary(details.reports),
           history: details.rows
             .slice(0, 8)
@@ -336,7 +360,15 @@ async function handleTraffic(request: Request, env: Env) {
         confidenceLabel: recommendation.confidenceLabel,
       },
       checkpoints: checkpointPayload,
-      forecasts: recommendation.forecasts,
+      forecasts: Object.fromEntries(
+        checkpoints.map((checkpoint) => {
+          const band = uncertaintyBand(history[checkpoint].rows, history[checkpoint].reports);
+          return [checkpoint, recommendation.forecasts[checkpoint].map((point) => ({
+            ...point,
+            uncertaintyMinutes: band.minutes,
+          }))];
+        }),
+      ),
     }, {
       headers: { "Cache-Control": "public, max-age=60, s-maxage=90" },
     });
