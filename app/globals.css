@@ -354,11 +354,10 @@ button { font: inherit; }
   border-radius: 999px;
   background: #2563eb;
   border: 2px solid #ffffff;
-  box-shadow:
-    0 0 0 5px rgba(37, 99, 235, 0.18),
-    0 0 13px 4px rgba(37, 99, 235, 0.76);
+  box-shadow: 0 0 11px 3px rgba(37, 99, 235, 0.7);
   transform: translate(-50%, -50%);
   pointer-events: none;
+  isolation: isolate;
 }
 
 .spark-now-marker::before {
@@ -368,19 +367,22 @@ button { font: inherit; }
 .spark-now-marker i {
   display: block;
   position: absolute;
-  inset: -7px;
+  z-index: -1;
+  inset: -5px;
   border-radius: inherit;
-  border: 1px solid rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.26);
+  box-shadow: 0 0 12px 3px rgba(37, 99, 235, 0.48);
+  animation: breathe-now 0.9s ease-in-out infinite;
 }
 
 @keyframes breathe-now {
   0%, 100% {
-    opacity: 0.28;
-    transform: scale(1);
+    opacity: 0.58;
+    transform: scale(0.88);
   }
   50% {
-    opacity: 0.86;
-    transform: scale(2.05);
+    opacity: 0.1;
+    transform: scale(1.65);
   }
 }
 
