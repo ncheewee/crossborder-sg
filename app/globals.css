@@ -295,7 +295,7 @@ button { font: inherit; }
 
 .sparkline-card {
   min-width: 0;
-  height: 56px;
+  height: 60px;
   min-height: 0;
   display: grid;
   place-items: stretch;
@@ -397,6 +397,7 @@ button { font: inherit; }
   position: relative;
   height: 22px;
   margin: -2px 8px -2px 28px;
+  transform: translateY(-5px);
 }
 
 .spark-axis span {

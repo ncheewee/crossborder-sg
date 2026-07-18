@@ -572,8 +572,8 @@ function Sparkline24h({
       .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const width = 240;
-    const height = 68;
-    const padding = { top: 8, right: 8, bottom: 8, left: 28 };
+    const height = 74;
+    const padding = { top: 11, right: 8, bottom: 8, left: 28 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     if (safePoints.length < 2) return null;
