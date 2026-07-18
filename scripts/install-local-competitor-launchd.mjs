@@ -56,7 +56,11 @@ cd ${repoRoot}
 export PATH="/opt/homebrew/bin:/opt/homebrew/share/android-commandlinetools/platform-tools:/usr/bin:/bin:/usr/sbin:/sbin"
 export COMPETITOR_CAPTURE_DIR="${captureDir}"
 
-if [[ -f "local-env/competitor-telegram.env" ]]; then
+if [[ -f "${supportDir}/competitor-telegram.env" ]]; then
+  set -a
+  source "${supportDir}/competitor-telegram.env"
+  set +a
+elif [[ -f "local-env/competitor-telegram.env" ]]; then
   set -a
   source "local-env/competitor-telegram.env"
   set +a

@@ -74,9 +74,18 @@ function routeBody(checkpoint, apiDirection) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-  return response.json();
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+      return response.json();
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2500));
+    }
+  }
+  throw lastError;
 }
 
 async function googleRouteMinutes(checkpoint, apiDirection) {
