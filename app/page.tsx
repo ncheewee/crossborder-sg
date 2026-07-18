@@ -523,8 +523,8 @@ function Sparkline24h({
       .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const width = 240;
-    const height = 104;
-    const padding = { top: 10, right: 12, bottom: 12, left: 12 };
+    const height = 68;
+    const padding = { top: 8, right: 12, bottom: 8, left: 12 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     if (safePoints.length < 2) return null;
@@ -545,16 +545,6 @@ function Sparkline24h({
     const maxWait = Math.max(minWait + 30, Math.max(...waits, current, 90) + 10);
     const x = (timestamp: string) => padding.left + ((new Date(timestamp).getTime() - startMs) / spanMs) * plotWidth;
     const y = (value: number) => padding.top + plotHeight - ((value - minWait) / (maxWait - minWait)) * plotHeight;
-    const clampY = (value: number) => Math.min(padding.top + plotHeight, Math.max(padding.top, y(value)));
-    const band = (low: number, high: number, tone: SparkTone) => {
-      const yTop = clampY(high);
-      const yBottom = clampY(low);
-      return {
-        tone,
-        y: yTop,
-        h: Math.max(0, yBottom - yTop),
-      };
-    };
     const plotted = safePoints.map((point, index) => ({
       x: x(point.timestamp),
       y: y(smoothedWaits[index]),
@@ -609,13 +599,18 @@ function Sparkline24h({
       predictionPath: curvePath(predictionPoints),
       nowX,
       nowY,
+      nowLeft: nowX === null ? null : `${((nowX / width) * 100).toFixed(2)}%`,
+      nowTop: nowY === null ? null : `${((nowY / height) * 100).toFixed(2)}%`,
       padding,
       plotHeight,
-      zones: [
-        band(minWait, 45, "good"),
-        band(45, 90, "amber"),
-        band(90, maxWait, "bad"),
-      ].filter((zone) => zone.h > 0.5),
+      zones: plotted.slice(0, -1).map((point, index) => {
+        const next = plotted[index + 1];
+        return {
+          x: point.x,
+          w: Math.max(1, next.x - point.x),
+          tone: waitTone((point.predicted + next.predicted) / 2),
+        };
+      }),
       grid: [padding.top, padding.top + plotHeight / 2, padding.top + plotHeight],
     };
   }, [current, nowMs, points]);
@@ -626,12 +621,12 @@ function Sparkline24h({
         <svg viewBox={`0 0 ${chart.width} ${chart.height}`} role="img" aria-label={label} preserveAspectRatio="none">
           {chart.zones.map((zone, index) => (
             <rect
-              key={`${zone.tone}-${index}`}
+              key={`${zone.x}-${index}`}
               className={`spark-zone spark-zone-${zone.tone}`}
-              x={chart.padding.left}
-              y={zone.y}
-              width={chart.width - chart.padding.left - chart.padding.right}
-              height={zone.h}
+              x={zone.x}
+              y={chart.padding.top}
+              width={zone.w}
+              height={chart.plotHeight}
             />
           ))}
           {chart.grid.map((y) => (
@@ -641,15 +636,12 @@ function Sparkline24h({
           <path className="spark-line-underlay spark-line-forecast-underlay" d={chart.predictionPath} />
           <path className="spark-line" d={chart.historyPath} />
           <path className="spark-line spark-line-forecast" d={chart.predictionPath} />
-          {chart.nowX !== null && chart.nowY !== null && (
-            <>
-              <circle className="spark-now-pulse" cx={chart.nowX} cy={chart.nowY} r="5.2" />
-              <circle className="spark-now-glow" cx={chart.nowX} cy={chart.nowY} r="8.8" />
-              <circle className="spark-now-dot" cx={chart.nowX} cy={chart.nowY} r="5.2" />
-              <circle className="spark-now-core" cx={chart.nowX} cy={chart.nowY} r="2" />
-            </>
-          )}
         </svg>
+      )}
+      {chart?.nowLeft && chart.nowTop && (
+        <span className="spark-now-marker" style={{ left: chart.nowLeft, top: chart.nowTop }} aria-hidden="true">
+          <i />
+        </span>
       )}
     </div>
   );
@@ -718,10 +710,15 @@ function LandingCheckpointCard({
 
   return (
     <article className="landing-checkpoint-card">
-      <div className="landing-card-top">
-        <div>
-          <h1><span>{checkpoint}</span></h1>
-        </div>
+      <div className="landing-camera-header">
+        <CameraCarousel
+          cameras={cameras}
+          title={`${checkpoint} official cameras`}
+          fallbackImage={fallbackImage}
+          compact
+          auto
+        />
+        <h1><span>{checkpoint}</span></h1>
       </div>
 
       <div className="landing-card-body">
@@ -754,14 +751,6 @@ function LandingCheckpointCard({
           />
         </div>
       </div>
-
-      <CameraCarousel
-        cameras={cameras}
-        title={`${checkpoint} official cameras`}
-        fallbackImage={fallbackImage}
-        compact
-        auto
-      />
     </article>
   );
 }
@@ -1393,10 +1382,6 @@ export default function Home() {
         <LandingCheckpointCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
       </section>
 
-      <footer>
-        <span>CrossBorder.sg preview</span>
-        <span>Codex build · Live beta 0.7</span>
-      </footer>
     </main>
   );
 }

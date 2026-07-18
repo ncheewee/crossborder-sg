@@ -45,11 +45,11 @@ button { font: inherit; }
   width: min(100%, 560px);
   min-height: 100vh;
   margin: 0 auto;
-  padding: 0 16px 14px;
+  padding: 0 14px 10px;
 }
 
 .topbar {
-  height: 58px;
+  height: 42px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -63,7 +63,7 @@ button { font: inherit; }
 
 .updated-line span {
   color: var(--ink);
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 780;
 }
 
@@ -85,7 +85,7 @@ button { font: inherit; }
 }
 
 .brand > span:last-child span { color: var(--teal); }
-.brand.compact { font-size: 18px; }
+.brand.compact { font-size: 14px; }
 
 .brand-mark {
   display: grid;
@@ -122,7 +122,7 @@ button { font: inherit; }
 
 .landing-shell {
   width: min(100%, 460px);
-  padding-bottom: 10px;
+  padding-bottom: 0;
 }
 
 .landing-intro {
@@ -143,41 +143,35 @@ button { font: inherit; }
 
 .landing-card-stack {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .landing-card-stack.single-card,
 .landing-card-stack.double-card {
-  padding-top: 10px;
+  padding-top: 7px;
 }
 
 .landing-checkpoint-card {
   overflow: hidden;
-  padding: 9px;
+  padding: 8px;
   border: 1px solid rgba(13, 148, 136, 0.18);
-  border-radius: 17px;
+  border-radius: 16px;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(236, 250, 248, 0.88)),
     var(--surface);
   box-shadow: 0 12px 34px rgba(18, 87, 79, 0.09);
 }
 
-.landing-card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+.landing-camera-header {
+  position: relative;
   margin-bottom: 6px;
 }
 
-.landing-card-top p {
-  margin: 0 0 2px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 720;
-}
-
-.landing-card-top h1 {
+.landing-camera-header h1 {
+  position: absolute;
+  z-index: 3;
+  top: 9px;
+  left: 9px;
   margin: 0;
   color: #ffffff;
   font-size: clamp(17px, 4.8vw, 22px);
@@ -185,35 +179,35 @@ button { font: inherit; }
   letter-spacing: 0;
 }
 
-.landing-card-top h1 span {
+.landing-camera-header h1 span {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
   padding: 5px 10px 6px;
   border-radius: 999px;
   background: linear-gradient(135deg, #0f766e, #0d9488);
-  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.22);
+  box-shadow: 0 8px 18px rgba(6, 78, 71, 0.42);
 }
 
 .landing-card-body {
   display: grid;
-  gap: 3px;
-  margin-bottom: 6px;
+  gap: 2px;
+  margin-bottom: 0;
 }
 
 .direction-signal-row,
 .spark-axis-row {
   display: grid;
-  grid-template-columns: minmax(112px, 32%) minmax(0, 1fr);
-  gap: 7px;
+  grid-template-columns: minmax(108px, 31%) minmax(0, 1fr);
+  gap: 6px;
   align-items: stretch;
 }
 
 .duration-row {
   min-width: 0;
-  padding: 6px 7px 5px;
+  padding: 5px 6px 4px;
   border: 1px solid var(--line);
-  border-radius: 13px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.82);
 }
 
@@ -227,7 +221,7 @@ button { font: inherit; }
 
 .duration-row span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 760;
   line-height: 1.15;
 }
@@ -236,9 +230,9 @@ button { font: inherit; }
   display: flex;
   align-items: baseline;
   gap: 3px;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--ink);
-  font-size: clamp(19px, 5.2vw, 24px);
+  font-size: clamp(18px, 4.9vw, 23px);
   line-height: 1;
   letter-spacing: 0;
   white-space: nowrap;
@@ -246,7 +240,7 @@ button { font: inherit; }
 
 .duration-row em {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 660;
   letter-spacing: 0;
@@ -255,8 +249,8 @@ button { font: inherit; }
 .trend-chip {
   width: fit-content;
   max-width: 100%;
-  margin-top: 5px;
-  padding: 3px 6px;
+  margin-top: 4px;
+  padding: 2px 6px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 760;
@@ -280,14 +274,15 @@ button { font: inherit; }
 
 .sparkline-card {
   min-width: 0;
-  height: 62px;
+  height: 56px;
   min-height: 0;
   display: grid;
   place-items: stretch;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 13px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.74);
+  position: relative;
 }
 
 .sparkline-card svg {
@@ -326,25 +321,32 @@ button { font: inherit; }
   stroke-dasharray: 1 7;
 }
 
-.spark-now-glow {
-  fill: rgba(37, 99, 235, 0.28);
-  filter: drop-shadow(0 0 8px rgba(37, 99, 235, 0.95)) drop-shadow(0 0 14px rgba(59, 130, 246, 0.7));
+.spark-now-marker {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #2563eb;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.22), 0 0 17px rgba(37, 99, 235, 1);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
-.spark-now-pulse {
-  fill: rgba(37, 99, 235, 0.42);
-  transform-box: fill-box;
-  transform-origin: center;
+.spark-now-marker::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: inherit;
+  background: rgba(37, 99, 235, 0.35);
   animation: breathe-now 1.05s ease-in-out infinite;
 }
 
-.spark-now-dot {
-  fill: #2563eb;
-  filter: drop-shadow(0 0 7px rgba(37, 99, 235, 1));
-}
-
-.spark-now-core {
-  fill: #ffffff;
+.spark-now-marker i {
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  background: #ffffff;
 }
 
 @keyframes breathe-now {
@@ -360,12 +362,12 @@ button { font: inherit; }
 
 .spark-axis-row {
   align-items: center;
-  min-height: 14px;
+  min-height: 13px;
 }
 
 .spark-axis {
   position: relative;
-  height: 14px;
+  height: 13px;
   margin: -1px 9px;
   border-top: 1px solid rgba(48, 83, 78, 0.16);
 }
@@ -398,15 +400,15 @@ button { font: inherit; }
 }
 
 .landing-checkpoint-card .camera-carousel.compact .camera-frame {
-  height: clamp(88px, 26vw, 118px);
+  height: clamp(152px, 42vw, 178px);
   border-radius: 12px;
 }
 
 .landing-checkpoint-card .camera-meta {
   left: 10px;
   right: 10px;
-  bottom: 9px;
-  font-size: 11px;
+  bottom: 8px;
+  font-size: 10px;
 }
 
 .landing-checkpoint-card .camera-dots {
