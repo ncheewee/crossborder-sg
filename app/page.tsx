@@ -97,6 +97,30 @@ type TrafficByDirection = Partial<Record<Direction, LiveTraffic>>;
 type SparkTone = "good" | "amber" | "bad";
 type SparkPoint = { timestamp: string; predicted: number; zone?: SparkTone };
 type SparkSeries = { today: SparkPoint[]; comparison: SparkPoint[] };
+type HourlyPattern = { today: number[]; comparison: number[] };
+
+const checkpointSgSaturdayPattern: Record<Direction, Record<Checkpoint, HourlyPattern>> = {
+  "sg-my": {
+    Woodlands: {
+      today: [55, 28, 20, 20, 20, 21, 34, 52, 74, 70, 80, 86, 63, 70, 76, 69, 55, 68, 52, 34, 29, 30, 33, 31],
+      comparison: [45, 30, 20, 20, 20, 22, 35, 40, 52, 33, 38, 40, 42, 38, 40, 41, 28, 32, 34, 34, 30, 28, 32, 29],
+    },
+    Tuas: {
+      today: [20, 20, 20, 20, 20, 22, 25, 50, 38, 47, 55, 60, 58, 40, 43, 47, 35, 30, 40, 30, 20, 20, 20, 20],
+      comparison: [20, 20, 20, 20, 20, 20, 22, 30, 25, 20, 20, 20, 20, 20, 20, 20, 20, 23, 20, 20, 20, 20, 20, 20],
+    },
+  },
+  "my-sg": {
+    Woodlands: {
+      today: [25, 20, 20, 20, 20, 20, 20, 24, 40, 36, 31, 30, 38, 42, 34, 32, 45, 47, 44, 38, 36, 48, 43, 68],
+      comparison: [28, 20, 20, 22, 23, 20, 20, 22, 22, 24, 24, 28, 30, 34, 33, 32, 50, 52, 38, 28, 30, 32, 50, 58],
+    },
+    Tuas: {
+      today: [20, 20, 20, 20, 20, 20, 20, 20, 22, 22, 22, 20, 25, 30, 24, 28, 38, 30, 35, 30, 34, 36, 52, 44],
+      comparison: [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 21, 25, 22, 22, 22, 25, 24, 28, 25, 24, 22, 20, 28],
+    },
+  },
+};
 
 const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
   "sg-my": {
@@ -569,24 +593,15 @@ function lastWeekComparisonPoints(
   direction: Direction,
   checkpoint: Checkpoint,
 ): SparkPoint[] {
+  void trafficByDirection;
+  const values = checkpointSgSaturdayPattern[direction][checkpoint].comparison;
   const lastWeekBase = new Date();
   lastWeekBase.setDate(lastWeekBase.getDate() - 7);
   lastWeekBase.setHours(0, 0, 0, 0);
-  const livePoints = trafficByDirection[direction]?.forecasts[checkpoint];
-  if (livePoints?.length) {
-    const firstLiveMs = new Date(livePoints[0].timestamp).getTime();
-    return livePoints.slice(0, 49).map((point) => ({
-      timestamp: new Date(lastWeekBase.getTime() + Math.max(0, new Date(point.timestamp).getTime() - firstLiveMs)).toISOString(),
-      predicted: point.predicted,
-      zone: waitTone(point.predicted),
-    }));
-  }
-
-  const fallback = chartSeries[direction][checkpoint];
-  return fallback.prediction.map((predicted, index) => ({
-    timestamp: new Date(lastWeekBase.getTime() + index * 3 * 60 * 60 * 1000).toISOString(),
+  return values.map((predicted, index) => ({
+    timestamp: new Date(lastWeekBase.getTime() + index * 60 * 60 * 1000).toISOString(),
     predicted: predicted ?? 50,
-    zone: fallback.windows[Math.min(index, fallback.windows.length - 1)] ?? "amber",
+    zone: waitTone(predicted ?? 50),
   }));
 }
 
@@ -597,33 +612,25 @@ function todaySparklinePoints(
 ): SparkPoint[] {
   const live = trafficByDirection[direction];
   const checkpointData = live?.checkpoints[checkpoint];
-  const history = checkpointData?.history ?? [];
-  const points = history.map((point) => ({
-    timestamp: point.timestamp,
-    predicted: point.observed,
-    zone: waitTone(point.observed),
+  const now = new Date(live?.generatedAt ?? Date.now());
+  const todayBase = new Date(now);
+  todayBase.setHours(0, 0, 0, 0);
+  const current = checkpointData?.waitMinutes ?? compactCheckpointData(live, direction, checkpoint).waitMinutes;
+  const values = checkpointSgSaturdayPattern[direction][checkpoint].today;
+  const nowHour = now.getHours();
+  const points = values.slice(0, Math.min(values.length, nowHour + 1)).map((predicted, index) => ({
+    timestamp: new Date(todayBase.getTime() + index * 60 * 60 * 1000).toISOString(),
+    predicted,
+    zone: waitTone(predicted),
   }));
-  if (live && checkpointData) {
-    points.push({
-      timestamp: live.generatedAt,
-      predicted: checkpointData.waitMinutes,
-      zone: waitTone(checkpointData.waitMinutes),
-    });
-  }
-  if (points.length >= 2) {
-    return points
-      .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }
-
-  const fallback = compactCheckpointData(live, direction, checkpoint);
-  const prior = new Date(Date.UTC(2026, 0, 1, 11, 0, 0));
-  const now = new Date(Date.UTC(2026, 0, 1, 12, 0, 0));
-  return [prior, now].map((timestamp) => ({
-    timestamp: timestamp.toISOString(),
-    predicted: fallback.waitMinutes,
-    zone: waitTone(fallback.waitMinutes),
-  }));
+  points.push({
+    timestamp: now.toISOString(),
+    predicted: current,
+    zone: waitTone(current),
+  });
+  return points
+    .filter((point, index, all) => index === 0 || point.timestamp !== all[index - 1].timestamp)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
 function sparklineSeries(
