@@ -94,7 +94,8 @@ type LiveTraffic = {
 
 type FeedbackStatus = "idle" | "saving" | "saved" | "error";
 type TrafficByDirection = Partial<Record<Direction, LiveTraffic>>;
-type SparkPoint = { timestamp: string; predicted: number; zone?: "good" | "amber" };
+type SparkTone = "good" | "amber" | "bad";
+type SparkPoint = { timestamp: string; predicted: number; zone?: SparkTone };
 
 const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
   "sg-my": {
@@ -443,17 +444,16 @@ function normalizeTrend(label: string) {
 }
 
 function trafficSignalTone(minutes: number, trend: string) {
-  const lower = trend.toLowerCase();
-  const slowing = lower.includes("slow");
-  const easing = lower.includes("eas");
-  if (minutes >= 70 && slowing) return "bad";
-  if (minutes >= 78) return "bad";
-  if (slowing) return "warn";
-  if (minutes <= 46 && (easing || lower.includes("steady"))) return "good";
-  if (minutes <= 52 && !slowing) return "good";
-  if (easing && minutes <= 64) return "good";
-  if (minutes >= 58) return "warn";
-  return "good";
+  void trend;
+  if (minutes < 45) return "good";
+  if (minutes <= 90) return "warn";
+  return "bad";
+}
+
+function waitTone(minutes: number): SparkTone {
+  if (minutes < 45) return "good";
+  if (minutes <= 90) return "amber";
+  return "bad";
 }
 
 function compactCheckpointData(
@@ -487,7 +487,7 @@ function sparklinePoints(
     return livePoints.slice(0, 49).map((point) => ({
       timestamp: point.timestamp,
       predicted: point.predicted,
-      zone: point.zone,
+      zone: waitTone(point.predicted),
     }));
   }
 
@@ -523,8 +523,8 @@ function Sparkline24h({
       .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const width = 240;
-    const height = 118;
-    const padding = { top: 18, right: 12, bottom: 16, left: 12 };
+    const height = 104;
+    const padding = { top: 10, right: 12, bottom: 12, left: 12 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     if (safePoints.length < 2) return null;
@@ -535,51 +535,87 @@ function Sparkline24h({
     const spanMs = Math.max(1, endMs - startMs);
     const waits = safePoints.map((point) => point.predicted);
     const smoothedWaits = waits.map((value, index) => {
-      const previous = waits[Math.max(0, index - 1)];
-      const next = waits[Math.min(waits.length - 1, index + 1)];
-      return (previous + value * 2 + next) / 4;
+      const previous2 = waits[Math.max(0, index - 2)];
+      const previous1 = waits[Math.max(0, index - 1)];
+      const next1 = waits[Math.min(waits.length - 1, index + 1)];
+      const next2 = waits[Math.min(waits.length - 1, index + 2)];
+      return (previous2 + previous1 * 2 + value * 4 + next1 * 2 + next2) / 10;
     });
-    const minWait = Math.max(0, Math.min(...waits, current) - 8);
-    const maxWait = Math.max(minWait + 30, Math.max(...waits, current) + 10);
+    const minWait = Math.max(0, Math.min(...waits, current, 45) - 8);
+    const maxWait = Math.max(minWait + 30, Math.max(...waits, current, 90) + 10);
     const x = (timestamp: string) => padding.left + ((new Date(timestamp).getTime() - startMs) / spanMs) * plotWidth;
     const y = (value: number) => padding.top + plotHeight - ((value - minWait) / (maxWait - minWait)) * plotHeight;
+    const clampY = (value: number) => Math.min(padding.top + plotHeight, Math.max(padding.top, y(value)));
+    const band = (low: number, high: number, tone: SparkTone) => {
+      const yTop = clampY(high);
+      const yBottom = clampY(low);
+      return {
+        tone,
+        y: yTop,
+        h: Math.max(0, yBottom - yTop),
+      };
+    };
     const plotted = safePoints.map((point, index) => ({
       x: x(point.timestamp),
       y: y(smoothedWaits[index]),
-      zone: point.zone ?? "amber",
+      zone: point.zone ?? waitTone(point.predicted),
       timestamp: point.timestamp,
       predicted: smoothedWaits[index],
     }));
-    const linePath = plotted.map((point, index) => {
-      if (index === 0) return `M ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
-      const previous = plotted[index - 1];
-      const control = (point.x - previous.x) / 2;
-      return `C ${(previous.x + control).toFixed(1)} ${previous.y.toFixed(1)}, ${(point.x - control).toFixed(1)} ${point.y.toFixed(1)}, ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
-    }).join(" ");
+
+    const curvePath = (pathPoints: Array<{ x: number; y: number }>) => {
+      if (!pathPoints.length) return "";
+      if (pathPoints.length === 1) return `M ${pathPoints[0].x.toFixed(1)} ${pathPoints[0].y.toFixed(1)}`;
+      const parts = [`M ${pathPoints[0].x.toFixed(1)} ${pathPoints[0].y.toFixed(1)}`];
+      for (let index = 0; index < pathPoints.length - 1; index += 1) {
+        const p0 = pathPoints[Math.max(0, index - 1)];
+        const p1 = pathPoints[index];
+        const p2 = pathPoints[index + 1];
+        const p3 = pathPoints[Math.min(pathPoints.length - 1, index + 2)];
+        const c1x = p1.x + (p2.x - p0.x) / 6;
+        const c1y = p1.y + (p2.y - p0.y) / 6;
+        const c2x = p2.x - (p3.x - p1.x) / 6;
+        const c2y = p2.y - (p3.y - p1.y) / 6;
+        parts.push(`C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
+      }
+      return parts.join(" ");
+    };
 
     const now = nowMs === null ? null : Math.min(endMs, Math.max(startMs, nowMs));
     const nextIndex = now === null ? -1 : plotted.findIndex((point) => new Date(point.timestamp).getTime() >= now);
-    const right = nextIndex > 0 ? plotted[nextIndex] : plotted[1];
-    const left = nextIndex > 0 ? plotted[nextIndex - 1] : plotted[0];
+    const rightIndex = nextIndex === -1
+      ? plotted.length - 1
+      : Math.max(1, nextIndex);
+    const leftIndex = Math.max(0, rightIndex - 1);
+    const right = plotted[rightIndex];
+    const left = plotted[leftIndex];
     const leftMs = new Date(left.timestamp).getTime();
     const rightMs = new Date(right.timestamp).getTime();
     const localRatio = now === null || rightMs === leftMs ? 0 : Math.min(1, Math.max(0, (now - leftMs) / (rightMs - leftMs)));
     const nowX = now === null ? null : padding.left + ((now - startMs) / spanMs) * plotWidth;
     const nowY = now === null ? null : left.y + (right.y - left.y) * localRatio;
+    const nowPoint = nowX === null || nowY === null ? null : { x: nowX, y: nowY };
+    const historyPoints = nowPoint
+      ? [...plotted.filter((point) => new Date(point.timestamp).getTime() <= now), nowPoint]
+      : plotted;
+    const predictionPoints = nowPoint
+      ? [nowPoint, ...plotted.filter((point) => new Date(point.timestamp).getTime() > now)]
+      : [];
 
     return {
       width,
       height,
-      linePath,
+      historyPath: curvePath(historyPoints),
+      predictionPath: curvePath(predictionPoints),
       nowX,
       nowY,
       padding,
       plotHeight,
-      zones: plotted.slice(0, -1).map((point, index) => ({
-        x: point.x,
-        w: Math.max(1, plotted[index + 1].x - point.x),
-        tone: point.zone,
-      })),
+      zones: [
+        band(minWait, 45, "good"),
+        band(45, 90, "amber"),
+        band(90, maxWait, "bad"),
+      ].filter((zone) => zone.h > 0.5),
       grid: [padding.top, padding.top + plotHeight / 2, padding.top + plotHeight],
     };
   }, [current, nowMs, points]);
@@ -590,24 +626,25 @@ function Sparkline24h({
         <svg viewBox={`0 0 ${chart.width} ${chart.height}`} role="img" aria-label={label} preserveAspectRatio="none">
           {chart.zones.map((zone, index) => (
             <rect
-              key={`${zone.x}-${index}`}
+              key={`${zone.tone}-${index}`}
               className={`spark-zone spark-zone-${zone.tone}`}
-              x={zone.x}
-              y={chart.padding.top}
-              width={zone.w}
-              height={chart.plotHeight}
+              x={chart.padding.left}
+              y={zone.y}
+              width={chart.width - chart.padding.left - chart.padding.right}
+              height={zone.h}
             />
           ))}
           {chart.grid.map((y) => (
             <line key={y} className="spark-grid" x1={chart.padding.left} x2={chart.width - chart.padding.right} y1={y} y2={y} />
           ))}
-          <path className="spark-line-underlay" d={chart.linePath} />
-          <path className="spark-line" d={chart.linePath} />
+          <path className="spark-line-underlay" d={chart.historyPath} />
+          <path className="spark-line-underlay spark-line-forecast-underlay" d={chart.predictionPath} />
+          <path className="spark-line" d={chart.historyPath} />
+          <path className="spark-line spark-line-forecast" d={chart.predictionPath} />
           {chart.nowX !== null && chart.nowY !== null && (
             <>
-              <text className="spark-now-label" x={chart.nowX} y={chart.padding.top - 7}>NOW</text>
               <circle className="spark-now-pulse" cx={chart.nowX} cy={chart.nowY} r="5.2" />
-              <circle className="spark-now-glow" cx={chart.nowX} cy={chart.nowY} r="7.2" />
+              <circle className="spark-now-glow" cx={chart.nowX} cy={chart.nowY} r="8.8" />
               <circle className="spark-now-dot" cx={chart.nowX} cy={chart.nowY} r="5.2" />
               <circle className="spark-now-core" cx={chart.nowX} cy={chart.nowY} r="2" />
             </>
@@ -683,7 +720,7 @@ function LandingCheckpointCard({
     <article className="landing-checkpoint-card">
       <div className="landing-card-top">
         <div>
-          <h1>{checkpoint}</h1>
+          <h1><span>{checkpoint}</span></h1>
         </div>
       </div>
 
@@ -1351,8 +1388,9 @@ export default function Home() {
         </a>
       </header>
 
-      <section className="landing-card-stack single-card" id="top" aria-label="Woodlands checkpoint">
+      <section className="landing-card-stack double-card" id="top" aria-label="Checkpoint summaries">
         <LandingCheckpointCard checkpoint="Woodlands" trafficByDirection={trafficByDirection} />
+        <LandingCheckpointCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
       </section>
 
       <footer>
