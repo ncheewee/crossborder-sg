@@ -573,7 +573,7 @@ function Sparkline24h({
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const width = 240;
     const height = 74;
-    const padding = { top: 11, right: 8, bottom: 8, left: 28 };
+    const padding = { top: 11, right: 8, bottom: 8, left: 32 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     if (safePoints.length < 2) return null;
@@ -740,20 +740,50 @@ function SparklineAxis({ points }: { points: SparkPoint[] }) {
   );
 }
 
-function LandingCheckpointCard({
+function LandingSignalRow({
   checkpoint,
+  direction,
   trafficByDirection,
+  trendNowMs,
 }: {
   checkpoint: Checkpoint;
+  direction: Direction;
+  trafficByDirection: TrafficByDirection;
+  trendNowMs: number | null;
+}) {
+  const data = compactCheckpointData(trafficByDirection[direction], direction, checkpoint);
+  const points = sparklinePoints(trafficByDirection, direction, checkpoint);
+  const projection = projectedTrend(points, data.waitMinutes, data.trend, trendNowMs);
+  const durationTone = trafficSignalTone(data.waitMinutes, projection.trend);
+  const directionLabel = direction === "sg-my" ? "towards Johor" : "towards Singapore";
+
+  return (
+    <div className="direction-signal-row">
+      <div className="duration-row">
+        <span className="checkpoint-row-label">{checkpoint}</span>
+        <strong className={`duration-time duration-time-${durationTone}`}>{data.crossing} <em>min</em></strong>
+        <small className={`trend-chip trend-chip-${projection.trendTone}`}>{projection.trend}</small>
+      </div>
+      <Sparkline24h
+        points={points}
+        current={data.waitMinutes}
+        label={`${checkpoint} 24-hour forecast ${directionLabel} with current time marker`}
+      />
+    </div>
+  );
+}
+
+function LandingDirectionCard({
+  direction,
+  title,
+  trafficByDirection,
+}: {
+  direction: Direction;
+  title: string;
   trafficByDirection: TrafficByDirection;
 }) {
-  const sgMy = compactCheckpointData(trafficByDirection["sg-my"], "sg-my", checkpoint);
-  const mySg = compactCheckpointData(trafficByDirection["my-sg"], "my-sg", checkpoint);
-  const cameraTraffic = trafficByDirection["sg-my"] ?? trafficByDirection["my-sg"] ?? null;
-  const fallbackImage = checkpoint === "Tuas" ? "tuas.jpg" : "woodlands.jpg";
-  const cameras = camerasForCheckpoint(cameraTraffic, checkpoint, fallbackImage);
-  const sgMyPoints = sparklinePoints(trafficByDirection, "sg-my", checkpoint);
-  const mySgPoints = sparklinePoints(trafficByDirection, "my-sg", checkpoint);
+  const woodlandsPoints = sparklinePoints(trafficByDirection, direction, "Woodlands");
+  const tuasPoints = sparklinePoints(trafficByDirection, direction, "Tuas");
   const [trendNowMs, setTrendNowMs] = useState<number | null>(null);
 
   useEffect(() => {
@@ -762,53 +792,55 @@ function LandingCheckpointCard({
     return () => window.clearInterval(timer);
   }, []);
 
-  const sgMyProjection = projectedTrend(sgMyPoints, sgMy.waitMinutes, sgMy.trend, trendNowMs);
-  const mySgProjection = projectedTrend(mySgPoints, mySg.waitMinutes, mySg.trend, trendNowMs);
-  const sgMyDurationTone = trafficSignalTone(sgMy.waitMinutes, sgMyProjection.trend);
-  const mySgDurationTone = trafficSignalTone(mySg.waitMinutes, mySgProjection.trend);
+  return (
+    <article className="landing-direction-card">
+      <div className="landing-direction-heading">
+        <h1>{title}</h1>
+      </div>
+      <div className="landing-card-body">
+        <LandingSignalRow
+          checkpoint="Woodlands"
+          direction={direction}
+          trafficByDirection={trafficByDirection}
+          trendNowMs={trendNowMs}
+        />
+        <div className="spark-axis-row">
+          <div aria-hidden="true" />
+          <SparklineAxis points={woodlandsPoints.length >= tuasPoints.length ? woodlandsPoints : tuasPoints} />
+        </div>
+        <LandingSignalRow
+          checkpoint="Tuas"
+          direction={direction}
+          trafficByDirection={trafficByDirection}
+          trendNowMs={trendNowMs}
+        />
+      </div>
+    </article>
+  );
+}
+
+function LandingCameraCard({
+  checkpoint,
+  trafficByDirection,
+}: {
+  checkpoint: Checkpoint;
+  trafficByDirection: TrafficByDirection;
+}) {
+  const cameraTraffic = trafficByDirection["sg-my"] ?? trafficByDirection["my-sg"] ?? null;
+  const fallbackImage = checkpoint === "Tuas" ? "tuas.jpg" : "woodlands.jpg";
+  const cameras = camerasForCheckpoint(cameraTraffic, checkpoint, fallbackImage);
 
   return (
-    <article className="landing-checkpoint-card">
+    <article className="landing-camera-card">
       <div className="landing-camera-header">
         <CameraCarousel
           cameras={cameras}
-          title={`${checkpoint} official cameras`}
+          title={`${checkpoint} cameras`}
           fallbackImage={fallbackImage}
           compact
           auto
         />
-        <h1><span>{checkpoint}</span></h1>
-      </div>
-
-      <div className="landing-card-body">
-        <div className="direction-signal-row">
-          <div className="duration-row">
-            <span>Towards JB</span>
-            <strong className={`duration-time duration-time-${sgMyDurationTone}`}>{sgMy.crossing} <em>min</em></strong>
-            <small className={`trend-chip trend-chip-${sgMyProjection.trendTone}`}>{sgMyProjection.trend}</small>
-          </div>
-          <Sparkline24h
-            points={sgMyPoints}
-            current={sgMy.waitMinutes}
-            label={`${checkpoint} 24-hour forecast towards Johor with current time marker`}
-          />
-        </div>
-        <div className="spark-axis-row">
-          <div aria-hidden="true" />
-          <SparklineAxis points={sgMyPoints.length >= mySgPoints.length ? sgMyPoints : mySgPoints} />
-        </div>
-        <div className="direction-signal-row">
-          <div className="duration-row">
-            <span>Towards SG</span>
-            <strong className={`duration-time duration-time-${mySgDurationTone}`}>{mySg.crossing} <em>min</em></strong>
-            <small className={`trend-chip trend-chip-${mySgProjection.trendTone}`}>{mySgProjection.trend}</small>
-          </div>
-          <Sparkline24h
-            points={mySgPoints}
-            current={mySg.waitMinutes}
-            label={`${checkpoint} 24-hour forecast towards Singapore with current time marker`}
-          />
-        </div>
+        <h2><span>{checkpoint}</span></h2>
       </div>
     </article>
   );
@@ -1165,8 +1197,8 @@ export default function Home() {
     const fitCameras = () => {
       window.requestAnimationFrame(() => {
         const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-        const cards = Array.from(document.querySelectorAll<HTMLElement>(".landing-checkpoint-card"));
-        const cameras = Array.from(document.querySelectorAll<HTMLElement>(".landing-checkpoint-card .camera-frame"));
+        const cards = Array.from(document.querySelectorAll<HTMLElement>(".landing-card-stack > article"));
+        const cameras = Array.from(document.querySelectorAll<HTMLElement>(".landing-camera-card .camera-frame"));
         if (!cards.length || !cameras.length) return;
 
         const contentBottom = Math.max(...cards.map((card) => card.getBoundingClientRect().bottom));
@@ -1463,9 +1495,11 @@ export default function Home() {
         </a>
       </header>
 
-      <section className="landing-card-stack double-card" id="top" aria-label="Checkpoint summaries">
-        <LandingCheckpointCard checkpoint="Woodlands" trafficByDirection={trafficByDirection} />
-        <LandingCheckpointCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
+      <section className="landing-card-stack direction-first" id="top" aria-label="Checkpoint summaries">
+        <LandingDirectionCard direction="sg-my" title="Towards Johor" trafficByDirection={trafficByDirection} />
+        <LandingDirectionCard direction="my-sg" title="Towards Singapore" trafficByDirection={trafficByDirection} />
+        <LandingCameraCard checkpoint="Woodlands" trafficByDirection={trafficByDirection} />
+        <LandingCameraCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
       </section>
 
     </main>

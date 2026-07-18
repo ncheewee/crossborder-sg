@@ -148,11 +148,13 @@ button { font: inherit; }
 }
 
 .landing-card-stack.single-card,
-.landing-card-stack.double-card {
+.landing-card-stack.double-card,
+.landing-card-stack.direction-first {
   padding-top: 7px;
 }
 
-.landing-checkpoint-card {
+.landing-direction-card,
+.landing-camera-card {
   overflow: hidden;
   padding: 8px;
   border: 1px solid rgba(13, 148, 136, 0.18);
@@ -163,12 +165,34 @@ button { font: inherit; }
   box-shadow: 0 12px 34px rgba(18, 87, 79, 0.09);
 }
 
-.landing-camera-header {
-  position: relative;
+.landing-direction-heading {
+  display: flex;
+  align-items: center;
   margin-bottom: 6px;
 }
 
-.landing-camera-header h1 {
+.landing-direction-heading h1 {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  margin: 0;
+  padding: 5px 10px 6px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #0f766e, #0d9488);
+  color: #ffffff;
+  font-size: clamp(17px, 4.8vw, 21px);
+  font-weight: 840;
+  line-height: 1;
+  letter-spacing: 0;
+  box-shadow: 0 8px 18px rgba(6, 78, 71, 0.18);
+}
+
+.landing-camera-header {
+  position: relative;
+}
+
+.landing-camera-header h1,
+.landing-camera-header h2 {
   position: absolute;
   z-index: 3;
   top: 9px;
@@ -181,14 +205,15 @@ button { font: inherit; }
   letter-spacing: 0;
 }
 
-.landing-camera-header h1 span {
+.landing-camera-header h1 span,
+.landing-camera-header h2 span {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
   padding: 5px 10px 6px;
   border-radius: 12px;
   background: linear-gradient(135deg, #0f766e, #0d9488);
-  font-weight: 820;
+  font-weight: 840;
   box-shadow: 0 8px 18px rgba(6, 78, 71, 0.42);
 }
 
@@ -236,6 +261,12 @@ button { font: inherit; }
   font-size: 10px;
   font-weight: 760;
   line-height: 1.15;
+}
+
+.duration-row .checkpoint-row-label {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 840;
 }
 
 .duration-row strong {
@@ -401,7 +432,7 @@ button { font: inherit; }
 .spark-axis {
   position: relative;
   height: 22px;
-  margin: -2px 8px -2px 28px;
+  margin: -2px 8px -2px 32px;
 }
 
 .spark-axis span {
@@ -455,19 +486,19 @@ button { font: inherit; }
   transform: translate(-100%, -50%);
 }
 
-.landing-checkpoint-card .camera-carousel.compact .camera-frame {
+.landing-camera-card .camera-carousel.compact .camera-frame {
   height: var(--landing-camera-height);
   border-radius: 12px;
 }
 
-.landing-checkpoint-card .camera-meta {
+.landing-camera-card .camera-meta {
   left: 10px;
   right: 10px;
   bottom: 8px;
   font-size: 10px;
 }
 
-.landing-checkpoint-card .camera-dots {
+.landing-camera-card .camera-dots {
   top: 10px;
   bottom: auto;
   padding: 5px 7px;
