@@ -330,7 +330,7 @@ function camerasForCheckpoint(live: LiveTraffic | null, checkpoint: Checkpoint, 
     : [{
         cameraId: checkpoint,
         imageUrl: current?.imageUrl ?? fallbackImage,
-        updatedAt: current?.cameraUpdatedAt ?? new Date().toISOString(),
+        updatedAt: current?.cameraUpdatedAt ?? "",
         label: `${checkpoint} checkpoint`,
       }];
 }
@@ -442,22 +442,17 @@ function normalizeTrend(label: string) {
   return label.replace(/^Queue\s+/i, "");
 }
 
-function toneFromTrend(label: string, fallback: string) {
-  const lower = label.toLowerCase();
-  if (lower.includes("eas") || lower.includes("fast") || lower.includes("clear")) return "good";
-  if (lower.includes("build") || lower.includes("slow") || lower.includes("rising")) return "warn";
-  return fallback || "neutral";
-}
-
 function trafficSignalTone(minutes: number, trend: string) {
-  const slowing = trend.toLowerCase().includes("slow");
-  const easing = trend.toLowerCase().includes("eas");
+  const lower = trend.toLowerCase();
+  const slowing = lower.includes("slow");
+  const easing = lower.includes("eas");
   if (minutes >= 70 && slowing) return "bad";
-  if (minutes >= 75) return "bad";
-  if (minutes <= 45 && !slowing) return "good";
-  if (minutes <= 45 && slowing) return "warn";
-  if (easing && minutes <= 65) return "good";
-  if (slowing || minutes >= 58) return "warn";
+  if (minutes >= 78) return "bad";
+  if (slowing) return "warn";
+  if (minutes <= 46 && (easing || lower.includes("steady"))) return "good";
+  if (minutes <= 52 && !slowing) return "good";
+  if (easing && minutes <= 64) return "good";
+  if (minutes >= 58) return "warn";
   return "good";
 }
 
@@ -471,11 +466,14 @@ function compactCheckpointData(
     : tripData[direction].woodlands;
   const live = traffic?.checkpoints[checkpoint];
   const trendLabel = live?.trend.label ?? fallback.trend;
+  const crossing = live ? `${live.crossingRange[0]}–${live.crossingRange[1]}` : fallback.crossing;
+  const waitMinutes = live?.waitMinutes ?? crossingMidpoint(fallback.crossing);
+  const trend = normalizeTrend(trendLabel);
   return {
-    crossing: live ? `${live.crossingRange[0]}–${live.crossingRange[1]}` : fallback.crossing,
-    waitMinutes: live?.waitMinutes ?? crossingMidpoint(fallback.crossing),
-    trend: normalizeTrend(trendLabel),
-    trendTone: toneFromTrend(trendLabel, live?.trend.tone ?? fallback.trendTone),
+    crossing,
+    waitMinutes,
+    trend,
+    trendTone: trafficSignalTone(waitMinutes, trend),
   };
 }
 
@@ -512,126 +510,110 @@ function Sparkline24h({
   current: number;
   label: string;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [nowMs, setNowMs] = useState<number | null>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = canvas?.parentElement;
-    if (!canvas || !container || !points.length) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
-    const draw = () => {
-      const width = Math.max(180, container.clientWidth);
-      const height = Math.max(74, container.clientHeight || 82);
-      const ratio = window.devicePixelRatio || 1;
-      canvas.width = width * ratio;
-      canvas.height = height * ratio;
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
+  const chart = useMemo(() => {
+    const safePoints = points
+      .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const width = 240;
+    const height = 118;
+    const padding = { top: 18, right: 12, bottom: 16, left: 12 };
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+    if (safePoints.length < 2) return null;
 
-      const context = canvas.getContext("2d");
-      if (!context) return;
-      context.scale(ratio, ratio);
-      context.clearRect(0, 0, width, height);
+    const startMs = new Date(safePoints[0].timestamp).getTime();
+    const lastMs = new Date(safePoints[safePoints.length - 1].timestamp).getTime();
+    const endMs = Math.max(lastMs, startMs + 24 * 60 * 60 * 1000);
+    const spanMs = Math.max(1, endMs - startMs);
+    const waits = safePoints.map((point) => point.predicted);
+    const smoothedWaits = waits.map((value, index) => {
+      const previous = waits[Math.max(0, index - 1)];
+      const next = waits[Math.min(waits.length - 1, index + 1)];
+      return (previous + value * 2 + next) / 4;
+    });
+    const minWait = Math.max(0, Math.min(...waits, current) - 8);
+    const maxWait = Math.max(minWait + 30, Math.max(...waits, current) + 10);
+    const x = (timestamp: string) => padding.left + ((new Date(timestamp).getTime() - startMs) / spanMs) * plotWidth;
+    const y = (value: number) => padding.top + plotHeight - ((value - minWait) / (maxWait - minWait)) * plotHeight;
+    const plotted = safePoints.map((point, index) => ({
+      x: x(point.timestamp),
+      y: y(smoothedWaits[index]),
+      zone: point.zone ?? "amber",
+      timestamp: point.timestamp,
+      predicted: smoothedWaits[index],
+    }));
+    const linePath = plotted.map((point, index) => {
+      if (index === 0) return `M ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+      const previous = plotted[index - 1];
+      const control = (point.x - previous.x) / 2;
+      return `C ${(previous.x + control).toFixed(1)} ${previous.y.toFixed(1)}, ${(point.x - control).toFixed(1)} ${point.y.toFixed(1)}, ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+    }).join(" ");
 
-      const styles = getComputedStyle(document.documentElement);
-      const teal = styles.getPropertyValue("--teal").trim();
-      const nowColor = styles.getPropertyValue("--teal-bright").trim();
-      const amber = styles.getPropertyValue("--amber-zone").trim();
-      const good = styles.getPropertyValue("--good-zone").trim();
-      const grid = styles.getPropertyValue("--chart-grid").trim();
+    const now = nowMs === null ? null : Math.min(endMs, Math.max(startMs, nowMs));
+    const nextIndex = now === null ? -1 : plotted.findIndex((point) => new Date(point.timestamp).getTime() >= now);
+    const right = nextIndex > 0 ? plotted[nextIndex] : plotted[1];
+    const left = nextIndex > 0 ? plotted[nextIndex - 1] : plotted[0];
+    const leftMs = new Date(left.timestamp).getTime();
+    const rightMs = new Date(right.timestamp).getTime();
+    const localRatio = now === null || rightMs === leftMs ? 0 : Math.min(1, Math.max(0, (now - leftMs) / (rightMs - leftMs)));
+    const nowX = now === null ? null : padding.left + ((now - startMs) / spanMs) * plotWidth;
+    const nowY = now === null ? null : left.y + (right.y - left.y) * localRatio;
 
-      const padding = { top: 13, right: 10, bottom: 12, left: 10 };
-      const plotWidth = width - padding.left - padding.right;
-      const plotHeight = height - padding.top - padding.bottom;
-      const maxWait = Math.max(80, Math.ceil(Math.max(...points.map((point) => point.predicted), current) / 20) * 20);
-      const dayStart = new Date(points[0].timestamp);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setHours(23, 59, 59, 999);
-      const dayMs = dayEnd.getTime() - dayStart.getTime();
-      const nowTime = Date.now();
-      const nowRatio = Math.min(1, Math.max(0, (nowTime - dayStart.getTime()) / dayMs));
-
-      const x = (timestamp: string) => {
-        const ratioX = Math.min(1, Math.max(0, (new Date(timestamp).getTime() - dayStart.getTime()) / dayMs));
-        return padding.left + ratioX * plotWidth;
-      };
-      const y = (value: number) => padding.top + plotHeight - (value / maxWait) * plotHeight;
-
-      points.slice(0, -1).forEach((point, index) => {
-        const next = points[index + 1];
-        context.fillStyle = point.zone === "good" ? good : amber;
-        context.fillRect(x(point.timestamp), padding.top, Math.max(1, x(next.timestamp) - x(point.timestamp)), plotHeight);
-      });
-
-      context.strokeStyle = grid;
-      context.lineWidth = 1;
-      [0, 0.5, 1].forEach((ratioLine) => {
-        const lineY = padding.top + ratioLine * plotHeight;
-        context.beginPath();
-        context.moveTo(padding.left, lineY);
-        context.lineTo(width - padding.right, lineY);
-        context.stroke();
-      });
-
-      const plotted = points.map((point) => ({ x: x(point.timestamp), y: y(point.predicted) }));
-      context.beginPath();
-      plotted.forEach((point, index) => {
-        if (index === 0) {
-          context.moveTo(point.x, point.y);
-          return;
-        }
-        const previous = plotted[index - 1];
-        const control = (point.x - previous.x) / 2;
-        context.bezierCurveTo(previous.x + control, previous.y, point.x - control, point.y, point.x, point.y);
-      });
-      context.strokeStyle = teal;
-      context.lineWidth = 3.2;
-      context.lineCap = "round";
-      context.stroke();
-
-      const nowX = padding.left + nowRatio * plotWidth;
-      const nearest = plotted.reduce((closest, point) => {
-        const distance = Math.abs(point.x - nowX);
-        return distance < closest.distance ? { point, distance } : closest;
-      }, { point: plotted[0], distance: Number.POSITIVE_INFINITY });
-      context.beginPath();
-      context.strokeStyle = "rgba(15, 118, 110, 0.44)";
-      context.lineWidth = 1.4;
-      context.moveTo(nowX, padding.top - 4);
-      context.lineTo(nowX, padding.top + plotHeight + 4);
-      context.stroke();
-      if (nearest.point) {
-        context.save();
-        context.shadowColor = "rgba(20, 184, 166, 0.95)";
-        context.shadowBlur = 13;
-        context.beginPath();
-        context.fillStyle = nowColor;
-        context.arc(nowX, nearest.point.y, 5.8, 0, Math.PI * 2);
-        context.fill();
-        context.shadowBlur = 0;
-        context.beginPath();
-        context.fillStyle = "#ffffff";
-        context.arc(nowX, nearest.point.y, 2.2, 0, Math.PI * 2);
-        context.fill();
-        context.restore();
-      }
-      context.fillStyle = nowColor;
-      context.font = "800 9px Arial, sans-serif";
-      context.textAlign = "center";
-      context.textBaseline = "bottom";
-      context.fillText("NOW", nowX, padding.top - 5);
+    return {
+      width,
+      height,
+      linePath,
+      nowX,
+      nowY,
+      padding,
+      plotHeight,
+      zones: plotted.slice(0, -1).map((point, index) => ({
+        x: point.x,
+        w: Math.max(1, plotted[index + 1].x - point.x),
+        tone: point.zone,
+      })),
+      grid: [padding.top, padding.top + plotHeight / 2, padding.top + plotHeight],
     };
-
-    draw();
-    const observer = new ResizeObserver(draw);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [current, points]);
+  }, [current, nowMs, points]);
 
   return (
     <div className="sparkline-card">
-      <canvas ref={canvasRef} role="img" aria-label={label} />
+      {chart && (
+        <svg viewBox={`0 0 ${chart.width} ${chart.height}`} role="img" aria-label={label} preserveAspectRatio="none">
+          {chart.zones.map((zone, index) => (
+            <rect
+              key={`${zone.x}-${index}`}
+              className={`spark-zone spark-zone-${zone.tone}`}
+              x={zone.x}
+              y={chart.padding.top}
+              width={zone.w}
+              height={chart.plotHeight}
+            />
+          ))}
+          {chart.grid.map((y) => (
+            <line key={y} className="spark-grid" x1={chart.padding.left} x2={chart.width - chart.padding.right} y1={y} y2={y} />
+          ))}
+          <path className="spark-line-underlay" d={chart.linePath} />
+          <path className="spark-line" d={chart.linePath} />
+          {chart.nowX !== null && chart.nowY !== null && (
+            <>
+              <line className="spark-now-line" x1={chart.nowX} x2={chart.nowX} y1={chart.padding.top - 4} y2={chart.padding.top + chart.plotHeight + 4} />
+              <text className="spark-now-label" x={chart.nowX} y={chart.padding.top - 7}>NOW</text>
+              <circle className="spark-now-glow" cx={chart.nowX} cy={chart.nowY} r="8" />
+              <circle className="spark-now-dot" cx={chart.nowX} cy={chart.nowY} r="5.2" />
+              <circle className="spark-now-core" cx={chart.nowX} cy={chart.nowY} r="2" />
+            </>
+          )}
+        </svg>
+      )}
     </div>
   );
 }
@@ -1203,10 +1185,6 @@ export default function Home() {
     selectedRoute,
     selectedRoute === "Tuas" ? "tuas.jpg" : "woodlands.jpg",
   );
-
-  const recommendedCameraName = selectedRoute === "Tuas"
-    ? "Tuas Second Link"
-    : "Woodlands Causeway";
 
   const cards = useMemo(
     () => [
