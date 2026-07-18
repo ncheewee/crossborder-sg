@@ -605,15 +605,59 @@ function Sparkline24h({
           <path className="spark-line" d={chart.linePath} />
           {chart.nowX !== null && chart.nowY !== null && (
             <>
-              <line className="spark-now-line" x1={chart.nowX} x2={chart.nowX} y1={chart.padding.top - 4} y2={chart.padding.top + chart.plotHeight + 4} />
               <text className="spark-now-label" x={chart.nowX} y={chart.padding.top - 7}>NOW</text>
-              <circle className="spark-now-glow" cx={chart.nowX} cy={chart.nowY} r="8" />
+              <circle className="spark-now-pulse" cx={chart.nowX} cy={chart.nowY} r="5.2" />
+              <circle className="spark-now-glow" cx={chart.nowX} cy={chart.nowY} r="7.2" />
               <circle className="spark-now-dot" cx={chart.nowX} cy={chart.nowY} r="5.2" />
               <circle className="spark-now-core" cx={chart.nowX} cy={chart.nowY} r="2" />
             </>
           )}
         </svg>
       )}
+    </div>
+  );
+}
+
+function SparklineAxis({ points }: { points: SparkPoint[] }) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setReady(true);
+  }, []);
+
+  const ticks = useMemo(() => {
+    if (!ready) return [];
+    const safePoints = points
+      .filter((point) => Number.isFinite(new Date(point.timestamp).getTime()))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    if (safePoints.length < 2) return [];
+
+    const startMs = new Date(safePoints[0].timestamp).getTime();
+    const lastMs = new Date(safePoints[safePoints.length - 1].timestamp).getTime();
+    const endMs = Math.max(lastMs, startMs + 24 * 60 * 60 * 1000);
+    const spanMs = Math.max(1, endMs - startMs);
+    const labels = [0, 4, 8, 12, 16, 20, 24];
+    return labels.map((hourOffset) => {
+      const time = new Date(startMs + hourOffset * 60 * 60 * 1000);
+      return {
+        left: `${Math.min(100, Math.max(0, ((time.getTime() - startMs) / spanMs) * 100))}%`,
+        label: new Intl.DateTimeFormat("en-SG", {
+          hour: "numeric",
+          hour12: true,
+          timeZone: "Asia/Singapore",
+        }).format(time).replace(" ", "").toLowerCase(),
+      };
+    });
+  }, [points, ready]);
+
+  return (
+    <div className="spark-axis" aria-hidden="true">
+      {ticks.map((tick) => (
+        <span key={`${tick.left}-${tick.label}`} style={{ left: tick.left }}>
+          <i />
+          {tick.label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -655,6 +699,10 @@ function LandingCheckpointCard({
             current={sgMy.waitMinutes}
             label={`${checkpoint} 24-hour forecast towards Johor with current time marker`}
           />
+        </div>
+        <div className="spark-axis-row">
+          <div aria-hidden="true" />
+          <SparklineAxis points={sgMyPoints.length >= mySgPoints.length ? sgMyPoints : mySgPoints} />
         </div>
         <div className="direction-signal-row">
           <div className="duration-row">

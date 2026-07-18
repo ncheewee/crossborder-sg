@@ -147,14 +147,14 @@ button { font: inherit; }
 }
 
 .landing-card-stack.single-card {
-  padding-top: 16px;
+  padding-top: 12px;
 }
 
 .landing-checkpoint-card {
   overflow: hidden;
-  padding: 14px;
+  padding: 11px;
   border: 1px solid rgba(13, 148, 136, 0.2);
-  border-radius: 22px;
+  border-radius: 20px;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(236, 250, 248, 0.88)),
     var(--surface);
@@ -166,7 +166,7 @@ button { font: inherit; }
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 7px;
 }
 
 .landing-card-top p {
@@ -179,29 +179,30 @@ button { font: inherit; }
 .landing-card-top h1 {
   margin: 0;
   color: var(--teal-bright);
-  font-size: clamp(38px, 11.6vw, 50px);
-  line-height: 0.96;
+  font-size: clamp(28px, 8.1vw, 38px);
+  line-height: 1;
   letter-spacing: 0;
 }
 
 .landing-card-body {
   display: grid;
-  gap: 11px;
-  margin-bottom: 14px;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 
-.direction-signal-row {
+.direction-signal-row,
+.spark-axis-row {
   display: grid;
-  grid-template-columns: minmax(106px, 30%) minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(116px, 32%) minmax(0, 1fr);
+  gap: 8px;
   align-items: stretch;
 }
 
 .duration-row {
   min-width: 0;
-  padding: 11px 9px 10px;
+  padding: 7px 8px 6px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 13px;
   background: rgba(255, 255, 255, 0.82);
 }
 
@@ -215,23 +216,26 @@ button { font: inherit; }
 
 .duration-row span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 760;
   line-height: 1.15;
 }
 
 .duration-row strong {
-  display: block;
-  margin-top: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-top: 3px;
   color: var(--ink);
-  font-size: clamp(25px, 7vw, 31px);
-  line-height: 0.98;
+  font-size: clamp(21px, 5.7vw, 27px);
+  line-height: 1;
   letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .duration-row em {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 660;
   letter-spacing: 0;
@@ -240,8 +244,8 @@ button { font: inherit; }
 .trend-chip {
   width: fit-content;
   max-width: 100%;
-  margin-top: 9px;
-  padding: 4px 8px;
+  margin-top: 6px;
+  padding: 3px 7px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 760;
@@ -265,12 +269,13 @@ button { font: inherit; }
 
 .sparkline-card {
   min-width: 0;
-  min-height: 112px;
+  height: 78px;
+  min-height: 0;
   display: grid;
   place-items: stretch;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 15px;
+  border-radius: 13px;
   background: rgba(255, 255, 255, 0.74);
 }
 
@@ -305,9 +310,7 @@ button { font: inherit; }
 }
 
 .spark-now-line {
-  stroke: rgba(15, 118, 110, 0.45);
-  stroke-linecap: round;
-  stroke-width: 1.5;
+  display: none;
 }
 
 .spark-now-label {
@@ -317,8 +320,15 @@ button { font: inherit; }
 }
 
 .spark-now-glow {
-  fill: rgba(20, 184, 166, 0.24);
+  fill: rgba(20, 184, 166, 0.2);
   filter: drop-shadow(0 0 7px rgba(20, 184, 166, 0.92));
+}
+
+.spark-now-pulse {
+  fill: rgba(20, 184, 166, 0.34);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: breathe-now 1.8s ease-in-out infinite;
 }
 
 .spark-now-dot {
@@ -330,9 +340,59 @@ button { font: inherit; }
   fill: #ffffff;
 }
 
+@keyframes breathe-now {
+  0%, 100% {
+    opacity: 0.28;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.82;
+    transform: scale(2.15);
+  }
+}
+
+.spark-axis-row {
+  align-items: center;
+  min-height: 17px;
+}
+
+.spark-axis {
+  position: relative;
+  height: 17px;
+  margin: -1px 9px;
+  border-top: 1px solid rgba(48, 83, 78, 0.16);
+}
+
+.spark-axis span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: var(--muted-2);
+  font-size: 8.5px;
+  font-weight: 740;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.spark-axis span:first-child {
+  transform: translateX(0);
+}
+
+.spark-axis span:last-child {
+  transform: translateX(-100%);
+}
+
+.spark-axis i {
+  display: block;
+  width: 1px;
+  height: 4px;
+  margin: 0 auto 3px;
+  background: rgba(48, 83, 78, 0.24);
+}
+
 .landing-checkpoint-card .camera-carousel.compact .camera-frame {
-  height: clamp(196px, 57vw, 246px);
-  border-radius: 16px;
+  height: clamp(124px, 35vw, 168px);
+  border-radius: 14px;
 }
 
 .landing-checkpoint-card .camera-meta {
