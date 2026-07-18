@@ -232,15 +232,27 @@ button { font: inherit; }
   align-items: baseline;
   gap: 3px;
   margin-top: 2px;
-  color: var(--ink);
   font-size: clamp(18px, 4.9vw, 23px);
   line-height: 1;
   letter-spacing: 0;
   white-space: nowrap;
 }
 
+.duration-time-good {
+  color: #0f766e;
+}
+
+.duration-time-warn {
+  color: #b45309;
+}
+
+.duration-time-bad {
+  color: #b91c1c;
+}
+
 .duration-row em {
-  color: var(--muted);
+  color: currentColor;
+  opacity: 0.72;
   font-size: 11px;
   font-style: normal;
   font-weight: 660;
@@ -259,18 +271,18 @@ button { font: inherit; }
 }
 
 .trend-chip-good {
-  background: rgba(13, 148, 136, 0.13);
-  color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
 }
 
 .trend-chip-warn {
-  background: rgba(245, 158, 11, 0.16);
-  color: #a75b05;
+  background: #d97706;
+  color: #ffffff;
 }
 
 .trend-chip-bad {
-  background: rgba(220, 38, 38, 0.12);
-  color: #b91c1c;
+  background: #dc2626;
+  color: #ffffff;
 }
 
 .sparkline-card {
@@ -329,25 +341,17 @@ button { font: inherit; }
   border-radius: 999px;
   background: #2563eb;
   border: 2px solid #ffffff;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2), 0 0 14px rgba(37, 99, 235, 0.95);
+  box-shadow: 0 0 7px rgba(37, 99, 235, 0.9);
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
 .spark-now-marker::before {
-  content: "";
-  position: absolute;
-  inset: -6px;
-  border-radius: inherit;
-  background: rgba(37, 99, 235, 0.35);
-  animation: breathe-now 1.05s ease-in-out infinite;
+  display: none;
 }
 
 .spark-now-marker i {
-  position: absolute;
-  inset: 2px;
-  border-radius: inherit;
-  background: #ffffff;
+  display: none;
 }
 
 @keyframes breathe-now {

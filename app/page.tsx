@@ -450,6 +450,12 @@ function trafficSignalTone(minutes: number, trend: string) {
   return "bad";
 }
 
+function trendTone(trend: string) {
+  if (trend === "Easing") return "good";
+  if (trend === "Slowing") return "bad";
+  return "warn";
+}
+
 function waitTone(minutes: number): SparkTone {
   if (minutes < 45) return "good";
   if (minutes <= 90) return "amber";
@@ -460,7 +466,7 @@ function projectedTrend(points: SparkPoint[], current: number, fallbackTrend: st
   if (nowMs === null) {
     return {
       trend: fallbackTrend,
-      trendTone: trafficSignalTone(current, fallbackTrend),
+      trendTone: trendTone(fallbackTrend),
     };
   }
 
@@ -470,7 +476,7 @@ function projectedTrend(points: SparkPoint[], current: number, fallbackTrend: st
   if (safePoints.length < 2) {
     return {
       trend: fallbackTrend,
-      trendTone: trafficSignalTone(current, fallbackTrend),
+      trendTone: trendTone(fallbackTrend),
     };
   }
 
@@ -495,7 +501,7 @@ function projectedTrend(points: SparkPoint[], current: number, fallbackTrend: st
   const trend = delta >= 6 ? "Slowing" : delta <= -6 ? "Easing" : "Steady";
   return {
     trend,
-    trendTone: trafficSignalTone(futureValue, trend),
+    trendTone: trendTone(trend),
   };
 }
 
@@ -758,6 +764,8 @@ function LandingCheckpointCard({
 
   const sgMyProjection = projectedTrend(sgMyPoints, sgMy.waitMinutes, sgMy.trend, trendNowMs);
   const mySgProjection = projectedTrend(mySgPoints, mySg.waitMinutes, mySg.trend, trendNowMs);
+  const sgMyDurationTone = trafficSignalTone(sgMy.waitMinutes, sgMyProjection.trend);
+  const mySgDurationTone = trafficSignalTone(mySg.waitMinutes, mySgProjection.trend);
 
   return (
     <article className="landing-checkpoint-card">
@@ -776,7 +784,7 @@ function LandingCheckpointCard({
         <div className="direction-signal-row">
           <div className="duration-row">
             <span>Towards JB</span>
-            <strong>{sgMy.crossing} <em>min</em></strong>
+            <strong className={`duration-time duration-time-${sgMyDurationTone}`}>{sgMy.crossing} <em>min</em></strong>
             <small className={`trend-chip trend-chip-${sgMyProjection.trendTone}`}>{sgMyProjection.trend}</small>
           </div>
           <Sparkline24h
@@ -792,7 +800,7 @@ function LandingCheckpointCard({
         <div className="direction-signal-row">
           <div className="duration-row">
             <span>Towards SG</span>
-            <strong>{mySg.crossing} <em>min</em></strong>
+            <strong className={`duration-time duration-time-${mySgDurationTone}`}>{mySg.crossing} <em>min</em></strong>
             <small className={`trend-chip trend-chip-${mySgProjection.trendTone}`}>{mySgProjection.trend}</small>
           </div>
           <Sparkline24h
