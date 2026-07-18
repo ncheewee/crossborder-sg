@@ -1,41 +1,98 @@
-# CrossBorder.sg live-beta handoff
+# CrossBorder.sg handoff
 
-## What exists now
+Date: 2026-07-18, Asia/Singapore
+
+## Current objective
+
+CrossBorder.sg is a mobile-first Singapore-Johor land-checkpoint companion.
+The product should answer the driver's immediate question:
+
+> Should I cross now, which checkpoint should I use, and roughly how long will
+> the crossing take?
+
+The near-term design direction is deliberately narrow: get one checkpoint card
+right first, starting with Woodlands, then duplicate the pattern for Tuas only
+after the Woodlands card feels excellent.
+
+## Live state
 
 - Public frontend: https://ncheewee.github.io/crossborder-sg/
-- Public source repository: https://github.com/ncheewee/crossborder-sg
-- Public traffic API: https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=sg-my
-- Alternate direction: replace `sg-my` with `my-sg`.
-- UI build marker: `Codex build · Live beta 0.5`.
+- Source repository: https://github.com/ncheewee/crossborder-sg
+- Public API base: https://crossborder-sg-api.ncheewee.workers.dev
+- Example traffic endpoint:
+  https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=sg-my
+- Latest deployed commit at handoff: `5dbd8ce Refine Woodlands landing card`
+- UI build marker currently rendered in footer: `Codex build · Live beta 0.6`
 
-The first mobile viewport contains the recommendation, recommended official
-camera, and forecast graph. The graph uses teal “good to depart” and amber
-“less ideal” regions. A compact “I’ve crossed” feedback control now posts
-actual traveler crossing times to the backend.
+## User preferences and product direction
 
-The backend is now Cloudflare Worker + Neon Postgres. The Worker API lives in
-`worker-api/index.ts`, with schema in `neon/schema.sql` and Wrangler config in
-`wrangler.api.toml`. The previous `chatgpt.site` backend should be treated as
-retired MVP scaffolding. GitHub Pages and the scheduled collector now default
-to `https://crossborder-sg-api.ncheewee.workers.dev`.
+- Keep the app simple and decisive.
+- Prioritize the first mobile viewport.
+- Use a light theme with teal-green brand accents.
+- Avoid legacy traffic-site clutter, ad-heavy grids, and long scroll-heavy
+  dashboards.
+- Do not imply recommendations are untrustworthy when official data is stale.
+  Instead, always provide a recommendation and separately show source/update
+  freshness where relevant.
+- The user prefers visible, tested iterations and frequent deployment to
+  GitHub Pages.
+- The chosen MVP hosting direction is GitHub Pages for the frontend, plus
+  Cloudflare Worker and Neon for backend/persistence. Do not reintroduce the
+  earlier ChatGPT/Sites-hosting backend direction unless explicitly asked.
 
-## Repository state at handoff
+## Current frontend UX
 
-- `origin/main` is at `2b1d310` and contains the public Pages frontend, live
-  traffic API implementation, D1 schema/migration, and updated README.
-- The local branch also contains commits after `2b1d310`: a five-minute GitHub
-  Actions collector, this handoff guide, and the beta 0.5 traveler feedback
-  work. These commits have **not** reached GitHub because the current GitHub
-  CLI authorization does not have the `workflow` scope.
-- GitHub CLI authentication is currently invalid after the interrupted scope
-  refresh. Re-authenticate before pushing the local scheduler commit.
-- The deployed Sites backend source is at `927c319`. The beta 0.5 report
-  endpoint and `traveler_reports` migration have been built locally, but are
-  not deployed until a new Sites version is saved/deployed.
-- Working tree should be clean after this handoff file is committed locally.
+The app currently focuses on a single Woodlands landing card.
 
-Do not assume scheduled collection is active until `.github/workflows/collect-traffic.yml`
-is visible on GitHub and a workflow run succeeds.
+The current card should show:
+
+- Big `Woodlands` label in teal.
+- Two direction rows:
+  - `Towards JB`
+  - `Towards SG`
+- Each row shows:
+  - expected crossing duration range, e.g. `32-42 min`
+  - trend chip: `Easing`, `Steady`, `Slowing`, etc.
+  - a dedicated sparkline for that direction
+- Trend-chip colour logic:
+  - green = good, e.g. fast and steady/easing
+  - amber = warning, e.g. fast but slowing, or moderate/slowing
+  - red = bad, e.g. slow and slowing
+- Sparkline intent:
+  - smooth, data-rich-looking 24-hour forecast
+  - timing block takes about 30 percent of row width
+  - sparkline gets the remaining space
+  - glowing spot indicates NOW
+  - one sparkline for Towards JB and one for Towards SG
+- Camera feed:
+  - appears directly under the timing/sparkline rows
+  - swipeable carousel with dots
+  - auto-advances every 3 seconds until the user interacts
+  - should keep natural camera proportions; avoid making it too short/wide
+
+The current page intentionally removed:
+
+- `Pull down to refresh` helper text
+- `Compare checkpoints` / intro header copy
+- `Official feed live` badge
+- `Woodlands Causeway` small subtitle
+- `Live estimate` chip
+- Separate `drive there`, `camera view`, and `forecast` sections
+- The Tuas card, until the Woodlands card is right
+
+## Important next UX work
+
+1. Visually inspect the live app on a mobile-width viewport, ideally around
+   390px wide.
+2. Tune the Woodlands card spacing, typography, sparklines, and camera height
+   until it feels like the right landing experience.
+3. Only then restore/duplicate the same pattern for Tuas, with Woodlands first
+   and Tuas second.
+4. After both cards work, reintroduce a concise recommendation layer:
+   `leave now` or `leave at HH:MM`, via Woodlands/Tuas, expected clear-time
+   range to 15-minute precision.
+5. Keep camera/source freshness visible somewhere, but do not let it dominate
+   the first glance.
 
 ## Architecture
 
@@ -43,59 +100,110 @@ is visible on GitHub and a workflow run succeeds.
 GitHub Pages frontend
   docs/index.html + versioned assets
         |
-        | CORS GET
-        v
-Public Sites API /api/traffic
-        |
-        +--> LTA Traffic Images via data.gov.sg
-        |
-        +--> recommendation + forecast engine
-        |
-        +--> D1 traffic_observations history
-        |
-        +--> D1 traveler_reports feedback
-```
-
-Target replacement:
-
-```text
-GitHub Pages frontend
-        |
         | CORS GET/POST
         v
 Cloudflare Worker API
         |
-        +--> LTA Traffic Images via data.gov.sg
+        +--> data.gov.sg LTA traffic images
         |
         +--> recommendation + forecast engine
         |
         +--> Neon Postgres traffic_observations + traveler_reports
 ```
 
-### Public frontend
+## Key files
 
-- Source entry: `static-entry/index.html` and `static-entry/main.tsx`.
-- React UI: `app/page.tsx`.
-- Styling: `app/globals.css`.
-- Static build configuration: `vite.pages.config.ts`.
-- `npm run build:pages` writes the deployable bundle to `docs/`.
-- GitHub Pages is configured to serve `main` branch `/docs`.
-- On `github.io`, `app/page.tsx` calls the public Sites API URL directly.
-  Change that hard-coded API base when moving the backend.
+Frontend:
 
-### Backend
+- `app/page.tsx` - main React client UI and chart/camera components
+- `app/globals.css` - light teal theme and mobile layout
+- `app/layout.tsx` - app metadata
+- `static-entry/` - static Pages entrypoint
+- `vite.pages.config.ts` - GitHub Pages static build config
+- `public/` - PWA icons, manifest, service worker, camera fallbacks
+- `docs/` - generated GitHub Pages bundle; commit this for Pages deploys
 
-- Route: `app/api/traffic/route.ts`.
-- Traveler report route: `app/api/reports/route.ts`.
-- Model: `lib/traffic-engine.ts`.
-- Storage schema: `db/schema.ts`.
-- Migrations: `drizzle/0000_colossal_phantom_reporter.sql` and
-  `drizzle/0001_grey_mentallo.sql`.
-- Logical D1 binding: `DB` in `.openai/hosting.json`.
-- The API permits public cross-origin `GET` and `OPTIONS` requests.
-- Responses are cached for 60 seconds in browsers and 90 seconds at the edge.
-- A successful API request records at most one observation per official camera
-  timestamp, so repeated refreshes do not create duplicate samples.
+Backend:
+
+- `worker-api/index.ts` - Cloudflare Worker API
+- `wrangler.api.toml` - Worker deploy config
+- `neon/schema.sql` - Neon database schema
+- `app/api/traffic/route.ts` and `app/api/reports/route.ts` - app API routes
+  kept for the Vinext/Sites-compatible build path
+- `lib/traffic-engine.ts` - estimation/model helpers
+- `db/` and `drizzle/` - database schema/migration support
+
+Project/deployment:
+
+- `.env.example` - documents `NEXT_PUBLIC_API_BASE` and `DATABASE_URL`
+- `package.json` - scripts for frontend, static Pages bundle, and Worker API
+- `.github/workflows/collect-traffic.yml` - scheduled observation collection
+
+## Build and deploy commands
+
+Requires Node.js 22.13 or newer.
+
+Install dependencies:
+
+```bash
+npm ci
+```
+
+Validate app build:
+
+```bash
+npm run build
+```
+
+Build GitHub Pages bundle:
+
+```bash
+NEXT_PUBLIC_API_BASE=https://crossborder-sg-api.ncheewee.workers.dev npm run build:pages
+```
+
+Deploy frontend:
+
+```bash
+git add app/page.tsx app/globals.css docs
+git commit -m "Describe the UI change"
+git push origin main
+```
+
+GitHub Pages is configured to serve `main` branch `/docs`.
+
+Deploy backend if Worker code changes:
+
+```bash
+npm run api:deploy
+```
+
+Useful API checks:
+
+```bash
+curl --fail "https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=sg-my"
+curl --fail "https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=my-sg"
+```
+
+## API behaviour
+
+Traffic endpoints:
+
+- `GET /api/traffic?direction=sg-my`
+- `GET /api/traffic?direction=my-sg`
+
+Report endpoint:
+
+- `POST /api/reports`
+
+`POST /api/reports` accepts:
+
+- `direction`
+- `checkpoint`
+- `actualWaitMinutes`
+- optional `estimatedWaitMinutes`
+- optional `sourceUpdatedAt`
+
+The backend stores traveller feedback without collecting user identity.
 
 ## Official data and model boundaries
 
@@ -103,127 +211,64 @@ Official camera images and timestamps come from:
 
 `https://api.data.gov.sg/v1/transport/traffic-images`
 
-Current camera mapping:
+Current camera mapping includes:
 
-- Woodlands: camera `2701`.
-- Tuas: camera `4703`.
+- Woodlands: camera `2701`
+- Tuas: camera `4703`
 
-The official feed typically updates every 1–5 minutes. The current endpoint can
-be tested without an API key; obtain and configure a data.gov.sg production key
-if higher limits or production support become necessary.
+Important: the current estimates are not official wait times. The MVP combines
+time-of-week priors, official camera freshness, stored observations, and
+traveller reports. Full computer vision/vehicle detection is not implemented
+yet.
 
-Important: estimated crossing times are **not official wait times**. Model v1
-combines time-of-week checkpoint priors with official camera freshness. It does
-not yet decode images or detect vehicles. The recommendation is always present,
-while the official source timestamp is shown separately.
+## PWA state
 
-## API response contract
+The app has PWA assets and install metadata:
 
-The response contains:
+- `public/manifest.webmanifest`
+- `public/sw.js`
+- `public/icon.svg`
+- `public/icon-192.png`
+- `public/icon-512.png`
+- `public/maskable-icon.svg`
+- `public/maskable-icon-512.png`
+- `public/apple-touch-icon.png`
 
-- `source`: official source name, health, timestamp, and update frequency.
-- `model`: current estimation method and maturity.
-- `recommendation`: `go` or `wait`, departure time, checkpoint, total range,
-  saving versus the other checkpoint, reason, and confidence label.
-- `checkpoints`: camera URL/time, crossing range, drive time, condition, trend,
-  stored history, rolling accuracy state, and 24-hour traveler report summary
-  for Woodlands and Tuas.
-- `forecasts`: timestamped predicted waits and good/amber zones for each
-  checkpoint.
+The generated `docs/` folder includes the corresponding deployed assets.
 
-`POST /api/reports` accepts `direction`, `checkpoint`, `actualWaitMinutes`,
-and optional `estimatedWaitMinutes` / `sourceUpdatedAt`. It stores driver
-feedback in `traveler_reports` without collecting user identity.
+## What not to do accidentally
 
-## Automatic collection
+- Do not pivot back to the older scroll-heavy dashboard as the default
+  homepage.
+- Do not bring back the separate forecast section until the one-card pattern is
+  working.
+- Do not bring back helper/header clutter on the first screen.
+- Do not replace GitHub Pages + Cloudflare Worker + Neon with ChatGPT/Sites
+  hosting unless the user explicitly changes direction.
+- Do not treat generated `docs/assets/*` filenames as stable; they change after
+  each Pages build.
+- Do not commit secrets. Configure `DATABASE_URL` as a Cloudflare Worker secret.
 
-`.github/workflows/collect-traffic.yml` calls both directions every five
-minutes. To activate it:
+## Suggested next prompt for a new Codex task
 
-1. Re-authenticate GitHub CLI with repository and workflow permission.
-2. Push the current local `main` branch to `origin`.
-3. Confirm the `Collect checkpoint observations` workflow exists on GitHub.
-4. Trigger it manually once and confirm both API calls succeed.
-5. Confirm later API responses contain growing `history` arrays.
+```text
+Read HANDOFF.md first and treat it as the current source of truth.
 
-The API also records observations whenever a user loads or refreshes the app,
-so history collection works on demand even without the scheduler.
+Continue CrossBorder.sg from the latest deployed state. Focus only on getting
+the Woodlands landing card right before restoring Tuas.
 
-## Build and validation
+Please visually inspect the mobile layout around 390px wide, then refine:
+- spacing and hierarchy of the big Woodlands label
+- the two direction rows: Towards JB and Towards SG
+- trend chip colour logic and wording
+- sparklines so they look smooth, useful, and not compressed
+- glowing NOW point positioning
+- camera carousel height/proportions
 
-Requires Node.js 22.13 or newer.
+Do not reintroduce the old dashboard sections, intro headers, official-feed
+badge, pull-down helper text, or ChatGPT/Sites-hosting backend direction.
 
-```bash
-npm ci
-npm run build:pages
-npm run build
+When done, run the build, build the GitHub Pages bundle, commit, push to main,
+and verify the Pages deployment.
 ```
 
-Useful live checks:
-
-```bash
-curl --fail "https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=sg-my"
-curl --fail "https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=my-sg"
-```
-
-If the Neon schema changes, update `neon/schema.sql`, apply it to Neon, run
-`npm run api:deploy`, and rebuild the Pages bundle if the public API URL
-changes.
-
-## Files to port into another project
-
-Minimum product surface:
-
-- `app/page.tsx`
-- `app/globals.css`
-- `lib/traffic-engine.ts`
-- `app/api/traffic/route.ts`
-- `app/api/reports/route.ts`
-- `db/index.ts`
-- `db/schema.ts`
-- `drizzle/`
-- `public/` image assets
-
-For a standalone GitHub Pages frontend, also port:
-
-- `static-entry/`
-- `vite.pages.config.ts`
-- the `build:pages` package script
-
-For the target Cloudflare + Neon backend, also port:
-
-- `worker-api/index.ts`
-- `wrangler.api.toml`
-- `neon/schema.sql`
-- the `api:dev` and `api:deploy` package scripts
-
-For the same Sites/Cloudflare backend, also preserve:
-
-- `.openai/hosting.json`
-- `vite.config.ts`
-- `worker/index.ts`
-- `build/sites-vite-plugin.ts`
-
-Do not copy platform project IDs blindly when creating a genuinely new backend.
-Create the new project/bindings, then update the frontend API base.
-
-## Known limitations and next engineering work
-
-1. Replace the time-of-week prior with calibrated camera-derived or reported
-   crossing observations.
-2. Add real vehicle/queue analysis; current v1 does not perform computer vision.
-3. Use `traveler_reports` to train/calibrate the route estimates once enough
-   real submissions accumulate.
-4. The rolling error compares a prior estimate with a later estimate. It is not
-   genuine traveller-confirmed accuracy yet.
-5. Add API rate limiting or a dedicated ingestion endpoint before significant
-   public traffic; the read endpoint currently performs deduplicated writes.
-6. Add monitoring for official-feed failures and stale camera timestamps.
-7. Verify responsive UI and browser errors after any port that changes fonts,
-   CSS loading, asset base paths, or the API hostname.
-
-## No secrets in this repository
-
-No LTA/data.gov.sg key or private token is committed. Short-lived Sites and
-GitHub credentials were used only during deployment. New hosting credentials
-must be configured through the destination platform rather than added to source.
