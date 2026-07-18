@@ -212,13 +212,20 @@ export function cameraFor(
     timestamp: string;
   }>,
 ): OfficialCamera {
-  const match = cameras.find((camera) => camera.camera_id === cameraIds[checkpoint]);
-  if (!match) throw new Error(`Official ${checkpoint} camera is unavailable`);
+  const primaryId = cameraIds[checkpoint];
+  const prefix = cameraPrefixes[checkpoint];
+  const match = cameras.find((camera) => camera.camera_id === primaryId)
+    ?? cameras
+      .filter((camera) => camera.camera_id.startsWith(prefix))
+      .sort((a, b) => a.camera_id.localeCompare(b.camera_id))[0];
+  if (!match) throw new Error(`Official ${checkpoint} cameras are unavailable`);
   return {
     cameraId: match.camera_id,
     imageUrl: match.image,
     updatedAt: match.timestamp,
-    label: `${checkpoint} camera ${match.camera_id}`,
+    label: match.camera_id === primaryId
+      ? `${checkpoint} camera ${match.camera_id}`
+      : `${checkpoint} fallback camera ${match.camera_id}`,
   };
 }
 

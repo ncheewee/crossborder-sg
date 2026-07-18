@@ -31,9 +31,10 @@ Beat the Jam:
 
 ## Benchmark protocol
 
-Until explicit APIs or permitted exports are available, compare through a daily manual/mobile-app snapshot:
+Until explicit APIs or permitted exports are available, compare through the
+local Android-emulator capture loop:
 
-1. Capture at least four times per day: morning peak, midday, evening peak, late night.
+1. Capture hourly, with extra confidence at morning peak, midday, evening peak, late night.
 2. Capture all four routes:
    - Woodlands SG->MY
    - Woodlands MY->SG
@@ -46,6 +47,34 @@ Until explicit APIs or permitted exports are available, compare through a daily 
    - Camera freshness and any visible incident/advisory.
 4. Treat estimates within +/-15 minutes as directionally aligned for MVP.
 5. Flag gaps where CrossBorder.sg differs by more than 20 minutes from both apps in the same direction.
+
+## Closed-loop accuracy monitoring
+
+The local hourly competitor report now writes three durable files under
+`COMPETITOR_CAPTURE_DIR`:
+
+- `benchmark-history.csv`: every hourly source snapshot.
+- `accuracy-history.csv`: lagged proxy scores once 60-minute and 180-minute
+  horizons mature.
+- `latest-accuracy.json`: machine-readable scorecard for the latest Telegram
+  report.
+
+The scoring loop treats the later CrossBorder.sg observed estimate as a proxy
+ground truth until enough traveller-reported actual clear times exist. For each
+checkpoint, direction, source, and horizon it records:
+
+- predicted midpoint at capture time
+- later observed midpoint
+- absolute error
+- bias, where positive means the source predicted too high
+- severity band: OK <= 10 minutes, WATCH <= 25 minutes, GAP > 25 minutes
+
+Telegram includes:
+
+- current variance versus Google Routes, Checkpoint.sg, and Beat the Jam
+- best recent source by route using MAE and bias
+- tuning candidates when CrossBorder.sg has at least three scored samples and
+  absolute bias of at least eight minutes on a route
 
 ## Model upgrade target
 

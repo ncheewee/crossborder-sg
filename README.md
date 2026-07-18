@@ -74,3 +74,18 @@ The Worker exposes the same public contract as the temporary backend:
 - `GET /api/traffic?direction=sg-my`
 - `GET /api/traffic?direction=my-sg`
 - `POST /api/reports`
+
+## Accuracy monitoring loop
+
+There are two recurring monitors:
+
+- GitHub Actions runs `scripts/hourly-model-comparison.mjs` hourly against the
+  public API and Google Routes.
+- The local macOS launchd job runs the Android emulator, captures Checkpoint.sg
+  and Beat the Jam, then runs `scripts/report-competitor-comparison.mjs`.
+
+The local loop is the closed-loop tuner. It appends source snapshots to
+`benchmark-history.csv`, scores matured 60-minute and 180-minute horizons in
+`accuracy-history.csv`, and writes `latest-accuracy.json` for Telegram/reporting.
+Until enough traveller reports exist, the later CrossBorder.sg observed estimate
+is used as proxy ground truth for tuning bias and route reliability.
