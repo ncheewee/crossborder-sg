@@ -206,8 +206,13 @@ button { font: inherit; }
   align-items: stretch;
 }
 
+.direction-signal-row {
+  min-height: 68px;
+}
+
 .duration-row {
   min-width: 0;
+  min-height: 68px;
   padding: 5px 6px 4px;
   display: grid;
   align-content: center;
@@ -295,8 +300,8 @@ button { font: inherit; }
 
 .sparkline-card {
   min-width: 0;
-  height: 60px;
-  min-height: 0;
+  height: 100%;
+  min-height: 68px;
   display: grid;
   place-items: stretch;
   overflow: hidden;
@@ -397,7 +402,6 @@ button { font: inherit; }
   position: relative;
   height: 22px;
   margin: -2px 8px -2px 28px;
-  transform: translateY(-5px);
 }
 
 .spark-axis span {
