@@ -597,6 +597,8 @@ function Sparkline24h({
   label: string;
 }) {
   const [nowMs, setNowMs] = useState<number | null>(null);
+  const [chartSize, setChartSize] = useState({ width: 240, height: 74 });
+  const chartRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setNowMs(Date.now());
@@ -604,13 +606,39 @@ function Sparkline24h({
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const element = chartRef.current;
+    if (!element) return;
+
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      const width = Math.max(160, Math.round(rect.width));
+      const height = Math.max(58, Math.round(rect.height));
+      setChartSize((currentSize) => (
+        currentSize.width === width && currentSize.height === height
+          ? currentSize
+          : { width, height }
+      ));
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const chart = useMemo(() => {
     const safePoints = points
       .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    const width = 240;
-    const height = 74;
-    const padding = { top: 11, right: 8, bottom: 8, left: 32 };
+    const width = chartSize.width;
+    const height = chartSize.height;
+    const padding = {
+      top: Math.max(11, Math.round(height * 0.12)),
+      right: 8,
+      bottom: Math.max(8, Math.round(height * 0.1)),
+      left: 32,
+    };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     if (safePoints.length < 2) return null;
@@ -702,12 +730,18 @@ function Sparkline24h({
       }),
       grid: [padding.top, padding.top + plotHeight / 2, padding.top + plotHeight],
     };
-  }, [current, nowMs, points]);
+  }, [chartSize.height, chartSize.width, current, nowMs, points]);
 
   return (
-    <div className="sparkline-card">
+    <div className="sparkline-card" ref={chartRef}>
       {chart && (
-        <svg viewBox={`0 0 ${chart.width} ${chart.height}`} role="img" aria-label={label} preserveAspectRatio="none">
+        <svg
+          width={chart.width}
+          height={chart.height}
+          viewBox={`0 0 ${chart.width} ${chart.height}`}
+          role="img"
+          aria-label={label}
+        >
           {chart.zones.map((zone, index) => (
             <rect
               key={`${zone.x}-${index}`}
@@ -1238,7 +1272,7 @@ export default function Home() {
         const topbarHeight = topbar?.getBoundingClientRect().height ?? 42;
         root.style.setProperty("--landing-visible-height", `${viewportHeight.toFixed(1)}px`);
         root.style.setProperty("--landing-topbar-height", `${topbarHeight.toFixed(1)}px`);
-        root.style.setProperty("--landing-summary-height", `${Math.max(460, viewportHeight * 0.8).toFixed(1)}px`);
+        root.style.setProperty("--landing-summary-height", `${Math.max(360, viewportHeight * 0.6).toFixed(1)}px`);
       });
     };
 

@@ -19,7 +19,7 @@
   --error-band: rgba(20, 184, 166, 0.18);
   --landing-visible-height: 100vh;
   --landing-topbar-height: 42px;
-  --landing-summary-height: max(460px, 80vh);
+  --landing-summary-height: max(360px, 60vh);
 }
 
 * { box-sizing: border-box; }
@@ -173,7 +173,8 @@ button { font: inherit; }
 }
 
 .landing-card-stack.direction-first .landing-direction-card {
-  min-height: calc((var(--landing-summary-height) - 7px) / 2);
+  height: calc((var(--landing-summary-height) - 7px) / 2);
+  min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -187,13 +188,13 @@ button { font: inherit; }
 .landing-direction-heading h1 {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
+  min-height: 24px;
   margin: 0;
-  padding: 5px 10px 6px;
+  padding: 4px 10px 5px;
   border-radius: 12px;
   background: linear-gradient(135deg, #0f766e, #0d9488);
   color: #ffffff;
-  font-size: clamp(17px, 4.8vw, 21px);
+  font-size: clamp(16px, 4.5vw, 20px);
   font-weight: 840;
   line-height: 1;
   letter-spacing: 0;
@@ -232,12 +233,13 @@ button { font: inherit; }
 
 .landing-card-body {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   margin-bottom: 0;
+  min-height: 0;
 }
 
 .landing-card-stack.direction-first .landing-card-body {
-  grid-template-rows: minmax(0, 1fr) 24px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 22px minmax(0, 1fr);
 }
 
 .direction-signal-row,
@@ -256,6 +258,10 @@ button { font: inherit; }
 .landing-card-stack.direction-first .duration-row,
 .landing-card-stack.direction-first .sparkline-card {
   min-height: 0;
+}
+
+.landing-card-stack.direction-first .direction-signal-row {
+  height: 100%;
 }
 
 .duration-row {
