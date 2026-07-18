@@ -349,12 +349,14 @@ button { font: inherit; }
 
 .spark-now-marker {
   position: absolute;
-  width: 3px;
-  height: 3px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: #2563eb;
-  border: 0;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22), 0 0 9px 5px rgba(37, 99, 235, 0.9);
+  border: 2px solid #ffffff;
+  box-shadow:
+    0 0 0 5px rgba(37, 99, 235, 0.18),
+    0 0 13px 4px rgba(37, 99, 235, 0.76);
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -364,7 +366,11 @@ button { font: inherit; }
 }
 
 .spark-now-marker i {
-  display: none;
+  display: block;
+  position: absolute;
+  inset: -7px;
+  border-radius: inherit;
+  border: 1px solid rgba(37, 99, 235, 0.2);
 }
 
 @keyframes breathe-now {
@@ -380,21 +386,21 @@ button { font: inherit; }
 
 .spark-axis-row {
   align-items: center;
-  min-height: 17px;
+  min-height: 22px;
 }
 
 .spark-axis {
   position: relative;
-  height: 17px;
-  margin: -1px 8px -1px 28px;
+  height: 22px;
+  margin: -2px 8px -2px 28px;
 }
 
 .spark-axis span {
   position: absolute;
   top: 50%;
-  transform: translateX(-50%);
-  display: grid;
-  place-items: center;
+  width: 0;
+  height: 0;
+  transform: translateY(-50%);
   color: var(--muted-2);
   font-size: 8px;
   font-weight: 740;
@@ -403,30 +409,41 @@ button { font: inherit; }
 }
 
 .spark-axis span:first-child {
-  transform: translateX(0);
+  transform: translateY(-50%);
 }
 
 .spark-axis span:last-child {
-  transform: translateX(-100%);
+  transform: translateY(-50%);
 }
 
 .spark-axis i {
   position: absolute;
-  left: 50%;
+  left: 0;
   top: 50%;
   width: 1px;
-  height: 16px;
+  height: 22px;
   background: rgba(48, 83, 78, 0.24);
   transform: translate(-50%, -50%);
 }
 
 .spark-axis b {
-  position: relative;
+  position: absolute;
   z-index: 1;
   min-width: 18px;
   padding: 0 2px;
   background: rgba(244, 250, 249, 0.9);
   font: inherit;
+  left: 0;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.spark-axis span.edge:first-child b {
+  transform: translate(0, -50%);
+}
+
+.spark-axis span.edge:last-child b {
+  transform: translate(-100%, -50%);
 }
 
 .landing-checkpoint-card .camera-carousel.compact .camera-frame {

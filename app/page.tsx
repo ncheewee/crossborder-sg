@@ -650,6 +650,8 @@ function Sparkline24h({
       nowY,
       nowLeft: nowX === null ? null : `${((nowX / width) * 100).toFixed(2)}%`,
       nowTop: nowY === null ? null : `${((nowY / height) * 100).toFixed(2)}%`,
+      axisLeft: `${((padding.left / width) * 100).toFixed(2)}%`,
+      axisWidth: `${((plotWidth / width) * 100).toFixed(2)}%`,
       padding,
       plotHeight,
       yTicks: [0, 60, 120].map((value) => ({ value, y: y(value) })),
@@ -716,7 +718,7 @@ function SparklineAxis({ points }: { points: SparkPoint[] }) {
       const time = new Date(Date.UTC(2026, 0, 1, hourOffset - 8, 0, 0));
       return {
         left: `${(hourOffset / 24) * 100}%`,
-        edge: hourOffset === 24,
+        edge: hourOffset === 0 || hourOffset === 24,
         label: new Intl.DateTimeFormat("en-SG", {
           hour: "numeric",
           hour12: true,
@@ -729,9 +731,9 @@ function SparklineAxis({ points }: { points: SparkPoint[] }) {
   return (
     <div className="spark-axis" aria-hidden="true">
       {ticks.map((tick) => (
-        <span key={`${tick.left}-${tick.label}`} style={{ left: tick.left }}>
+        <span key={`${tick.left}-${tick.label}`} className={tick.edge ? "edge" : ""} style={{ left: tick.left }}>
           <i aria-hidden="true" />
-          <b>{!tick.edge && tick.label}</b>
+          <b>{tick.label}</b>
         </span>
       ))}
     </div>
