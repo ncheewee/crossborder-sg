@@ -730,8 +730,8 @@ function SparklineAxis({ points }: { points: SparkPoint[] }) {
     <div className="spark-axis" aria-hidden="true">
       {ticks.map((tick) => (
         <span key={`${tick.left}-${tick.label}`} style={{ left: tick.left }}>
-          <i />
-          {!tick.edge && tick.label}
+          <i aria-hidden="true" />
+          <b>{!tick.edge && tick.label}</b>
         </span>
       ))}
     </div>
