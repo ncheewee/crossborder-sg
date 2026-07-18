@@ -199,7 +199,7 @@ button { font: inherit; }
 .direction-signal-row,
 .spark-axis-row {
   display: grid;
-  grid-template-columns: minmax(108px, 31%) minmax(0, 1fr);
+  grid-template-columns: minmax(112px, 32%) minmax(0, 1fr);
   gap: 6px;
   align-items: stretch;
 }
@@ -228,10 +228,13 @@ button { font: inherit; }
 }
 
 .duration-row strong {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
   gap: 3px;
   margin-top: 2px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #ffffff;
   font-size: clamp(18px, 4.9vw, 23px);
   line-height: 1;
   letter-spacing: 0;
@@ -239,20 +242,20 @@ button { font: inherit; }
 }
 
 .duration-time-good {
-  color: #0f766e;
+  background: #0f766e;
 }
 
 .duration-time-warn {
-  color: #b45309;
+  background: #d97706;
 }
 
 .duration-time-bad {
-  color: #b91c1c;
+  background: #dc2626;
 }
 
 .duration-row em {
   color: currentColor;
-  opacity: 0.72;
+  opacity: 0.82;
   font-size: 11px;
   font-style: normal;
   font-weight: 660;
@@ -263,26 +266,24 @@ button { font: inherit; }
   width: fit-content;
   max-width: 100%;
   margin-top: 4px;
-  padding: 2px 6px;
-  border-radius: 999px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   font-size: 11px;
   font-weight: 760;
   line-height: 1.15;
 }
 
 .trend-chip-good {
-  background: #0f766e;
-  color: #ffffff;
+  color: #0f766e;
 }
 
 .trend-chip-warn {
-  background: #d97706;
-  color: #ffffff;
+  color: #b45309;
 }
 
 .trend-chip-bad {
-  background: #dc2626;
-  color: #ffffff;
+  color: #dc2626;
 }
 
 .sparkline-card {
@@ -307,6 +308,13 @@ button { font: inherit; }
 .spark-zone-good { fill: rgba(13, 148, 136, 0.16); }
 .spark-zone-amber { fill: rgba(245, 158, 11, 0.16); }
 .spark-zone-bad { fill: rgba(220, 38, 38, 0.12); }
+
+.spark-y-label {
+  fill: rgba(97, 123, 119, 0.86);
+  font: 760 8px Arial, sans-serif;
+  dominant-baseline: middle;
+  text-anchor: end;
+}
 
 .spark-grid {
   stroke: rgba(48, 83, 78, 0.14);
@@ -341,7 +349,7 @@ button { font: inherit; }
   border-radius: 999px;
   background: #2563eb;
   border: 2px solid #ffffff;
-  box-shadow: 0 0 7px rgba(37, 99, 235, 0.9);
+  box-shadow: 0 0 9px rgba(37, 99, 235, 0.95), 0 0 2px rgba(37, 99, 235, 1);
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -373,7 +381,7 @@ button { font: inherit; }
 .spark-axis {
   position: relative;
   height: 13px;
-  margin: -1px 9px;
+  margin: -1px 8px -1px 28px;
   border-top: 1px solid rgba(48, 83, 78, 0.16);
 }
 

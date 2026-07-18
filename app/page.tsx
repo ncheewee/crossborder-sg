@@ -573,7 +573,7 @@ function Sparkline24h({
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const width = 240;
     const height = 68;
-    const padding = { top: 8, right: 12, bottom: 8, left: 12 };
+    const padding = { top: 8, right: 8, bottom: 8, left: 28 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     if (safePoints.length < 2) return null;
@@ -590,8 +590,8 @@ function Sparkline24h({
       const next2 = waits[Math.min(waits.length - 1, index + 2)];
       return (previous2 + previous1 * 2 + value * 4 + next1 * 2 + next2) / 10;
     });
-    const minWait = Math.max(0, Math.min(...waits, current, 45) - 8);
-    const maxWait = Math.max(minWait + 30, Math.max(...waits, current, 90) + 10);
+    const minWait = 0;
+    const maxWait = 120;
     const x = (timestamp: string) => padding.left + ((new Date(timestamp).getTime() - startMs) / spanMs) * plotWidth;
     const y = (value: number) => padding.top + plotHeight - ((value - minWait) / (maxWait - minWait)) * plotHeight;
     const plotted = safePoints.map((point, index) => ({
@@ -652,6 +652,7 @@ function Sparkline24h({
       nowTop: nowY === null ? null : `${((nowY / height) * 100).toFixed(2)}%`,
       padding,
       plotHeight,
+      yTicks: [0, 60, 120].map((value) => ({ value, y: y(value) })),
       zones: plotted.slice(0, -1).map((point, index) => {
         const next = plotted[index + 1];
         return {
@@ -677,6 +678,11 @@ function Sparkline24h({
               width={zone.w}
               height={chart.plotHeight}
             />
+          ))}
+          {chart.yTicks.map((tick) => (
+            <text key={tick.value} className="spark-y-label" x={chart.padding.left - 5} y={tick.y}>
+              {tick.value}m
+            </text>
           ))}
           {chart.grid.map((y) => (
             <line key={y} className="spark-grid" x1={chart.padding.left} x2={chart.width - chart.padding.right} y1={y} y2={y} />
@@ -704,21 +710,13 @@ function SparklineAxis({ points }: { points: SparkPoint[] }) {
   }, []);
 
   const ticks = useMemo(() => {
+    void points;
     if (!ready) return [];
-    const safePoints = points
-      .filter((point) => Number.isFinite(new Date(point.timestamp).getTime()))
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    if (safePoints.length < 2) return [];
-
-    const startMs = new Date(safePoints[0].timestamp).getTime();
-    const lastMs = new Date(safePoints[safePoints.length - 1].timestamp).getTime();
-    const endMs = Math.max(lastMs, startMs + 24 * 60 * 60 * 1000);
-    const spanMs = Math.max(1, endMs - startMs);
-    const labels = [0, 4, 8, 12, 16, 20, 24];
-    return labels.map((hourOffset) => {
-      const time = new Date(startMs + hourOffset * 60 * 60 * 1000);
+    return [0, 4, 8, 12, 16, 20, 24].map((hourOffset) => {
+      const time = new Date(Date.UTC(2026, 0, 1, hourOffset - 8, 0, 0));
       return {
-        left: `${Math.min(100, Math.max(0, ((time.getTime() - startMs) / spanMs) * 100))}%`,
+        left: `${(hourOffset / 24) * 100}%`,
+        edge: hourOffset === 24,
         label: new Intl.DateTimeFormat("en-SG", {
           hour: "numeric",
           hour12: true,
@@ -726,14 +724,14 @@ function SparklineAxis({ points }: { points: SparkPoint[] }) {
         }).format(time).replace(" ", "").toLowerCase(),
       };
     });
-  }, [points, ready]);
+  }, [ready]);
 
   return (
     <div className="spark-axis" aria-hidden="true">
       {ticks.map((tick) => (
         <span key={`${tick.left}-${tick.label}`} style={{ left: tick.left }}>
           <i />
-          {tick.label}
+          {!tick.edge && tick.label}
         </span>
       ))}
     </div>
