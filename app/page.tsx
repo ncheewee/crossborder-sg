@@ -568,20 +568,22 @@ function sparklinePoints(
   direction: Direction,
   checkpoint: Checkpoint,
 ): SparkPoint[] {
+  const lastWeekBase = new Date();
+  lastWeekBase.setDate(lastWeekBase.getDate() - 7);
+  lastWeekBase.setHours(0, 0, 0, 0);
   const livePoints = trafficByDirection[direction]?.forecasts[checkpoint];
   if (livePoints?.length) {
+    const firstLiveMs = new Date(livePoints[0].timestamp).getTime();
     return livePoints.slice(0, 49).map((point) => ({
-      timestamp: point.timestamp,
+      timestamp: new Date(lastWeekBase.getTime() + Math.max(0, new Date(point.timestamp).getTime() - firstLiveMs)).toISOString(),
       predicted: point.predicted,
       zone: waitTone(point.predicted),
     }));
   }
 
   const fallback = chartSeries[direction][checkpoint];
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
   return fallback.prediction.map((predicted, index) => ({
-    timestamp: new Date(start.getTime() + index * 3 * 60 * 60 * 1000).toISOString(),
+    timestamp: new Date(lastWeekBase.getTime() + index * 3 * 60 * 60 * 1000).toISOString(),
     predicted: predicted ?? 50,
     zone: fallback.windows[Math.min(index, fallback.windows.length - 1)] ?? "amber",
   }));
@@ -685,7 +687,15 @@ function Sparkline24h({
       return parts.join(" ");
     };
 
-    const now = nowMs === null ? null : Math.min(endMs, Math.max(startMs, nowMs));
+    const comparableNow = (() => {
+      if (nowMs === null) return null;
+      if (nowMs >= startMs && nowMs <= endMs) return nowMs;
+      const sourceNow = new Date(nowMs);
+      const chartNow = new Date(startMs);
+      chartNow.setHours(sourceNow.getHours(), sourceNow.getMinutes(), sourceNow.getSeconds(), sourceNow.getMilliseconds());
+      return chartNow.getTime();
+    })();
+    const now = comparableNow === null ? null : Math.min(endMs, Math.max(startMs, comparableNow));
     const nextIndex = now === null ? -1 : plotted.findIndex((point) => new Date(point.timestamp).getTime() >= now);
     const rightIndex = nextIndex === -1
       ? plotted.length - 1
@@ -699,18 +709,12 @@ function Sparkline24h({
     const nowX = now === null ? null : padding.left + ((now - startMs) / spanMs) * plotWidth;
     const nowY = now === null ? null : left.y + (right.y - left.y) * localRatio;
     const nowPoint = nowX === null || nowY === null ? null : { x: nowX, y: nowY };
-    const historyPoints = nowPoint
-      ? [...plotted.filter((point) => new Date(point.timestamp).getTime() <= now), nowPoint]
-      : plotted;
-    const predictionPoints = nowPoint
-      ? [nowPoint, ...plotted.filter((point) => new Date(point.timestamp).getTime() > now)]
-      : [];
+    const historyPoints = plotted;
 
     return {
       width,
       height,
       historyPath: curvePath(historyPoints),
-      predictionPath: curvePath(predictionPoints),
       nowX,
       nowY,
       nowLeft: nowX === null ? null : `${((nowX / width) * 100).toFixed(2)}%`,
@@ -761,9 +765,7 @@ function Sparkline24h({
             <line key={y} className="spark-grid" x1={chart.padding.left} x2={chart.width - chart.padding.right} y1={y} y2={y} />
           ))}
           <path className="spark-line-underlay" d={chart.historyPath} />
-          <path className="spark-line-underlay spark-line-forecast-underlay" d={chart.predictionPath} />
           <path className="spark-line" d={chart.historyPath} />
-          <path className="spark-line spark-line-forecast" d={chart.predictionPath} />
         </svg>
       )}
       {chart?.nowLeft && chart.nowTop && (
@@ -838,7 +840,7 @@ function LandingSignalRow({
       <Sparkline24h
         points={points}
         current={data.waitMinutes}
-        label={`${checkpoint} 24-hour forecast ${directionLabel} with current time marker`}
+        label={`${checkpoint} last-week 24-hour pattern ${directionLabel} with current time-of-day marker`}
       />
     </div>
   );
@@ -867,6 +869,7 @@ function LandingDirectionCard({
     <article className="landing-direction-card">
       <div className="landing-direction-heading">
         <h1>{title}</h1>
+        <small>Last week pattern</small>
       </div>
       <div className="landing-card-body">
         <LandingSignalRow
