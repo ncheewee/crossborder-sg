@@ -343,7 +343,8 @@ button { font: inherit; }
 }
 
 .landing-checkpoint-card .camera-dots {
-  bottom: 8px;
+  top: 10px;
+  bottom: auto;
   padding: 5px 7px;
 }
 
