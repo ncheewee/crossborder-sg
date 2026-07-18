@@ -524,7 +524,7 @@ function waitTone(minutes: number): SparkTone {
   return "bad";
 }
 
-function projectedTrend(points: SparkPoint[], current: number, fallbackTrend: string, nowMs: number | null) {
+function observedTrend(points: SparkPoint[], current: number, fallbackTrend: string, nowMs: number | null) {
   if (nowMs === null) {
     return {
       trend: fallbackTrend,
@@ -545,7 +545,7 @@ function projectedTrend(points: SparkPoint[], current: number, fallbackTrend: st
   const startMs = new Date(safePoints[0].timestamp).getTime();
   const endMs = new Date(safePoints[safePoints.length - 1].timestamp).getTime();
   const clampedNow = Math.min(endMs, Math.max(startMs, nowMs));
-  const lookAhead = Math.min(endMs, clampedNow + 3 * 60 * 60 * 1000);
+  const lookBehind = Math.max(startMs, clampedNow - 2 * 60 * 60 * 1000);
   const interpolate = (targetMs: number) => {
     const foundIndex = safePoints.findIndex((point) => new Date(point.timestamp).getTime() >= targetMs);
     const rightIndex = foundIndex === -1 ? safePoints.length - 1 : Math.max(1, foundIndex);
@@ -557,9 +557,9 @@ function projectedTrend(points: SparkPoint[], current: number, fallbackTrend: st
     return left.predicted + (right.predicted - left.predicted) * ratio;
   };
 
-  const nowValue = interpolate(clampedNow);
-  const futureValue = interpolate(lookAhead);
-  const delta = futureValue - nowValue;
+  const nowValue = current;
+  const previousValue = interpolate(lookBehind);
+  const delta = nowValue - previousValue;
   const trend = delta >= 6 ? "Slowing" : delta <= -6 ? "Easing" : "Steady";
   return {
     trend,
@@ -595,11 +595,10 @@ function lastWeekComparisonPoints(
 ): SparkPoint[] {
   void trafficByDirection;
   const values = checkpointSgSaturdayPattern[direction][checkpoint].comparison;
-  const lastWeekBase = new Date();
-  lastWeekBase.setDate(lastWeekBase.getDate() - 7);
-  lastWeekBase.setHours(0, 0, 0, 0);
-  return values.map((predicted, index) => ({
-    timestamp: new Date(lastWeekBase.getTime() + index * 60 * 60 * 1000).toISOString(),
+  const todayBase = new Date();
+  todayBase.setHours(0, 0, 0, 0);
+  return [...values, values[values.length - 1] ?? 50].map((predicted, index) => ({
+    timestamp: new Date(todayBase.getTime() + index * 60 * 60 * 1000).toISOString(),
     predicted: predicted ?? 50,
     zone: waitTone(predicted ?? 50),
   }));
@@ -711,11 +710,11 @@ function Sparkline24h({
     const spanMs = Math.max(1, endMs - startMs);
     const minWait = 0;
     const maxWait = 120;
-    const timeOfDayMs = (timestamp: string) => {
+    const timeOffsetMs = (timestamp: string) => {
       const date = new Date(timestamp);
-      return ((date.getHours() * 60 + date.getMinutes()) * 60 + date.getSeconds()) * 1000 + date.getMilliseconds();
+      return Math.min(spanMs, Math.max(0, date.getTime() - startMs));
     };
-    const x = (timestamp: string) => padding.left + (timeOfDayMs(timestamp) / spanMs) * plotWidth;
+    const x = (timestamp: string) => padding.left + (timeOffsetMs(timestamp) / spanMs) * plotWidth;
     const y = (value: number) => padding.top + plotHeight - ((value - minWait) / (maxWait - minWait)) * plotHeight;
     const plot = (source: SparkPoint[]) => {
       const waits = source.map((point) => point.predicted);
@@ -755,22 +754,22 @@ function Sparkline24h({
       return parts.join(" ");
     };
 
-    const now = nowMs === null ? null : Math.min(endMs, Math.max(startMs, startMs + timeOfDayMs(new Date(nowMs).toISOString())));
-    const nextIndex = now === null ? -1 : plottedToday.findIndex((point) => startMs + timeOfDayMs(point.timestamp) >= now);
+    const now = nowMs === null ? null : Math.min(endMs, Math.max(startMs, nowMs));
+    const nextIndex = now === null ? -1 : plottedToday.findIndex((point) => startMs + timeOffsetMs(point.timestamp) >= now);
     const rightIndex = nextIndex === -1
       ? plottedToday.length - 1
       : Math.max(1, nextIndex);
     const leftIndex = Math.max(0, rightIndex - 1);
     const right = plottedToday[rightIndex];
     const left = plottedToday[leftIndex];
-    const leftMs = startMs + timeOfDayMs(left.timestamp);
-    const rightMs = startMs + timeOfDayMs(right.timestamp);
+    const leftMs = startMs + timeOffsetMs(left.timestamp);
+    const rightMs = startMs + timeOffsetMs(right.timestamp);
     const localRatio = now === null || rightMs === leftMs ? 0 : Math.min(1, Math.max(0, (now - leftMs) / (rightMs - leftMs)));
     const nowX = now === null ? null : padding.left + ((now - startMs) / spanMs) * plotWidth;
     const nowY = now === null ? null : left.y + (right.y - left.y) * localRatio;
     const nowPoint = nowX === null || nowY === null ? null : { x: nowX, y: nowY };
     const todayPoints = nowPoint
-      ? [...plottedToday.filter((point) => startMs + timeOfDayMs(point.timestamp) <= now), nowPoint]
+      ? [...plottedToday.filter((point) => startMs + timeOffsetMs(point.timestamp) <= now), nowPoint]
       : plottedToday;
 
     return {
@@ -789,9 +788,10 @@ function Sparkline24h({
       yTicks: [0, 60, 120].map((value) => ({ value, y: y(value) })),
       zones: todayPoints.slice(0, -1).map((point, index) => {
         const next = todayPoints[index + 1];
+        const isCurrentEdge = index === todayPoints.length - 2;
         return {
           x: point.x,
-          w: Math.max(1, next.x - point.x),
+          w: Math.max(0, next.x - point.x - (isCurrentEdge ? 2 : 0)),
           tone: waitTone((point.predicted + next.predicted) / 2),
         };
       }),
@@ -890,7 +890,7 @@ function LandingSignalRow({
 }) {
   const data = compactCheckpointData(trafficByDirection[direction], direction, checkpoint);
   const series = sparklineSeries(trafficByDirection, direction, checkpoint);
-  const projection = projectedTrend(series.today, data.waitMinutes, data.trend, trendNowMs);
+  const projection = observedTrend(series.today, data.waitMinutes, data.trend, trendNowMs);
   const durationTone = trafficSignalTone(data.waitMinutes, projection.trend);
   const directionLabel = direction === "sg-my" ? "towards Johor" : "towards Singapore";
 
