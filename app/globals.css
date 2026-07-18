@@ -419,9 +419,13 @@ button { font: inherit; }
   stroke-width: 2.4;
 }
 
-.spark-line-forecast,
-.spark-line-forecast-underlay {
-  stroke-dasharray: 1 7;
+.spark-line-comparison {
+  fill: none;
+  stroke: rgba(21, 58, 54, 0.52);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  stroke-dasharray: 1 6;
 }
 
 .spark-now-marker {
@@ -527,13 +531,14 @@ button { font: inherit; }
 
 .landing-camera-card .camera-carousel.compact .camera-frame {
   height: auto;
+  aspect-ratio: 16 / 9;
   border-radius: 12px;
 }
 
 .landing-camera-card .camera-frame img {
   width: 100%;
-  height: auto;
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;
 }
 
 .landing-camera-card .camera-meta {

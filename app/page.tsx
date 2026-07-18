@@ -96,6 +96,7 @@ type FeedbackStatus = "idle" | "saving" | "saved" | "error";
 type TrafficByDirection = Partial<Record<Direction, LiveTraffic>>;
 type SparkTone = "good" | "amber" | "bad";
 type SparkPoint = { timestamp: string; predicted: number; zone?: SparkTone };
+type SparkSeries = { today: SparkPoint[]; comparison: SparkPoint[] };
 
 const chartSeries: Record<Direction, Record<Checkpoint, ChartSeries>> = {
   "sg-my": {
@@ -563,7 +564,7 @@ function compactCheckpointData(
   };
 }
 
-function sparklinePoints(
+function lastWeekComparisonPoints(
   trafficByDirection: TrafficByDirection,
   direction: Direction,
   checkpoint: Checkpoint,
@@ -589,12 +590,59 @@ function sparklinePoints(
   }));
 }
 
+function todaySparklinePoints(
+  trafficByDirection: TrafficByDirection,
+  direction: Direction,
+  checkpoint: Checkpoint,
+): SparkPoint[] {
+  const live = trafficByDirection[direction];
+  const checkpointData = live?.checkpoints[checkpoint];
+  const history = checkpointData?.history ?? [];
+  const points = history.map((point) => ({
+    timestamp: point.timestamp,
+    predicted: point.observed,
+    zone: waitTone(point.observed),
+  }));
+  if (live && checkpointData) {
+    points.push({
+      timestamp: live.generatedAt,
+      predicted: checkpointData.waitMinutes,
+      zone: waitTone(checkpointData.waitMinutes),
+    });
+  }
+  if (points.length >= 2) {
+    return points
+      .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }
+
+  const fallback = compactCheckpointData(live, direction, checkpoint);
+  const now = new Date();
+  const prior = new Date(now.getTime() - 60 * 60 * 1000);
+  return [prior, now].map((timestamp) => ({
+    timestamp: timestamp.toISOString(),
+    predicted: fallback.waitMinutes,
+    zone: waitTone(fallback.waitMinutes),
+  }));
+}
+
+function sparklineSeries(
+  trafficByDirection: TrafficByDirection,
+  direction: Direction,
+  checkpoint: Checkpoint,
+): SparkSeries {
+  return {
+    today: todaySparklinePoints(trafficByDirection, direction, checkpoint),
+    comparison: lastWeekComparisonPoints(trafficByDirection, direction, checkpoint),
+  };
+}
+
 function Sparkline24h({
-  points,
+  series,
   current,
   label,
 }: {
-  points: SparkPoint[];
+  series: SparkSeries;
   current: number;
   label: string;
 }) {
@@ -630,7 +678,10 @@ function Sparkline24h({
   }, []);
 
   const chart = useMemo(() => {
-    const safePoints = points
+    const safeToday = series.today
+      .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const safeComparison = series.comparison
       .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     const width = chartSize.width;
@@ -643,31 +694,40 @@ function Sparkline24h({
     };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
-    if (safePoints.length < 2) return null;
+    if (safeToday.length < 2 && safeComparison.length < 2) return null;
 
-    const startMs = new Date(safePoints[0].timestamp).getTime();
-    const lastMs = new Date(safePoints[safePoints.length - 1].timestamp).getTime();
-    const endMs = Math.max(lastMs, startMs + 24 * 60 * 60 * 1000);
+    const start = new Date(nowMs ?? Date.now());
+    start.setHours(0, 0, 0, 0);
+    const startMs = start.getTime();
+    const endMs = startMs + 24 * 60 * 60 * 1000;
     const spanMs = Math.max(1, endMs - startMs);
-    const waits = safePoints.map((point) => point.predicted);
-    const smoothedWaits = waits.map((value, index) => {
-      const previous2 = waits[Math.max(0, index - 2)];
-      const previous1 = waits[Math.max(0, index - 1)];
-      const next1 = waits[Math.min(waits.length - 1, index + 1)];
-      const next2 = waits[Math.min(waits.length - 1, index + 2)];
-      return (previous2 + previous1 * 2 + value * 4 + next1 * 2 + next2) / 10;
-    });
     const minWait = 0;
     const maxWait = 120;
-    const x = (timestamp: string) => padding.left + ((new Date(timestamp).getTime() - startMs) / spanMs) * plotWidth;
+    const timeOfDayMs = (timestamp: string) => {
+      const date = new Date(timestamp);
+      return ((date.getHours() * 60 + date.getMinutes()) * 60 + date.getSeconds()) * 1000 + date.getMilliseconds();
+    };
+    const x = (timestamp: string) => padding.left + (timeOfDayMs(timestamp) / spanMs) * plotWidth;
     const y = (value: number) => padding.top + plotHeight - ((value - minWait) / (maxWait - minWait)) * plotHeight;
-    const plotted = safePoints.map((point, index) => ({
-      x: x(point.timestamp),
-      y: y(smoothedWaits[index]),
-      zone: point.zone ?? waitTone(point.predicted),
-      timestamp: point.timestamp,
-      predicted: smoothedWaits[index],
-    }));
+    const plot = (source: SparkPoint[]) => {
+      const waits = source.map((point) => point.predicted);
+      const smoothedWaits = waits.map((value, index) => {
+        const previous2 = waits[Math.max(0, index - 2)];
+        const previous1 = waits[Math.max(0, index - 1)];
+        const next1 = waits[Math.min(waits.length - 1, index + 1)];
+        const next2 = waits[Math.min(waits.length - 1, index + 2)];
+        return (previous2 + previous1 * 2 + value * 4 + next1 * 2 + next2) / 10;
+      });
+      return source.map((point, index) => ({
+        x: x(point.timestamp),
+        y: y(smoothedWaits[index]),
+        zone: point.zone ?? waitTone(point.predicted),
+        timestamp: point.timestamp,
+        predicted: smoothedWaits[index],
+      }));
+    };
+    const plottedToday = plot(safeToday);
+    const plottedComparison = plot(safeComparison);
 
     const curvePath = (pathPoints: Array<{ x: number; y: number }>) => {
       if (!pathPoints.length) return "";
@@ -687,34 +747,29 @@ function Sparkline24h({
       return parts.join(" ");
     };
 
-    const comparableNow = (() => {
-      if (nowMs === null) return null;
-      if (nowMs >= startMs && nowMs <= endMs) return nowMs;
-      const sourceNow = new Date(nowMs);
-      const chartNow = new Date(startMs);
-      chartNow.setHours(sourceNow.getHours(), sourceNow.getMinutes(), sourceNow.getSeconds(), sourceNow.getMilliseconds());
-      return chartNow.getTime();
-    })();
-    const now = comparableNow === null ? null : Math.min(endMs, Math.max(startMs, comparableNow));
-    const nextIndex = now === null ? -1 : plotted.findIndex((point) => new Date(point.timestamp).getTime() >= now);
+    const now = nowMs === null ? null : Math.min(endMs, Math.max(startMs, startMs + timeOfDayMs(new Date(nowMs).toISOString())));
+    const nextIndex = now === null ? -1 : plottedToday.findIndex((point) => startMs + timeOfDayMs(point.timestamp) >= now);
     const rightIndex = nextIndex === -1
-      ? plotted.length - 1
+      ? plottedToday.length - 1
       : Math.max(1, nextIndex);
     const leftIndex = Math.max(0, rightIndex - 1);
-    const right = plotted[rightIndex];
-    const left = plotted[leftIndex];
-    const leftMs = new Date(left.timestamp).getTime();
-    const rightMs = new Date(right.timestamp).getTime();
+    const right = plottedToday[rightIndex];
+    const left = plottedToday[leftIndex];
+    const leftMs = startMs + timeOfDayMs(left.timestamp);
+    const rightMs = startMs + timeOfDayMs(right.timestamp);
     const localRatio = now === null || rightMs === leftMs ? 0 : Math.min(1, Math.max(0, (now - leftMs) / (rightMs - leftMs)));
     const nowX = now === null ? null : padding.left + ((now - startMs) / spanMs) * plotWidth;
     const nowY = now === null ? null : left.y + (right.y - left.y) * localRatio;
     const nowPoint = nowX === null || nowY === null ? null : { x: nowX, y: nowY };
-    const historyPoints = plotted;
+    const todayPoints = nowPoint
+      ? [...plottedToday.filter((point) => startMs + timeOfDayMs(point.timestamp) <= now), nowPoint]
+      : plottedToday;
 
     return {
       width,
       height,
-      historyPath: curvePath(historyPoints),
+      todayPath: curvePath(todayPoints),
+      comparisonPath: curvePath(plottedComparison),
       nowX,
       nowY,
       nowLeft: nowX === null ? null : `${((nowX / width) * 100).toFixed(2)}%`,
@@ -724,8 +779,8 @@ function Sparkline24h({
       padding,
       plotHeight,
       yTicks: [0, 60, 120].map((value) => ({ value, y: y(value) })),
-      zones: plotted.slice(0, -1).map((point, index) => {
-        const next = plotted[index + 1];
+      zones: todayPoints.slice(0, -1).map((point, index) => {
+        const next = todayPoints[index + 1];
         return {
           x: point.x,
           w: Math.max(1, next.x - point.x),
@@ -734,7 +789,7 @@ function Sparkline24h({
       }),
       grid: [padding.top, padding.top + plotHeight / 2, padding.top + plotHeight],
     };
-  }, [chartSize.height, chartSize.width, current, nowMs, points]);
+  }, [chartSize.height, chartSize.width, current, nowMs, series.comparison, series.today]);
 
   return (
     <div className="sparkline-card" ref={chartRef}>
@@ -764,8 +819,9 @@ function Sparkline24h({
           {chart.grid.map((y) => (
             <line key={y} className="spark-grid" x1={chart.padding.left} x2={chart.width - chart.padding.right} y1={y} y2={y} />
           ))}
-          <path className="spark-line-underlay" d={chart.historyPath} />
-          <path className="spark-line" d={chart.historyPath} />
+          <path className="spark-line-comparison" d={chart.comparisonPath} />
+          <path className="spark-line-underlay" d={chart.todayPath} />
+          <path className="spark-line" d={chart.todayPath} />
         </svg>
       )}
       {chart?.nowLeft && chart.nowTop && (
@@ -825,8 +881,8 @@ function LandingSignalRow({
   trendNowMs: number | null;
 }) {
   const data = compactCheckpointData(trafficByDirection[direction], direction, checkpoint);
-  const points = sparklinePoints(trafficByDirection, direction, checkpoint);
-  const projection = projectedTrend(points, data.waitMinutes, data.trend, trendNowMs);
+  const series = sparklineSeries(trafficByDirection, direction, checkpoint);
+  const projection = projectedTrend(series.today, data.waitMinutes, data.trend, trendNowMs);
   const durationTone = trafficSignalTone(data.waitMinutes, projection.trend);
   const directionLabel = direction === "sg-my" ? "towards Johor" : "towards Singapore";
 
@@ -838,9 +894,9 @@ function LandingSignalRow({
         <small className={`trend-chip trend-chip-${projection.trendTone}`}>{projection.trend}</small>
       </div>
       <Sparkline24h
-        points={points}
+        series={series}
         current={data.waitMinutes}
-        label={`${checkpoint} last-week 24-hour pattern ${directionLabel} with current time-of-day marker`}
+        label={`${checkpoint} today crossing time ${directionLabel} compared with same weekday last week`}
       />
     </div>
   );
@@ -855,8 +911,8 @@ function LandingDirectionCard({
   title: string;
   trafficByDirection: TrafficByDirection;
 }) {
-  const woodlandsPoints = sparklinePoints(trafficByDirection, direction, "Woodlands");
-  const tuasPoints = sparklinePoints(trafficByDirection, direction, "Tuas");
+  const woodlandsPoints = lastWeekComparisonPoints(trafficByDirection, direction, "Woodlands");
+  const tuasPoints = lastWeekComparisonPoints(trafficByDirection, direction, "Tuas");
   const [trendNowMs, setTrendNowMs] = useState<number | null>(null);
 
   useEffect(() => {
@@ -869,7 +925,6 @@ function LandingDirectionCard({
     <article className="landing-direction-card">
       <div className="landing-direction-heading">
         <h1>{title}</h1>
-        <small>Last week pattern</small>
       </div>
       <div className="landing-card-body">
         <LandingSignalRow
