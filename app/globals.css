@@ -17,7 +17,9 @@
   --good-zone: rgba(13, 148, 136, 0.23);
   --amber-zone: rgba(245, 158, 11, 0.2);
   --error-band: rgba(20, 184, 166, 0.18);
-  --landing-camera-height: clamp(152px, 42vw, 178px);
+  --landing-visible-height: 100vh;
+  --landing-topbar-height: 42px;
+  --landing-summary-height: max(460px, 80vh);
 }
 
 * { box-sizing: border-box; }
@@ -50,11 +52,16 @@ button { font: inherit; }
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   height: 42px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--line);
+  background: rgba(244, 250, 249, 0.92);
+  backdrop-filter: blur(14px);
 }
 
 .updated-line {
@@ -165,6 +172,12 @@ button { font: inherit; }
   box-shadow: 0 12px 34px rgba(18, 87, 79, 0.09);
 }
 
+.landing-card-stack.direction-first .landing-direction-card {
+  min-height: calc((var(--landing-summary-height) - 7px) / 2);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .landing-direction-heading {
   display: flex;
   align-items: center;
@@ -219,8 +232,12 @@ button { font: inherit; }
 
 .landing-card-body {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   margin-bottom: 0;
+}
+
+.landing-card-stack.direction-first .landing-card-body {
+  grid-template-rows: minmax(0, 1fr) 24px minmax(0, 1fr);
 }
 
 .direction-signal-row,
@@ -233,6 +250,12 @@ button { font: inherit; }
 
 .direction-signal-row {
   min-height: 68px;
+}
+
+.landing-card-stack.direction-first .direction-signal-row,
+.landing-card-stack.direction-first .duration-row,
+.landing-card-stack.direction-first .sparkline-card {
+  min-height: 0;
 }
 
 .duration-row {
@@ -487,7 +510,8 @@ button { font: inherit; }
 }
 
 .landing-camera-card .camera-carousel.compact .camera-frame {
-  height: var(--landing-camera-height);
+  height: auto;
+  aspect-ratio: 4 / 3;
   border-radius: 12px;
 }
 

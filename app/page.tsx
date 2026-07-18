@@ -326,7 +326,7 @@ function estimateLocationFromInput(value: string): { label: string; coordinate: 
 
 function camerasForCheckpoint(live: LiveTraffic | null, checkpoint: Checkpoint, fallbackImage: string): LiveCamera[] {
   const current = live?.checkpoints[checkpoint];
-  return current?.cameras?.length
+  const singaporeCameras = current?.cameras?.length
     ? current.cameras
     : [{
         cameraId: checkpoint,
@@ -334,6 +334,43 @@ function camerasForCheckpoint(live: LiveTraffic | null, checkpoint: Checkpoint, 
         updatedAt: current?.cameraUpdatedAt ?? "",
         label: `${checkpoint} checkpoint`,
       }];
+  const malaysiaCameras: Record<Checkpoint, LiveCamera[]> = {
+    Woodlands: [
+      {
+        cameraId: "my-woodlands-jb-ciq",
+        imageUrl: "https://odis.sgp1.digitaloceanspaces.com/node/L22_C2_Jalan_Jim_Quee___CIQ",
+        updatedAt: "",
+        label: "Malaysia side · JB CIQ",
+      },
+      {
+        cameraId: "my-woodlands-ismail-sultan",
+        imageUrl: "https://odis.sgp1.digitaloceanspaces.com/node/L23_C1_Jalan_Ismail_Sultan___Jalan_Ibrahim_Sultan",
+        updatedAt: "",
+        label: "Malaysia side · CIQ approach",
+      },
+    ],
+    Tuas: [
+      {
+        cameraId: "my-tuas-second-link-0.5",
+        imageUrl: "https://odis.sgp1.digitaloceanspaces.com/node/second_link_0.5",
+        updatedAt: "",
+        label: "Malaysia side · Second Link 0.5km",
+      },
+      {
+        cameraId: "my-tuas-second-link-1.3",
+        imageUrl: "https://odis.sgp1.digitaloceanspaces.com/node/second_link_1.3",
+        updatedAt: "",
+        label: "Malaysia side · Second Link 1.3km",
+      },
+      {
+        cameraId: "my-tuas-second-link-4.7",
+        imageUrl: "https://odis.sgp1.digitaloceanspaces.com/node/second_link_4.7",
+        updatedAt: "",
+        label: "Malaysia side · Second Link 4.7km",
+      },
+    ],
+  };
+  return [...singaporeCameras, ...malaysiaCameras[checkpoint]];
 }
 
 function CameraCarousel({
@@ -1197,15 +1234,11 @@ export default function Home() {
     const fitCameras = () => {
       window.requestAnimationFrame(() => {
         const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-        const cards = Array.from(document.querySelectorAll<HTMLElement>(".landing-card-stack > article"));
-        const cameras = Array.from(document.querySelectorAll<HTMLElement>(".landing-camera-card .camera-frame"));
-        if (!cards.length || !cameras.length) return;
-
-        const contentBottom = Math.max(...cards.map((card) => card.getBoundingClientRect().bottom));
-        const cameraHeight = cameras.reduce((total, camera) => total + camera.getBoundingClientRect().height, 0);
-        const nonCameraHeight = contentBottom - cameraHeight;
-        const targetHeight = Math.max(132, Math.min(280, (viewportHeight - nonCameraHeight - 4) / cameras.length));
-        root.style.setProperty("--landing-camera-height", `${targetHeight.toFixed(1)}px`);
+        const topbar = document.querySelector<HTMLElement>(".topbar");
+        const topbarHeight = topbar?.getBoundingClientRect().height ?? 42;
+        root.style.setProperty("--landing-visible-height", `${viewportHeight.toFixed(1)}px`);
+        root.style.setProperty("--landing-topbar-height", `${topbarHeight.toFixed(1)}px`);
+        root.style.setProperty("--landing-summary-height", `${Math.max(460, viewportHeight * 0.8).toFixed(1)}px`);
       });
     };
 
