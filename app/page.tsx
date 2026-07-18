@@ -714,11 +714,11 @@ function SparklineAxis({ points }: { points: SparkPoint[] }) {
   const ticks = useMemo(() => {
     void points;
     if (!ready) return [];
-    return [0, 4, 8, 12, 16, 20, 24].map((hourOffset) => {
+    return [0, 4, 8, 12, 16, 20].map((hourOffset) => {
       const time = new Date(Date.UTC(2026, 0, 1, hourOffset - 8, 0, 0));
       return {
         left: `${(hourOffset / 24) * 100}%`,
-        edge: hourOffset === 0 || hourOffset === 24,
+        edge: hourOffset === 0,
         label: new Intl.DateTimeFormat("en-SG", {
           hour: "numeric",
           hour12: true,

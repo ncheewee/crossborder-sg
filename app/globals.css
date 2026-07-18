@@ -176,6 +176,7 @@ button { font: inherit; }
   margin: 0;
   color: #ffffff;
   font-size: clamp(17px, 4.8vw, 22px);
+  font-weight: 820;
   line-height: 1;
   letter-spacing: 0;
 }
@@ -187,6 +188,7 @@ button { font: inherit; }
   padding: 5px 10px 6px;
   border-radius: 12px;
   background: linear-gradient(135deg, #0f766e, #0d9488);
+  font-weight: 820;
   box-shadow: 0 8px 18px rgba(6, 78, 71, 0.42);
 }
 
@@ -316,7 +318,7 @@ button { font: inherit; }
 
 .spark-y-label {
   fill: rgba(97, 123, 119, 0.86);
-  font: 760 8px Arial, sans-serif;
+  font: 780 9px Arial, sans-serif;
   dominant-baseline: middle;
   text-anchor: end;
 }
@@ -354,7 +356,7 @@ button { font: inherit; }
   border-radius: 999px;
   background: #2563eb;
   border: 2px solid #ffffff;
-  box-shadow: 0 0 11px 3px rgba(37, 99, 235, 0.7);
+  box-shadow: 0 0 8px 2px rgba(37, 99, 235, 0.7);
   transform: translate(-50%, -50%);
   pointer-events: none;
   isolation: isolate;
@@ -368,10 +370,10 @@ button { font: inherit; }
   display: block;
   position: absolute;
   z-index: -1;
-  inset: -5px;
+  inset: -4px;
   border-radius: inherit;
   background: rgba(37, 99, 235, 0.26);
-  box-shadow: 0 0 12px 3px rgba(37, 99, 235, 0.48);
+  box-shadow: 0 0 9px 2px rgba(37, 99, 235, 0.48);
   animation: breathe-now 0.9s ease-in-out infinite;
 }
 
@@ -382,7 +384,7 @@ button { font: inherit; }
   }
   50% {
     opacity: 0.1;
-    transform: scale(1.65);
+    transform: scale(1.45);
   }
 }
 
@@ -441,7 +443,7 @@ button { font: inherit; }
 }
 
 .spark-axis span.edge:first-child b {
-  transform: translate(0, -50%);
+  transform: translate(-50%, -50%);
 }
 
 .spark-axis span.edge:last-child b {
