@@ -617,8 +617,8 @@ function todaySparklinePoints(
   }
 
   const fallback = compactCheckpointData(live, direction, checkpoint);
-  const now = new Date();
-  const prior = new Date(now.getTime() - 60 * 60 * 1000);
+  const prior = new Date(Date.UTC(2026, 0, 1, 11, 0, 0));
+  const now = new Date(Date.UTC(2026, 0, 1, 12, 0, 0));
   return [prior, now].map((timestamp) => ({
     timestamp: timestamp.toISOString(),
     predicted: fallback.waitMinutes,
@@ -678,6 +678,7 @@ function Sparkline24h({
   }, []);
 
   const chart = useMemo(() => {
+    if (nowMs === null) return null;
     const safeToday = series.today
       .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -696,7 +697,7 @@ function Sparkline24h({
     const plotHeight = height - padding.top - padding.bottom;
     if (safeToday.length < 2 && safeComparison.length < 2) return null;
 
-    const start = new Date(nowMs ?? Date.now());
+    const start = new Date(nowMs);
     start.setHours(0, 0, 0, 0);
     const startMs = start.getTime();
     const endMs = startMs + 24 * 60 * 60 * 1000;
