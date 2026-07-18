@@ -1309,7 +1309,7 @@ export default function Home() {
 
       <footer>
         <span>CrossBorder.sg preview</span>
-        <span>Codex build · Live beta 0.6</span>
+        <span>Codex build · Live beta 0.7</span>
       </footer>
     </main>
   );

@@ -22,7 +22,7 @@ after the Woodlands card feels excellent.
 - Example traffic endpoint:
   https://crossborder-sg-api.ncheewee.workers.dev/api/traffic?direction=sg-my
 - Latest deployed commit at handoff: `5dbd8ce Refine Woodlands landing card`
-- UI build marker currently rendered in footer: `Codex build · Live beta 0.6`
+- UI build marker currently rendered in footer: `Codex build · Live beta 0.7`
 
 ## User preferences and product direction
 
@@ -271,4 +271,3 @@ badge, pull-down helper text, or ChatGPT/Sites-hosting backend direction.
 When done, run the build, build the GitHub Pages bundle, commit, push to main,
 and verify the Pages deployment.
 ```
-
