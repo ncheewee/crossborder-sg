@@ -18,4 +18,5 @@ jobs:
           CROSSBORDER_API_BASE: https://crossborder-sg-api.ncheewee.workers.dev
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_ROUTES_API_KEY: ${{ secrets.GOOGLE_ROUTES_API_KEY }}
         run: node scripts/hourly-model-comparison.mjs
