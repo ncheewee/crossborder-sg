@@ -456,6 +456,49 @@ function waitTone(minutes: number): SparkTone {
   return "bad";
 }
 
+function projectedTrend(points: SparkPoint[], current: number, fallbackTrend: string, nowMs: number | null) {
+  if (nowMs === null) {
+    return {
+      trend: fallbackTrend,
+      trendTone: trafficSignalTone(current, fallbackTrend),
+    };
+  }
+
+  const safePoints = points
+    .filter((point) => Number.isFinite(point.predicted) && Number.isFinite(new Date(point.timestamp).getTime()))
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  if (safePoints.length < 2) {
+    return {
+      trend: fallbackTrend,
+      trendTone: trafficSignalTone(current, fallbackTrend),
+    };
+  }
+
+  const startMs = new Date(safePoints[0].timestamp).getTime();
+  const endMs = new Date(safePoints[safePoints.length - 1].timestamp).getTime();
+  const clampedNow = Math.min(endMs, Math.max(startMs, nowMs));
+  const lookAhead = Math.min(endMs, clampedNow + 3 * 60 * 60 * 1000);
+  const interpolate = (targetMs: number) => {
+    const foundIndex = safePoints.findIndex((point) => new Date(point.timestamp).getTime() >= targetMs);
+    const rightIndex = foundIndex === -1 ? safePoints.length - 1 : Math.max(1, foundIndex);
+    const right = safePoints[rightIndex];
+    const left = safePoints[Math.max(0, rightIndex - 1)];
+    const leftMs = new Date(left.timestamp).getTime();
+    const rightMs = new Date(right.timestamp).getTime();
+    const ratio = rightMs === leftMs ? 0 : Math.min(1, Math.max(0, (targetMs - leftMs) / (rightMs - leftMs)));
+    return left.predicted + (right.predicted - left.predicted) * ratio;
+  };
+
+  const nowValue = interpolate(clampedNow);
+  const futureValue = interpolate(lookAhead);
+  const delta = futureValue - nowValue;
+  const trend = delta >= 6 ? "Slowing" : delta <= -6 ? "Easing" : "Steady";
+  return {
+    trend,
+    trendTone: trafficSignalTone(futureValue, trend),
+  };
+}
+
 function compactCheckpointData(
   traffic: LiveTraffic | undefined,
   direction: Direction,
@@ -705,8 +748,16 @@ function LandingCheckpointCard({
   const cameras = camerasForCheckpoint(cameraTraffic, checkpoint, fallbackImage);
   const sgMyPoints = sparklinePoints(trafficByDirection, "sg-my", checkpoint);
   const mySgPoints = sparklinePoints(trafficByDirection, "my-sg", checkpoint);
-  const sgMyTone = trafficSignalTone(sgMy.waitMinutes, sgMy.trend);
-  const mySgTone = trafficSignalTone(mySg.waitMinutes, mySg.trend);
+  const [trendNowMs, setTrendNowMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    setTrendNowMs(Date.now());
+    const timer = window.setInterval(() => setTrendNowMs(Date.now()), 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const sgMyProjection = projectedTrend(sgMyPoints, sgMy.waitMinutes, sgMy.trend, trendNowMs);
+  const mySgProjection = projectedTrend(mySgPoints, mySg.waitMinutes, mySg.trend, trendNowMs);
 
   return (
     <article className="landing-checkpoint-card">
@@ -726,7 +777,7 @@ function LandingCheckpointCard({
           <div className="duration-row">
             <span>Towards JB</span>
             <strong>{sgMy.crossing} <em>min</em></strong>
-            <small className={`trend-chip trend-chip-${sgMyTone}`}>{sgMy.trend}</small>
+            <small className={`trend-chip trend-chip-${sgMyProjection.trendTone}`}>{sgMyProjection.trend}</small>
           </div>
           <Sparkline24h
             points={sgMyPoints}
@@ -742,7 +793,7 @@ function LandingCheckpointCard({
           <div className="duration-row">
             <span>Towards SG</span>
             <strong>{mySg.crossing} <em>min</em></strong>
-            <small className={`trend-chip trend-chip-${mySgTone}`}>{mySg.trend}</small>
+            <small className={`trend-chip trend-chip-${mySgProjection.trendTone}`}>{mySgProjection.trend}</small>
           </div>
           <Sparkline24h
             points={mySgPoints}
@@ -1100,6 +1151,33 @@ export default function Home() {
   useEffect(() => {
     void loadTraffic();
   }, [loadTraffic]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const fitCameras = () => {
+      window.requestAnimationFrame(() => {
+        const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+        const cards = Array.from(document.querySelectorAll<HTMLElement>(".landing-checkpoint-card"));
+        const cameras = Array.from(document.querySelectorAll<HTMLElement>(".landing-checkpoint-card .camera-frame"));
+        if (!cards.length || !cameras.length) return;
+
+        const contentBottom = Math.max(...cards.map((card) => card.getBoundingClientRect().bottom));
+        const cameraHeight = cameras.reduce((total, camera) => total + camera.getBoundingClientRect().height, 0);
+        const nonCameraHeight = contentBottom - cameraHeight;
+        const targetHeight = Math.max(132, Math.min(280, (viewportHeight - nonCameraHeight - 4) / cameras.length));
+        root.style.setProperty("--landing-camera-height", `${targetHeight.toFixed(1)}px`);
+      });
+    };
+
+    fitCameras();
+    window.setTimeout(fitCameras, 250);
+    window.addEventListener("resize", fitCameras);
+    window.visualViewport?.addEventListener("resize", fitCameras);
+    return () => {
+      window.removeEventListener("resize", fitCameras);
+      window.visualViewport?.removeEventListener("resize", fitCameras);
+    };
+  }, [trafficByDirection]);
 
   const data = useMemo(() => {
     if (!liveTraffic) return tripData[direction];

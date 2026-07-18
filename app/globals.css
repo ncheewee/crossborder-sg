@@ -17,6 +17,7 @@
   --good-zone: rgba(13, 148, 136, 0.23);
   --amber-zone: rgba(245, 158, 11, 0.2);
   --error-band: rgba(20, 184, 166, 0.18);
+  --landing-camera-height: clamp(152px, 42vw, 178px);
 }
 
 * { box-sizing: border-box; }
@@ -323,12 +324,12 @@ button { font: inherit; }
 
 .spark-now-marker {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
   background: #2563eb;
   border: 2px solid #ffffff;
-  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.22), 0 0 17px rgba(37, 99, 235, 1);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2), 0 0 14px rgba(37, 99, 235, 0.95);
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -336,7 +337,7 @@ button { font: inherit; }
 .spark-now-marker::before {
   content: "";
   position: absolute;
-  inset: -8px;
+  inset: -6px;
   border-radius: inherit;
   background: rgba(37, 99, 235, 0.35);
   animation: breathe-now 1.05s ease-in-out infinite;
@@ -355,8 +356,8 @@ button { font: inherit; }
     transform: scale(1);
   }
   50% {
-    opacity: 0.9;
-    transform: scale(2.35);
+    opacity: 0.86;
+    transform: scale(2.05);
   }
 }
 
@@ -400,7 +401,7 @@ button { font: inherit; }
 }
 
 .landing-checkpoint-card .camera-carousel.compact .camera-frame {
-  height: clamp(152px, 42vw, 178px);
+  height: var(--landing-camera-height);
   border-radius: 12px;
 }
 
