@@ -59,6 +59,11 @@ The local hourly competitor report now writes three durable files under
 - `latest-accuracy.json`: machine-readable scorecard for the latest Telegram
   report.
 
+The local emulator captures Google Maps directions directly and treats that as
+the normal Google benchmark. The paid Google Routes API path is opt-in via
+`USE_GOOGLE_ROUTES_API=true`, so quota exhaustion does not break hourly
+monitoring.
+
 The scoring loop treats the later CrossBorder.sg observed estimate as a proxy
 ground truth until enough traveller-reported actual clear times exist. For each
 checkpoint, direction, source, and horizon it records:

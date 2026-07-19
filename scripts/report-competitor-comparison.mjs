@@ -8,6 +8,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GOOGLE_ROUTES_API_KEY = process.env.GOOGLE_ROUTES_API_KEY;
 const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
+const useGoogleRoutesApi = process.env.USE_GOOGLE_ROUTES_API === "true";
 const outRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
 const accuracyHorizons = (process.env.ACCURACY_HORIZONS_MINUTES || "60,180")
   .split(",")
@@ -105,7 +106,7 @@ async function fetchLiveTraffic(apiDirection) {
 }
 
 async function googleRouteMinutes(checkpoint, apiDirection) {
-  if (!GOOGLE_ROUTES_API_KEY) return null;
+  if (!useGoogleRoutesApi || !GOOGLE_ROUTES_API_KEY) return null;
   const response = await fetch(GOOGLE_ROUTES_URL, {
     method: "POST",
     headers: {
@@ -463,19 +464,21 @@ for (const [directionKey, { apiDirection, label }] of Object.entries(directionMa
       },
     ];
 
-    let googleMinutes = null;
-    try {
-      googleMinutes = await googleRouteMinutes(checkpoint, apiDirection);
-    } catch (error) {
-      fetchWarnings.push(`Google ${displayCheckpoint} ${label}: ${error instanceof Error ? error.message : "unavailable"}`);
-    }
-    if (Number.isFinite(googleMinutes)) {
-      sources.push({
-        source: "Google Routes",
-        range: [googleMinutes, googleMinutes],
-        midpoint: googleMinutes,
-        deltaVsOurs: oursMid == null ? null : googleMinutes - oursMid,
-      });
+    if (useGoogleRoutesApi) {
+      let googleMinutes = null;
+      try {
+        googleMinutes = await googleRouteMinutes(checkpoint, apiDirection);
+      } catch (error) {
+        fetchWarnings.push(`Google ${displayCheckpoint} ${label}: ${error instanceof Error ? error.message : "unavailable"}`);
+      }
+      if (Number.isFinite(googleMinutes)) {
+        sources.push({
+          source: "Google Routes",
+          range: [googleMinutes, googleMinutes],
+          midpoint: googleMinutes,
+          deltaVsOurs: oursMid == null ? null : googleMinutes - oursMid,
+        });
+      }
     }
 
     for (const record of competitorRecords) {

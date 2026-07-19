@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
 const outRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
+const googleMapsPackageName = "com.google.android.apps.maps";
 
 const apps = [
   {
@@ -23,6 +24,24 @@ const apps = [
     playUrl: "market://details?id=com.phonegap.btj",
   },
 ];
+
+const routeEndpoints = {
+  woodlands: {
+    display: "Woodlands",
+    sg: { latitude: 1.4456, longitude: 103.7683 },
+    my: { latitude: 1.4599, longitude: 103.7649 },
+  },
+  tuas: {
+    display: "Tuas",
+    sg: { latitude: 1.3478, longitude: 103.6376 },
+    my: { latitude: 1.3618, longitude: 103.6194 },
+  },
+};
+
+const directionMap = {
+  towardsJb: "sg-my",
+  towardsSg: "my-sg",
+};
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -187,6 +206,37 @@ function normalizeAppReadings(app, uiText, ocrText) {
   const text = [...uiText, ocrText].join("\n");
   if (app.id === "checkpoint-sg") return normalizeCheckpointSg(text);
   if (app.id === "beat-the-jam") return normalizeBeatTheJam(text);
+  return null;
+}
+
+function googleMapsUrl(checkpoint, apiDirection) {
+  const endpoints = routeEndpoints[checkpoint];
+  const origin = apiDirection === "sg-my" ? endpoints.sg : endpoints.my;
+  const destination = apiDirection === "sg-my" ? endpoints.my : endpoints.sg;
+  const params = new URLSearchParams({
+    api: "1",
+    origin: `${origin.latitude},${origin.longitude}`,
+    destination: `${destination.latitude},${destination.longitude}`,
+    travelmode: "driving",
+  });
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
+function parseGoogleMapsMinutes(text) {
+  const flat = text.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  const patterns = [
+    /Driving mode:\s*(?:(\d{1,2})\s*(?:hr|hour|hours)\s*)?(?:(\d{1,3})\s*(?:min|minute|minutes))?/i,
+    /\bDrive\s+(?:(\d{1,2})\s*(?:hr|hour|hours)\s*)?(?:(\d{1,3})\s*(?:min|minute|minutes))?/i,
+    /\b(?:(\d{1,2})\s*(?:hr|hour|hours)\s*)?(\d{1,3})\s*(?:min|minute|minutes)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = flat.match(pattern);
+    if (!match) continue;
+    const hours = Number(match[1] ?? 0);
+    const minutes = Number(match[2] ?? 0);
+    const total = hours * 60 + minutes;
+    if (Number.isFinite(total) && total > 0 && total < 360) return total;
+  }
   return null;
 }
 
@@ -358,6 +408,72 @@ async function captureApp(app, timestamp) {
   return record;
 }
 
+async function captureGoogleMaps(timestamp) {
+  const appDir = join(outRoot, timestamp, "google-maps");
+  await mkdir(appDir, { recursive: true });
+  const normalizedReadings = {
+    woodlands: { towardsJb: null, towardsSg: null },
+    tuas: { towardsJb: null, towardsSg: null },
+  };
+  const routes = [];
+
+  for (const [checkpoint, endpoint] of Object.entries(routeEndpoints)) {
+    for (const [directionKey, apiDirection] of Object.entries(directionMap)) {
+      const routeId = `${checkpoint}-${directionKey}`;
+      const url = googleMapsUrl(checkpoint, apiDirection);
+      const routeDir = join(appDir, routeId);
+      await mkdir(routeDir, { recursive: true });
+      await run(adb, [
+        "shell",
+        "am",
+        "start",
+        "-a",
+        "android.intent.action.VIEW",
+        "-d",
+        url.replaceAll("&", "\\&"),
+        "-p",
+        googleMapsPackageName,
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, Number(process.env.GOOGLE_MAPS_SETTLE_MS || 7000)));
+
+      const screenshotPath = join(routeDir, "screen.png");
+      const xmlPath = join(routeDir, "window.xml");
+      const screenshot = await capture(adb, ["exec-out", "screencap", "-p"]);
+      await writeFile(screenshotPath, screenshot);
+
+      await adbShell("uiautomator", "dump", "/sdcard/window.xml");
+      const { stdout: xml } = await run(adb, ["exec-out", "cat", "/sdcard/window.xml"], {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      await writeFile(xmlPath, xml);
+
+      const uiText = extractUiText(xml);
+      const minutes = parseGoogleMapsMinutes(uiText.join("\n"));
+      if (minutes != null) normalizedReadings[checkpoint][directionKey] = [minutes, minutes];
+      routes.push({
+        checkpoint: endpoint.display,
+        direction: apiDirection,
+        directionKey,
+        url,
+        minutes,
+        screenshotPath,
+        xmlPath,
+        uiText,
+      });
+    }
+  }
+
+  const record = {
+    capturedAt: new Date().toISOString(),
+    app: "Google Maps",
+    packageName: googleMapsPackageName,
+    routes,
+    normalizedReadings,
+  };
+  await writeFile(join(appDir, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
+  return record;
+}
+
 async function main() {
   const command = process.argv[2] || "capture";
   if (command === "open-play") {
@@ -369,6 +485,7 @@ async function main() {
   const installed = Object.fromEntries(await Promise.all(
     apps.map(async (app) => [app.id, await isInstalled(app.packageName)]),
   ));
+  installed["google-maps"] = await isInstalled(googleMapsPackageName);
 
   if (command === "status") {
     console.log(JSON.stringify({ adb, outRoot, installed }, null, 2));
@@ -389,6 +506,9 @@ async function main() {
   const timestamp = new Date().toISOString().replaceAll(":", "-");
   const records = [];
   for (const app of apps) records.push(await captureApp(app, timestamp));
+  if (installed["google-maps"] && process.env.CAPTURE_GOOGLE_MAPS !== "false") {
+    records.push(await captureGoogleMaps(timestamp));
+  }
   await mkdir(join(outRoot, timestamp), { recursive: true });
   await writeFile(join(outRoot, timestamp, "summary.json"), `${JSON.stringify(records, null, 2)}\n`);
   await writeFile(join(outRoot, "latest-summary.json"), `${JSON.stringify(records, null, 2)}\n`);

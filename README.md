@@ -80,9 +80,9 @@ The Worker exposes the same public contract as the temporary backend:
 There are two recurring monitors:
 
 - GitHub Actions runs `scripts/hourly-model-comparison.mjs` hourly against the
-  public API and Google Routes.
-- The local macOS launchd job runs the Android emulator, captures Checkpoint.sg
-  and Beat the Jam, then runs `scripts/report-competitor-comparison.mjs`.
+  public API. Google Routes API checks are opt-in via `USE_GOOGLE_ROUTES_API=true`.
+- The local macOS launchd job runs the Android emulator, captures Google Maps,
+  Checkpoint.sg, and Beat the Jam, then runs `scripts/report-competitor-comparison.mjs`.
 
 The local loop is the closed-loop tuner. It appends source snapshots to
 `benchmark-history.csv`, scores matured 60-minute and 180-minute horizons in

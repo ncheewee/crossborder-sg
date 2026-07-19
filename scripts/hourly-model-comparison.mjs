@@ -3,6 +3,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GOOGLE_ROUTES_API_KEY = process.env.GOOGLE_ROUTES_API_KEY;
 const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
+const useGoogleRoutesApi = process.env.USE_GOOGLE_ROUTES_API === "true";
 
 const directions = [
   ["sg-my", "SG -> JB", "Towards JB"],
@@ -75,7 +76,7 @@ function routeBody(checkpoint, direction) {
 }
 
 async function googleRouteMinutes(checkpoint, direction) {
-  if (!GOOGLE_ROUTES_API_KEY) return null;
+  if (!useGoogleRoutesApi || !GOOGLE_ROUTES_API_KEY) return null;
   const response = await fetch(GOOGLE_ROUTES_URL, {
     method: "POST",
     headers: {
@@ -98,6 +99,14 @@ async function googleRouteMinutes(checkpoint, direction) {
 }
 
 async function googleComparisonLines(direction, label, payload) {
+  if (!useGoogleRoutesApi) {
+    return [
+      `${label} Google benchmark`,
+      "Google Routes API disabled to avoid quota burn.",
+      "Use the local emulator report for Google Maps, Checkpoint.sg, and Beat the Jam.",
+    ];
+  }
+
   if (!GOOGLE_ROUTES_API_KEY) {
     return ["Google Routes proxy: not configured (GOOGLE_ROUTES_API_KEY missing)."];
   }
@@ -129,8 +138,8 @@ async function fetchJson(url) {
 
 async function competitorStatus() {
   return [
-    "Checkpoint.sg / Beat the Jam: no documented realtime API found.",
-    "Using Google Routes traffic-aware durations as the recurring market proxy.",
+    "Cloud job has no emulator, so it does not capture app competitors.",
+    "Local Mac launchd job captures Google Maps, Checkpoint.sg, and Beat the Jam when awake.",
   ];
 }
 
@@ -178,6 +187,6 @@ for (const [direction, label, displayLabel] of directions) {
 lines.push("External benchmark");
 lines.push(...await competitorStatus());
 lines.push("");
-lines.push("Gaps marked CHECK mean our midpoint differs from Google by at least 20m.");
+lines.push("Gaps marked CHECK mean our midpoint differs from Google Routes by at least 20m when API mode is enabled.");
 
 await sendTelegram(lines.join("\n"));
