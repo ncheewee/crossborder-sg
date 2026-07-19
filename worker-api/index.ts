@@ -14,6 +14,10 @@ import {
 type Env = {
   DATABASE_URL: string;
   ALLOWED_ORIGIN?: string;
+  GOOGLE_CLIENT_ID?: string;
+  AUTH_REQUIRED?: string;
+  ALLOWED_EMAILS?: string;
+  ALLOWED_DOMAINS?: string;
 };
 
 type CameraPayload = {
@@ -33,14 +37,43 @@ type TravelerReportRow = {
   estimated_wait_minutes: number | null;
 };
 
+type GoogleTokenHeader = {
+  alg?: string;
+  kid?: string;
+  typ?: string;
+};
+
+type GoogleTokenPayload = {
+  iss?: string;
+  aud?: string;
+  sub?: string;
+  email?: string;
+  email_verified?: boolean | string;
+  name?: string;
+  picture?: string;
+  exp?: number;
+  hd?: string;
+};
+
+type AuthUser = {
+  sub: string;
+  email: string;
+  name: string | null;
+  picture: string | null;
+  hostedDomain: string | null;
+};
+
 const SOURCE_URL = "https://api.data.gov.sg/v1/transport/traffic-images";
+const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const checkpoints: Checkpoint[] = ["Woodlands", "Tuas"];
+let googleKeysCache: { expiresAt: number; keys: JsonWebKey[] } | null = null;
+let authTablesReady: Promise<void> | null = null;
 
 function corsHeaders(env: Env) {
   return {
     "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN ?? "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
   };
 }
 
@@ -85,6 +118,219 @@ function parseMinutes(value: unknown) {
   const rounded = Math.round(minutes);
   if (rounded < 5 || rounded > 240) return null;
   return rounded;
+}
+
+function authEnabled(env: Env) {
+  return Boolean(env.GOOGLE_CLIENT_ID) && env.AUTH_REQUIRED !== "false";
+}
+
+function unauthorized(env: Env, message = "Sign in with Google to continue.") {
+  return json(env, {
+    error: "unauthorized",
+    message,
+  }, { status: 401 });
+}
+
+function base64UrlToBytes(value: string) {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function decodeJwtPart<T>(value: string) {
+  return JSON.parse(new TextDecoder().decode(base64UrlToBytes(value))) as T;
+}
+
+async function loadGoogleKeys() {
+  const now = Date.now();
+  if (googleKeysCache && googleKeysCache.expiresAt > now + 60_000) return googleKeysCache.keys;
+
+  const response = await fetch(GOOGLE_JWKS_URL, {
+    headers: { Accept: "application/json" },
+    cf: { cacheTtl: 3600, cacheEverything: true },
+  });
+  if (!response.ok) throw new Error(`Google certs returned ${response.status}`);
+  const payload = await response.json() as { keys?: JsonWebKey[] };
+  const cacheControl = response.headers.get("Cache-Control") ?? "";
+  const maxAge = Number(cacheControl.match(/max-age=(\d+)/)?.[1] ?? 3600);
+  googleKeysCache = {
+    keys: payload.keys ?? [],
+    expiresAt: now + Math.max(300, maxAge) * 1000,
+  };
+  return googleKeysCache.keys;
+}
+
+function allowedList(value?: string) {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function assertAllowedUser(payload: GoogleTokenPayload, env: Env) {
+  const email = payload.email?.toLowerCase() ?? "";
+  const domain = email.includes("@") ? email.split("@").pop() ?? "" : "";
+  const allowedEmails = allowedList(env.ALLOWED_EMAILS);
+  const allowedDomains = allowedList(env.ALLOWED_DOMAINS);
+
+  if (allowedEmails.length && !allowedEmails.includes(email)) {
+    throw new Error("Email is not on the allowlist");
+  }
+  if (allowedDomains.length && !allowedDomains.includes(domain)) {
+    throw new Error("Email domain is not on the allowlist");
+  }
+}
+
+async function verifyGoogleIdToken(credential: string, env: Env): Promise<AuthUser> {
+  if (!env.GOOGLE_CLIENT_ID) throw new Error("GOOGLE_CLIENT_ID is not configured");
+
+  const parts = credential.split(".");
+  if (parts.length !== 3) throw new Error("Malformed Google credential");
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  const header = decodeJwtPart<GoogleTokenHeader>(encodedHeader);
+  const payload = decodeJwtPart<GoogleTokenPayload>(encodedPayload);
+  if (header.alg !== "RS256" || !header.kid) throw new Error("Unsupported Google token");
+
+  const keys = await loadGoogleKeys();
+  const key = keys.find((candidate) => candidate.kid === header.kid);
+  if (!key) throw new Error("Google signing key not found");
+  const cryptoKey = await crypto.subtle.importKey(
+    "jwk",
+    key,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  const validSignature = await crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    base64UrlToBytes(encodedSignature),
+    new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`),
+  );
+  if (!validSignature) throw new Error("Invalid Google token signature");
+  if (payload.aud !== env.GOOGLE_CLIENT_ID) throw new Error("Google token audience mismatch");
+  if (payload.iss !== "accounts.google.com" && payload.iss !== "https://accounts.google.com") {
+    throw new Error("Google token issuer mismatch");
+  }
+  if (!payload.exp || payload.exp * 1000 <= Date.now()) throw new Error("Google token expired");
+  if (!payload.sub || !payload.email) throw new Error("Google token missing identity claims");
+  if (payload.email_verified !== true && payload.email_verified !== "true") {
+    throw new Error("Google email is not verified");
+  }
+  assertAllowedUser(payload, env);
+
+  return {
+    sub: payload.sub,
+    email: payload.email,
+    name: payload.name ?? null,
+    picture: payload.picture ?? null,
+    hostedDomain: payload.hd ?? null,
+  };
+}
+
+async function ensureAuthTables(sql: ReturnType<typeof neon>) {
+  authTablesReady ??= (async () => {
+    await sql`
+      create table if not exists auth_users (
+        google_sub text primary key,
+        email text not null,
+        name text,
+        picture text,
+        hosted_domain text,
+        first_seen_at timestamptz not null default now(),
+        last_seen_at timestamptz not null default now(),
+        login_count integer not null default 0
+      )
+    `;
+    await sql`
+      create table if not exists auth_events (
+        id bigserial primary key,
+        event_at timestamptz not null default now(),
+        google_sub text not null,
+        email text not null,
+        event_name text not null,
+        path text,
+        user_agent text
+      )
+    `;
+  })();
+  return authTablesReady;
+}
+
+async function recordAuthEvent(
+  sql: ReturnType<typeof neon>,
+  user: AuthUser,
+  eventName: string,
+  request: Request,
+) {
+  try {
+    await ensureAuthTables(sql);
+    await sql`
+      insert into auth_users (
+        google_sub,
+        email,
+        name,
+        picture,
+        hosted_domain,
+        first_seen_at,
+        last_seen_at,
+        login_count
+      )
+      values (
+        ${user.sub},
+        ${user.email},
+        ${user.name},
+        ${user.picture},
+        ${user.hostedDomain},
+        now(),
+        now(),
+        ${eventName === "login" ? 1 : 0}
+      )
+      on conflict (google_sub) do update set
+        email = excluded.email,
+        name = excluded.name,
+        picture = excluded.picture,
+        hosted_domain = excluded.hosted_domain,
+        last_seen_at = now(),
+        login_count = auth_users.login_count + ${eventName === "login" ? 1 : 0}
+    `;
+    const url = new URL(request.url);
+    await sql`
+      insert into auth_events (
+        google_sub,
+        email,
+        event_name,
+        path,
+        user_agent
+      )
+      values (
+        ${user.sub},
+        ${user.email},
+        ${eventName},
+        ${url.pathname}${url.search},
+        ${request.headers.get("User-Agent") ?? ""}
+      )
+    `;
+  } catch {
+    // Adoption tracking must not break the live traffic experience.
+  }
+}
+
+async function authenticateRequest(request: Request, env: Env): Promise<AuthUser | Response | null> {
+  if (!authEnabled(env)) return null;
+  const authorization = request.headers.get("Authorization") ?? "";
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return unauthorized(env);
+  try {
+    return await verifyGoogleIdToken(token, env);
+  } catch {
+    return unauthorized(env, "Google sign-in expired. Please sign in again.");
+  }
 }
 
 function accuracy(rows: TrafficObservationRow[]) {
@@ -238,11 +484,12 @@ async function saveObservation(
   }
 }
 
-async function handleTraffic(request: Request, env: Env) {
+async function handleTraffic(request: Request, env: Env, user: AuthUser | null = null) {
   const url = new URL(request.url);
   const direction = parseDirection(url.searchParams.get("direction"));
   const now = new Date();
   const sql = neon(env.DATABASE_URL);
+  if (user) await recordAuthEvent(sql, user, `traffic:${direction}`, request);
 
   try {
     const sourceResponse = await fetch(SOURCE_URL, {
@@ -381,7 +628,7 @@ async function handleTraffic(request: Request, env: Env) {
   }
 }
 
-async function handleReport(request: Request, env: Env) {
+async function handleReport(request: Request, env: Env, user: AuthUser | null = null) {
   try {
     const body = await request.json() as Record<string, unknown>;
     const direction = parseReportDirection(body.direction);
@@ -402,6 +649,7 @@ async function handleReport(request: Request, env: Env) {
     }
 
     const sql = neon(env.DATABASE_URL);
+    if (user) await recordAuthEvent(sql, user, "report", request);
     await sql`
       insert into traveler_reports (
         reported_at,
@@ -433,6 +681,31 @@ async function handleReport(request: Request, env: Env) {
   }
 }
 
+async function handleGoogleAuth(request: Request, env: Env) {
+  if (!env.GOOGLE_CLIENT_ID) {
+    return json(env, {
+      error: "google_auth_not_configured",
+      message: "GOOGLE_CLIENT_ID is not configured for this Worker.",
+    }, { status: 503 });
+  }
+
+  try {
+    const body = await request.json() as { credential?: unknown };
+    const credential = typeof body.credential === "string" ? body.credential : "";
+    const user = await verifyGoogleIdToken(credential, env);
+    await recordAuthEvent(neon(env.DATABASE_URL), user, "login", request);
+    return json(env, {
+      ok: true,
+      user,
+    });
+  } catch (error) {
+    return json(env, {
+      error: "google_auth_failed",
+      message: error instanceof Error ? error.message : "Unable to verify Google sign-in.",
+    }, { status: 401 });
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -448,12 +721,20 @@ export default {
       }, { status: 503 });
     }
 
+    if (request.method === "POST" && url.pathname === "/api/auth/google") {
+      return handleGoogleAuth(request, env);
+    }
+
     if (request.method === "GET" && url.pathname === "/api/traffic") {
-      return handleTraffic(request, env);
+      const user = await authenticateRequest(request, env);
+      if (user instanceof Response) return user;
+      return handleTraffic(request, env, user);
     }
 
     if (request.method === "POST" && url.pathname === "/api/reports") {
-      return handleReport(request, env);
+      const user = await authenticateRequest(request, env);
+      if (user instanceof Response) return user;
+      return handleReport(request, env, user);
     }
 
     return json(env, { error: "not_found" }, { status: 404 });

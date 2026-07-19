@@ -11,6 +11,9 @@ export default defineConfig({
     "process.env.NEXT_PUBLIC_API_BASE": JSON.stringify(
       process.env.NEXT_PUBLIC_API_BASE ?? process.env.VITE_API_BASE ?? "",
     ),
+    "process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID": JSON.stringify(
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? "",
+    ),
   },
   build: {
     outDir: resolve(__dirname, "docs"),

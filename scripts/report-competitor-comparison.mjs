@@ -715,23 +715,22 @@ function buildSvgChart({ checkpoint, direction, points, insight, status, capture
   const chartWidth = width - margin.left - margin.right;
   const chartHeight = height - margin.top - margin.bottom;
   const { startMs: minMs, endMs: maxMs } = singaporeDayBounds(new Date(capturedAt));
-  const values = points.flatMap((point) => [point.ours, point.google, point.competitor]).filter(Number.isFinite);
-  const maxValue = Math.max(120, Math.ceil((Math.max(...values, 90) + 12) / 30) * 30);
+  const minValue = 20;
+  const maxValue = 90;
 
   const xForTime = (ms) => margin.left + ((Math.max(minMs, Math.min(maxMs, ms)) - minMs) / (maxMs - minMs)) * (chartWidth - 18);
-  const yForValue = (value) => margin.top + chartHeight - (Math.max(0, Math.min(maxValue, value)) / maxValue) * chartHeight;
+  const yForValue = (value) => margin.top + chartHeight - ((Math.max(minValue, Math.min(maxValue, value)) - minValue) / (maxValue - minValue)) * chartHeight;
 
   const thresholdBands = [
-    { from: 0, to: 45, fill: "#dff8ea" },
+    { from: minValue, to: 45, fill: "#dff8ea" },
     { from: 45, to: 90, fill: "#fff3cf" },
-    { from: 90, to: maxValue, fill: "#ffe4e1" },
   ].map((band) => {
     const y = yForValue(band.to);
     const bandHeight = yForValue(band.from) - y;
     return `<rect x="${margin.left}" y="${y}" width="${chartWidth}" height="${bandHeight}" fill="${band.fill}" />`;
   }).join("");
 
-  const yTicks = [0, 60, 120].filter((value) => value <= maxValue);
+  const yTicks = [20, 45, 60, 90];
   const yGridLines = yTicks.map((value) => {
     const y = yForValue(value);
     return `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="#cbd5df" stroke-width="1.5" />`;

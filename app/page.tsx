@@ -98,6 +98,43 @@ type SparkTone = "good" | "amber" | "bad";
 type SparkPoint = { timestamp: string; predicted: number; zone?: SparkTone };
 type SparkSeries = { today: SparkPoint[]; comparison: SparkPoint[] };
 type HourlyPattern = { today: number[]; comparison: number[] };
+type AuthUser = {
+  sub: string;
+  email: string;
+  name: string | null;
+  picture: string | null;
+  hostedDomain: string | null;
+};
+type AuthState =
+  | { status: "disabled" }
+  | { status: "signed-out" | "loading" | "error"; message?: string }
+  | { status: "ready"; credential: string; user: AuthUser };
+type GoogleCredentialResponse = { credential?: string; select_by?: string };
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (options: {
+            client_id: string;
+            callback: (response: GoogleCredentialResponse) => void;
+            auto_select?: boolean;
+          }) => void;
+          renderButton: (parent: HTMLElement, options: {
+            theme?: "outline" | "filled_blue" | "filled_black";
+            size?: "large" | "medium" | "small";
+            shape?: "rectangular" | "pill" | "circle" | "square";
+            text?: "signin_with" | "signup_with" | "continue_with" | "signin";
+            width?: number;
+          }) => void;
+          prompt: () => void;
+          disableAutoSelect: () => void;
+        };
+      };
+    };
+  }
+}
 
 const checkpointSgSaturdayPattern: Record<Direction, Record<Checkpoint, HourlyPattern>> = {
   "sg-my": {
@@ -1264,6 +1301,48 @@ function apiBase() {
     : "";
 }
 
+function googleClientId() {
+  if (typeof process === "undefined") return "";
+  return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+}
+
+const authStorageKey = "crossborder.google-auth.v1";
+
+function decodeJwtPayload<T>(credential: string): T | null {
+  try {
+    const payload = credential.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(window.atob(padded)) as T;
+  } catch {
+    return null;
+  }
+}
+
+function credentialIsFresh(credential: string) {
+  const payload = decodeJwtPayload<{ exp?: number }>(credential);
+  return Boolean(payload?.exp && payload.exp * 1000 > Date.now() + 60_000);
+}
+
+function initialAuthState(): AuthState {
+  if (!googleClientId()) return { status: "disabled" };
+  if (typeof window === "undefined") return { status: "signed-out" };
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(authStorageKey) ?? "null") as {
+      credential?: string;
+      user?: AuthUser;
+    } | null;
+    if (saved?.credential && saved.user && credentialIsFresh(saved.credential)) {
+      return { status: "ready", credential: saved.credential, user: saved.user };
+    }
+  } catch {
+    // Ignore corrupt local auth state and show the sign-in gate.
+  }
+  window.localStorage.removeItem(authStorageKey);
+  return { status: "signed-out" };
+}
+
 function initialDirection(): Direction {
   if (typeof window === "undefined") return "sg-my";
   return new URLSearchParams(window.location.search).get("direction") === "my-sg"
@@ -1273,6 +1352,7 @@ function initialDirection(): Direction {
 
 export default function Home() {
   const [direction, setDirection] = useState<Direction>(() => initialDirection());
+  const [auth, setAuth] = useState<AuthState>(() => initialAuthState());
   const [refreshing, setRefreshing] = useState(false);
   const [lastChecked, setLastChecked] = useState("12:29 pm");
   const [liveTraffic, setLiveTraffic] = useState<LiveTraffic | null>(null);
@@ -1291,13 +1371,62 @@ export default function Home() {
   const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [locationInput, setLocationInput] = useState("");
   const pullStartY = useRef<number | null>(null);
+  const isAuthConfigured = Boolean(googleClientId());
+
+  const signOut = useCallback(() => {
+    window.google?.accounts.id.disableAutoSelect();
+    window.localStorage.removeItem(authStorageKey);
+    setAuth({ status: "signed-out" });
+    setTrafficByDirection({});
+    setLiveTraffic(null);
+  }, []);
+
+  const completeGoogleSignIn = useCallback(async (credential: string) => {
+    setAuth({ status: "loading" });
+    try {
+      const response = await fetch(`${apiBase()}/api/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential }),
+      });
+      if (!response.ok) throw new Error(`Google auth returned ${response.status}`);
+      const payload = await response.json() as { user?: AuthUser };
+      if (!payload.user) throw new Error("Google auth response missing user");
+      window.localStorage.setItem(authStorageKey, JSON.stringify({
+        credential,
+        user: payload.user,
+      }));
+      setAuth({ status: "ready", credential, user: payload.user });
+    } catch {
+      window.localStorage.removeItem(authStorageKey);
+      setAuth({
+        status: "error",
+        message: "Google sign-in could not be verified. Try again.",
+      });
+    }
+  }, []);
+
+  const authFetch = useCallback(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    if (auth.status === "ready") headers.set("Authorization", `Bearer ${auth.credential}`);
+    const response = await fetch(input, { ...init, headers });
+    if (response.status === 401 && isAuthConfigured) {
+      signOut();
+      throw new Error("Google sign-in expired");
+    }
+    return response;
+  }, [auth, isAuthConfigured, signOut]);
 
   const loadTraffic = useCallback(async () => {
+    if (isAuthConfigured && auth.status !== "ready") {
+      setRefreshing(false);
+      return;
+    }
     setRefreshing(true);
     try {
       const directions: Direction[] = ["sg-my", "my-sg"];
       const responses = await Promise.all(directions.map(async (travelDirection) => {
-        const response = await fetch(`${apiBase()}/api/traffic?direction=${travelDirection}`, {
+        const response = await authFetch(`${apiBase()}/api/traffic?direction=${travelDirection}`, {
           cache: "no-store",
         });
         if (!response.ok) throw new Error(`Traffic API returned ${response.status}`);
@@ -1323,10 +1452,74 @@ export default function Home() {
     } finally {
       setRefreshing(false);
     }
-  }, [direction]);
+  }, [auth.status, authFetch, direction, isAuthConfigured]);
 
   useEffect(() => {
-    void loadTraffic();
+    if (!isAuthConfigured) return;
+    if (auth.status === "ready" && !credentialIsFresh(auth.credential)) {
+      window.setTimeout(signOut, 0);
+    }
+  }, [auth, isAuthConfigured, signOut]);
+
+  useEffect(() => {
+    if (!isAuthConfigured || auth.status === "ready") return;
+    const clientId = googleClientId();
+    let cancelled = false;
+    const renderGoogleButton = () => {
+      const button = document.getElementById("google-signin-button");
+      if (!button || !window.google || cancelled) return;
+      button.replaceChildren();
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        auto_select: true,
+        callback: (response) => {
+          if (response.credential) void completeGoogleSignIn(response.credential);
+        },
+      });
+      window.google.accounts.id.renderButton(button, {
+        theme: "outline",
+        size: "large",
+        shape: "pill",
+        text: "continue_with",
+        width: 292,
+      });
+      window.google.accounts.id.prompt();
+    };
+
+    if (window.google) {
+      renderGoogleButton();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const existing = document.querySelector<HTMLScriptElement>("script[data-google-identity]");
+    if (existing) {
+      existing.addEventListener("load", renderGoogleButton, { once: true });
+      return () => {
+        cancelled = true;
+        existing.removeEventListener("load", renderGoogleButton);
+      };
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.dataset.googleIdentity = "true";
+    script.addEventListener("load", renderGoogleButton, { once: true });
+    document.head.appendChild(script);
+
+    return () => {
+      cancelled = true;
+      script.removeEventListener("load", renderGoogleButton);
+    };
+  }, [auth.status, completeGoogleSignIn, isAuthConfigured]);
+
+  useEffect(() => {
+    window.setTimeout(() => {
+      void loadTraffic();
+    }, 0);
   }, [loadTraffic]);
 
   useEffect(() => {
@@ -1598,7 +1791,7 @@ export default function Home() {
     setFeedbackStatus("saving");
     try {
       const checkpoint = liveTraffic?.checkpoints[feedbackCheckpoint];
-      const response = await fetch(`${apiBase()}/api/reports`, {
+      const response = await authFetch(`${apiBase()}/api/reports`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1617,6 +1810,25 @@ export default function Home() {
     }
   }
 
+  if (isAuthConfigured && auth.status !== "ready") {
+    return (
+      <main className="app-shell login-shell">
+        <section className="login-card" aria-labelledby="login-title">
+          <a className="brand login-brand" href="#top" aria-label="CrossBorder.sg home">
+            <span>CrossBorder<span>.sg</span></span>
+          </a>
+          <div>
+            <h1 id="login-title">Sign in to continue</h1>
+            <p>Use Google sign-in so we can track adoption and improve model accuracy from real usage.</p>
+          </div>
+          <div id="google-signin-button" className="google-signin-slot" />
+          {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
+          {auth.status === "error" && <p className="login-error">{auth.message}</p>}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell landing-shell" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <header className="topbar">
@@ -1626,6 +1838,11 @@ export default function Home() {
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
         </a>
+        {auth.status === "ready" && (
+          <button className="signout-button" type="button" onClick={signOut}>
+            Sign out
+          </button>
+        )}
       </header>
 
       <section className="landing-card-stack direction-first" id="top" aria-label="Checkpoint summaries">

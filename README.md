@@ -69,6 +69,10 @@ npm run api:deploy
    Worker URL so the five-minute collector warms the Neon-backed API instead of
    the temporary backend.
 
+Google sign-in is optional but recommended before wider sharing. Follow
+`guides/google-sso.md` to create the OAuth Web client, configure the Worker, and
+rebuild the Pages bundle with the public client id.
+
 The Worker exposes the same public contract as the temporary backend:
 
 - `GET /api/traffic?direction=sg-my`
