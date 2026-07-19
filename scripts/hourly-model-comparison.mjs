@@ -2,6 +2,7 @@ const API_BASE = process.env.CROSSBORDER_API_BASE || "https://crossborder-sg-api
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GOOGLE_ROUTES_API_KEY = process.env.GOOGLE_ROUTES_API_KEY;
+const MONITOR_API_KEY = process.env.MONITOR_API_KEY;
 const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
 const useGoogleRoutesApi = process.env.USE_GOOGLE_ROUTES_API === "true";
 
@@ -131,7 +132,9 @@ async function googleComparisonLines(direction, label, payload) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  const headers = { Accept: "application/json" };
+  if (MONITOR_API_KEY) headers["X-Monitor-Key"] = MONITOR_API_KEY;
+  const response = await fetch(url, { headers });
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
   return response.json();
 }

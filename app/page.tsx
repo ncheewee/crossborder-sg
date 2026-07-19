@@ -120,6 +120,7 @@ declare global {
             client_id: string;
             callback: (response: GoogleCredentialResponse) => void;
             auto_select?: boolean;
+            use_fedcm_for_prompt?: boolean;
           }) => void;
           renderButton: (parent: HTMLElement, options: {
             theme?: "outline" | "filled_blue" | "filled_black";
@@ -1471,7 +1472,8 @@ export default function Home() {
       button.replaceChildren();
       window.google.accounts.id.initialize({
         client_id: clientId,
-        auto_select: true,
+        auto_select: false,
+        use_fedcm_for_prompt: false,
         callback: (response) => {
           if (response.credential) void completeGoogleSignIn(response.credential);
         },
@@ -1483,7 +1485,6 @@ export default function Home() {
         text: "continue_with",
         width: 292,
       });
-      window.google.accounts.id.prompt();
     };
 
     if (window.google) {

@@ -7,6 +7,7 @@ const API_BASE = process.env.CROSSBORDER_API_BASE || "https://crossborder-sg-api
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GOOGLE_ROUTES_API_KEY = process.env.GOOGLE_ROUTES_API_KEY;
+const MONITOR_API_KEY = process.env.MONITOR_API_KEY;
 const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
 const useGoogleRoutesApi = process.env.USE_GOOGLE_ROUTES_API === "true";
 const outRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
@@ -77,7 +78,9 @@ async function fetchJson(url) {
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      const headers = { Accept: "application/json" };
+      if (MONITOR_API_KEY) headers["X-Monitor-Key"] = MONITOR_API_KEY;
+      const response = await fetch(url, { headers });
       if (!response.ok) throw new Error(`${url} returned ${response.status}`);
       return response.json();
     } catch (error) {
@@ -626,14 +629,16 @@ function routeTrafficStatus(points) {
 function buildRouteInsight(points, checkpoint, direction, accuracySummary, status) {
   const latestOurs = latestWithValue(points, "ours");
   const latestGoogle = latestWithValue(points, "google");
-  const latestCompetitor = latestWithValue(points, "competitor");
+  const latestCheckpointSg = latestWithValue(points, "checkpointSg");
+  const latestBeatTheJam = latestWithValue(points, "beatTheJam");
   const stat = accuracyForRoute(accuracySummary, checkpoint, direction, "CrossBorder.sg");
 
   if (!latestOurs) return "No CrossBorder.sg line available yet; keep collecting hourly samples.";
 
   const comparisons = [];
   if (latestGoogle) comparisons.push(`vs Google ${deltaText(latestOurs.ours - latestGoogle.google)}`);
-  if (latestCompetitor) comparisons.push(`vs app consensus ${deltaText(latestOurs.ours - latestCompetitor.competitor)}`);
+  if (latestCheckpointSg) comparisons.push(`vs Checkpoint.sg ${deltaText(latestOurs.ours - latestCheckpointSg.checkpointSg)}`);
+  if (latestBeatTheJam) comparisons.push(`vs BTJ ${deltaText(latestOurs.ours - latestBeatTheJam.beatTheJam)}`);
 
   const previousOurs = [...points]
     .reverse()
@@ -659,8 +664,9 @@ function routeRecommendation(points, checkpoint, direction, accuracySummary) {
 
   const latestOurs = latestWithValue(points, "ours");
   const latestGoogle = latestWithValue(points, "google");
-  const latestCompetitor = latestWithValue(points, "competitor");
-  const reference = average([latestGoogle?.google, latestCompetitor?.competitor]);
+  const latestCheckpointSg = latestWithValue(points, "checkpointSg");
+  const latestBeatTheJam = latestWithValue(points, "beatTheJam");
+  const reference = average([latestGoogle?.google, latestCheckpointSg?.checkpointSg, latestBeatTheJam?.beatTheJam]);
   if (latestOurs && Number.isFinite(reference) && Math.abs(latestOurs.ours - reference) >= 20) {
     return `${routeLabel(checkpoint, direction)}: inspect ${latestOurs.ours > reference ? "high" : "low"} live estimate versus market by ${Math.round(Math.abs(latestOurs.ours - reference))}m.`;
   }
@@ -675,12 +681,12 @@ function sanitizeSvgText(text) {
     .replaceAll("\"", "&quot;");
 }
 
-function chartPath(points, key, xForTime, yForValue, minMs, maxMs, dashed = false) {
+function chartPath(points, key, xForTime, yForValue, minMs, maxMs, width = 4, dashed = false) {
   const commands = points
     .filter((point) => Number.isFinite(point[key]) && point.capturedMs >= minMs && point.capturedMs <= maxMs)
     .map((point) => `${xForTime(point.capturedMs).toFixed(1)},${yForValue(point[key]).toFixed(1)}`);
   if (commands.length < 2) return "";
-  return `<polyline points="${commands.join(" ")}" fill="none" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"${dashed ? " stroke-dasharray=\"10 12\"" : ""} />`;
+  return `<polyline points="${commands.join(" ")}" fill="none" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"${dashed ? " stroke-dasharray=\"10 12\"" : ""} />`;
 }
 
 function wrapSvgText(text, maxChars) {
@@ -758,13 +764,14 @@ function buildSvgChart({ checkpoint, direction, points, insight, status, capture
     }).join("");
 
   const series = [
-    { key: "ours", label: "CrossBorder.sg", color: "#008c8c", dashed: false },
-    { key: "google", label: "Google Maps", color: "#2563eb", dashed: false },
-    { key: "competitor", label: "Apps avg", color: "#d9467c", dashed: true },
+    { key: "ours", label: "CrossBorder.sg", color: "#007c7c", width: 7, dashed: false },
+    { key: "google", label: "Google", color: "#2563eb", width: 4, dashed: false },
+    { key: "checkpointSg", label: "Checkpoint.sg", color: "#9333ea", width: 4, dashed: true },
+    { key: "beatTheJam", label: "BTJ", color: "#ea580c", width: 4, dashed: true },
   ];
   const lines = series.map((item) => `
     <g stroke="${item.color}">
-      ${chartPath(points, item.key, xForTime, yForValue, minMs, maxMs, item.dashed)}
+      ${chartPath(points, item.key, xForTime, yForValue, minMs, maxMs, item.width, item.dashed)}
     </g>
   `).join("");
   const latest = latestWithValue(points, "ours");
@@ -772,11 +779,11 @@ function buildSvgChart({ checkpoint, direction, points, insight, status, capture
     ? `<circle cx="${xForTime(latest.capturedMs)}" cy="${yForValue(latest.ours)}" r="9" fill="#008c8c" stroke="#ffffff" stroke-width="4" />`
     : "";
   const legend = series.map((item, index) => {
-    const x = margin.left + index * 282;
+    const x = margin.left + index * 238;
     return `
       <g transform="translate(${x}, 76)">
-        <line x1="0" y1="0" x2="48" y2="0" stroke="${item.color}" stroke-width="5" stroke-linecap="round"${item.dashed ? " stroke-dasharray=\"10 10\"" : ""} />
-        <text x="62" y="9" font-size="25" font-weight="700" fill="#25313b">${sanitizeSvgText(item.label)}</text>
+        <line x1="0" y1="0" x2="42" y2="0" stroke="${item.color}" stroke-width="${item.width}" stroke-linecap="round"${item.dashed ? " stroke-dasharray=\"10 10\"" : ""} />
+        <text x="54" y="9" font-size="23" font-weight="${item.key === "ours" ? 900 : 760}" fill="#25313b">${sanitizeSvgText(item.label)}</text>
       </g>
     `;
   }).join("");

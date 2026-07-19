@@ -1,4 +1,4 @@
-const CACHE_NAME = "crossborder-sg-v3";
+const CACHE_NAME = "crossborder-sg-v4";
 const SHELL_ASSETS = [
   "/crossborder-sg/icon.svg",
   "/crossborder-sg/icon-192.png",

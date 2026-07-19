@@ -16,6 +16,7 @@ type Env = {
   ALLOWED_ORIGIN?: string;
   GOOGLE_CLIENT_ID?: string;
   AUTH_REQUIRED?: string;
+  MONITOR_API_KEY?: string;
   ALLOWED_EMAILS?: string;
   ALLOWED_DOMAINS?: string;
 };
@@ -73,7 +74,7 @@ function corsHeaders(env: Env) {
   return {
     "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN ?? "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Monitor-Key",
   };
 }
 
@@ -327,6 +328,8 @@ async function recordAuthEvent(
 
 async function authenticateRequest(request: Request, env: Env): Promise<AuthUser | Response | null> {
   if (!authConfigured(env)) return null;
+  const monitorKey = request.headers.get("X-Monitor-Key");
+  if (env.MONITOR_API_KEY && monitorKey && monitorKey === env.MONITOR_API_KEY) return null;
   const authorization = request.headers.get("Authorization") ?? "";
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) return authRequired(env) ? unauthorized(env) : null;
