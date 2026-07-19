@@ -1021,6 +1021,176 @@ function LandingCameraCard({
   );
 }
 
+function directionTitle(direction: Direction) {
+  return direction === "sg-my" ? "Towards Johor" : "Towards Singapore";
+}
+
+function directionShortLabel(direction: Direction) {
+  return direction === "sg-my" ? "to JB" : "to SG";
+}
+
+function buildDirectionDecision(
+  direction: Direction,
+  trafficByDirection: TrafficByDirection,
+) {
+  const traffic = trafficByDirection[direction];
+  const woodlands = compactCheckpointData(traffic, direction, "Woodlands");
+  const tuas = compactCheckpointData(traffic, direction, "Tuas");
+  const chosenRoute = traffic?.recommendation.route
+    ?? (tuas.waitMinutes <= woodlands.waitMinutes ? "Tuas" : "Woodlands");
+  const otherRoute: Checkpoint = chosenRoute === "Tuas" ? "Woodlands" : "Tuas";
+  const chosen = chosenRoute === "Tuas" ? tuas : woodlands;
+  const other = otherRoute === "Tuas" ? tuas : woodlands;
+  const computedSaving = Math.max(0, other.waitMinutes - chosen.waitMinutes);
+  const saving = Math.max(0, traffic?.recommendation.savingMinutes ?? computedSaving);
+  const action = traffic?.recommendation.action === "wait" && traffic.recommendation.departAt
+    ? `Wait until ${formatTimeLabel(traffic.recommendation.departAt)}`
+    : `${chosenRoute} now`;
+  const confidence = traffic?.recommendation.confidenceLabel ?? "confidence building";
+  return {
+    direction,
+    title: directionTitle(direction),
+    action,
+    checkpoint: chosenRoute,
+    otherCheckpoint: otherRoute,
+    chosen,
+    other,
+    saving,
+    confidence,
+  };
+}
+
+function V2DecisionCard({
+  decision,
+}: {
+  decision: ReturnType<typeof buildDirectionDecision>;
+}) {
+  const tone = trafficSignalTone(decision.chosen.waitMinutes, decision.chosen.trend);
+  return (
+    <article className="v2-decision-card">
+      <div className="v2-decision-copy">
+        <span className="v2-direction-label">{decision.title}</span>
+        <h1>{decision.action}</h1>
+        <p>
+          {decision.saving > 0
+            ? `Saves about ${decision.saving} min vs ${decision.otherCheckpoint}.`
+            : `${decision.otherCheckpoint} is running close.`}
+        </p>
+      </div>
+      <div className={`v2-hero-time v2-time-${tone}`}>
+        <strong>{decision.chosen.crossing}</strong>
+        <span>min</span>
+      </div>
+      <div className="v2-confidence-row">
+        <span>{decision.checkpoint}</span>
+        <small>{decision.confidence}</small>
+      </div>
+    </article>
+  );
+}
+
+function V2TimeTile({
+  checkpoint,
+  direction,
+  trafficByDirection,
+  trendNowMs,
+}: {
+  checkpoint: Checkpoint;
+  direction: Direction;
+  trafficByDirection: TrafficByDirection;
+  trendNowMs: number | null;
+}) {
+  const data = compactCheckpointData(trafficByDirection[direction], direction, checkpoint);
+  const series = sparklineSeries(trafficByDirection, direction, checkpoint);
+  const projection = observedTrend(series.today, data.waitMinutes, data.trend, trendNowMs);
+  const tone = trafficSignalTone(data.waitMinutes, projection.trend);
+
+  return (
+    <article className="v2-time-tile">
+      <div className="v2-tile-head">
+        <div>
+          <strong>{checkpoint}</strong>
+          <span>{directionShortLabel(direction)}</span>
+        </div>
+        <div className={`v2-tile-time v2-time-${tone}`}>
+          <b>{data.crossing}</b>
+          <small>min</small>
+        </div>
+      </div>
+      <div className="v2-tile-meta">
+        <span className={`trend-chip trend-chip-${projection.trendTone}`}>{projection.trend}</span>
+        <small>today vs last week</small>
+      </div>
+      <Sparkline24h
+        series={series}
+        current={data.waitMinutes}
+        label={`${checkpoint} ${directionTitle(direction)} today against last week`}
+      />
+    </article>
+  );
+}
+
+function V2CameraStrip({
+  trafficByDirection,
+}: {
+  trafficByDirection: TrafficByDirection;
+}) {
+  return (
+    <section className="v2-camera-section" aria-label="Camera checks">
+      <div className="v2-section-head">
+        <h2>Camera check</h2>
+        <span>SG + MY views</span>
+      </div>
+      <div className="v2-camera-grid">
+        <LandingCameraCard checkpoint="Woodlands" trafficByDirection={trafficByDirection} />
+        <LandingCameraCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
+      </div>
+    </section>
+  );
+}
+
+function V2Landing({
+  trafficByDirection,
+}: {
+  trafficByDirection: TrafficByDirection;
+}) {
+  const [trendNowMs, setTrendNowMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    setTrendNowMs(Date.now());
+    const timer = window.setInterval(() => setTrendNowMs(Date.now()), 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const decisions = [
+    buildDirectionDecision("sg-my", trafficByDirection),
+    buildDirectionDecision("my-sg", trafficByDirection),
+  ];
+
+  return (
+    <section className="v2-landing" id="top" aria-label="CrossBorder.sg V2 checkpoint decision board">
+      <div className="v2-decision-grid">
+        {decisions.map((decision) => (
+          <V2DecisionCard key={decision.direction} decision={decision} />
+        ))}
+      </div>
+      <section className="v2-times-card" aria-label="All current checkpoint crossing times">
+        <div className="v2-section-head">
+          <h2>All crossings</h2>
+          <span>today vs last week</span>
+        </div>
+        <div className="v2-time-grid">
+          <V2TimeTile checkpoint="Woodlands" direction="sg-my" trafficByDirection={trafficByDirection} trendNowMs={trendNowMs} />
+          <V2TimeTile checkpoint="Tuas" direction="sg-my" trafficByDirection={trafficByDirection} trendNowMs={trendNowMs} />
+          <V2TimeTile checkpoint="Woodlands" direction="my-sg" trafficByDirection={trafficByDirection} trendNowMs={trendNowMs} />
+          <V2TimeTile checkpoint="Tuas" direction="my-sg" trafficByDirection={trafficByDirection} trendNowMs={trendNowMs} />
+        </div>
+      </section>
+      <V2CameraStrip trafficByDirection={trafficByDirection} />
+    </section>
+  );
+}
+
 function CheckpointCard({
   name,
   recommended,
@@ -1849,12 +2019,7 @@ export default function Home() {
         )}
       </header>
 
-      <section className="landing-card-stack direction-first" id="top" aria-label="Checkpoint summaries">
-        <LandingDirectionCard direction="sg-my" title="Towards Johor" trafficByDirection={trafficByDirection} />
-        <LandingDirectionCard direction="my-sg" title="Towards Singapore" trafficByDirection={trafficByDirection} />
-        <LandingCameraCard checkpoint="Woodlands" trafficByDirection={trafficByDirection} />
-        <LandingCameraCard checkpoint="Tuas" trafficByDirection={trafficByDirection} />
-      </section>
+      <V2Landing trafficByDirection={trafficByDirection} />
 
     </main>
   );

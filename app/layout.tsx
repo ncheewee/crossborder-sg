@@ -24,7 +24,7 @@ export async function generateMetadata(): Promise<Metadata> {
     description:
       "A live Singapore–Johor checkpoint recommendation based on official traffic signals.",
     manifest: "/manifest.webmanifest",
-    themeColor: "#1e0b3d",
+    themeColor: "#171717",
     appleWebApp: {
       capable: true,
       title: "CrossBorder.sg",

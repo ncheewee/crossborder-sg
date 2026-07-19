@@ -7,8 +7,8 @@
   "scope": "/crossborder-sg/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f6f2fb",
-  "theme_color": "#1e0b3d",
+  "background_color": "#f6f7f9",
+  "theme_color": "#171717",
   "categories": ["navigation", "travel", "utilities"],
   "icons": [
     {
