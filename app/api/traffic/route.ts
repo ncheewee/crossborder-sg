@@ -186,7 +186,7 @@ export async function GET(request: Request) {
           imageUrl: cameras[checkpoint].imageUrl,
           estimatedWaitMinutes: wait,
           forecast30Minutes: forecast[1]?.predicted ?? null,
-          method: "historical-baseline-v1+official-camera-freshness",
+          method: "historical-baseline-v2+official-camera-freshness",
         });
         const rows = await loadHistory(direction, checkpoint, since);
         const reports = await loadTravelerReports(direction, checkpoint, reportSince);
@@ -239,7 +239,7 @@ export async function GET(request: Request) {
         updateFrequency: "1–5 minutes",
       },
       model: {
-        name: "Historical baseline v1",
+        name: "Historical baseline v2",
         status: "early",
         description: "Live official camera freshness combined with time-of-week checkpoint patterns.",
       },

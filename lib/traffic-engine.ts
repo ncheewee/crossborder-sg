@@ -60,12 +60,12 @@ function historicalPrior(
   let woodlands: number;
   if (direction === "sg-my") {
     if (weekend) {
-      woodlands = hour < 6 ? 34 : hour < 11 ? 72 : hour < 16 ? 54 : hour < 21 ? 82 : 48;
+      woodlands = hour < 6 ? 34 : hour < 11 ? 72 : hour < 16 ? 54 : hour < 21 ? 48 : 34;
     } else {
       woodlands = hour < 6 ? 28 : hour < 10 ? 52 : hour < 16 ? 42 : hour < 21 ? 68 : 38;
     }
   } else if (weekend) {
-    woodlands = hour < 10 ? 38 : hour < 15 ? 52 : hour < 22 ? 78 : 46;
+    woodlands = hour < 10 ? 38 : hour < 15 ? 52 : hour < 19 ? 58 : hour < 22 ? 50 : 36;
   } else {
     woodlands = hour < 7 ? 31 : hour < 11 ? 47 : hour < 16 ? 40 : hour < 22 ? 65 : 36;
   }
