@@ -1303,7 +1303,6 @@ function apiBase() {
 }
 
 function googleClientId() {
-  if (typeof process === "undefined") return "";
   return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
 }
 
