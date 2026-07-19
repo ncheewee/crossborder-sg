@@ -1371,12 +1371,14 @@ export default function Home() {
   const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [locationInput, setLocationInput] = useState("");
   const pullStartY = useRef<number | null>(null);
+  const hasLiveTraffic = useRef(false);
   const isAuthConfigured = Boolean(googleClientId());
 
   const signOut = useCallback(() => {
     window.google?.accounts.id.disableAutoSelect();
     window.localStorage.removeItem(authStorageKey);
     setAuth({ status: "signed-out" });
+    hasLiveTraffic.current = false;
     setTrafficByDirection({});
     setLiveTraffic(null);
   }, []);
@@ -1437,14 +1439,17 @@ export default function Home() {
       setTrafficByDirection(nextTraffic);
       setLiveTraffic(primary);
       setFeedState("live");
+      hasLiveTraffic.current = true;
       setLastChecked(new Intl.DateTimeFormat("en-SG", {
         hour: "numeric",
         minute: "2-digit",
       }).format(new Date(primary?.generatedAt ?? Date.now())));
     } catch {
-      setLiveTraffic(null);
-      setTrafficByDirection({});
-      setFeedState("fallback");
+      if (!hasLiveTraffic.current) {
+        setLiveTraffic(null);
+        setTrafficByDirection({});
+        setFeedState("fallback");
+      }
       setLastChecked(new Intl.DateTimeFormat("en-SG", {
         hour: "numeric",
         minute: "2-digit",
