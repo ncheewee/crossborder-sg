@@ -130,18 +130,35 @@ async function sendTelegram(text) {
     return;
   }
 
-  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
-      text,
-      disable_web_page_preview: true,
-    }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram send failed: ${response.status} ${body}`);
+  const maxLength = 3600;
+  const chunks = [];
+  let current = "";
+  for (const line of text.split("\n")) {
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length > maxLength && current) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = next;
+    }
+  }
+  if (current) chunks.push(current);
+
+  for (const [index, chunk] of chunks.entries()) {
+    const prefix = chunks.length > 1 ? `(${index + 1}/${chunks.length}) ` : "";
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: `${prefix}${chunk}`,
+        disable_web_page_preview: true,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Telegram send failed: ${response.status} ${body}`);
+    }
   }
 }
 
