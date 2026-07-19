@@ -471,6 +471,15 @@ function singaporeHour(date) {
   return Number(singaporeParts(date).hour);
 }
 
+function singaporeDayBounds(date) {
+  const parts = singaporeParts(date);
+  const startMs = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)) - 8 * 60 * 60000;
+  return {
+    startMs,
+    endMs: startMs + 24 * 60 * 60000,
+  };
+}
+
 function formatSingaporeStamp(date) {
   return new Intl.DateTimeFormat("en-SG", {
     timeZone: "Asia/Singapore",
@@ -510,13 +519,22 @@ function buildRouteSeries(rows, checkpoint, direction, sinceMs) {
       capturedMs,
       ours: null,
       google: null,
+      checkpointSg: null,
+      beatTheJam: null,
       competitorValues: [],
     };
     const value = sourceMidpoint(row);
     if (value == null) continue;
     if (row.source === "CrossBorder.sg") current.ours = value;
     if (row.source === "Google Maps" || row.source === "Google Routes") current.google = value;
-    if (row.source === "Checkpoint.sg" || row.source === "Beat the Jam") current.competitorValues.push(value);
+    if (row.source === "Checkpoint.sg") {
+      current.checkpointSg = value;
+      current.competitorValues.push(value);
+    }
+    if (row.source === "Beat the Jam") {
+      current.beatTheJam = value;
+      current.competitorValues.push(value);
+    }
     byTime.set(row.capturedAt, current);
   }
 
@@ -544,7 +562,68 @@ function latestWithValue(points, key) {
   return null;
 }
 
-function buildRouteInsight(points, checkpoint, direction, accuracySummary) {
+function routeTrafficStatus(points) {
+  const latestOurs = latestWithValue(points, "ours");
+  if (!latestOurs) {
+    return {
+      level: "pending",
+      label: "PENDING",
+      color: "#64748b",
+      fill: "#e2e8f0",
+      summary: "PENDING: no CrossBorder.sg reading",
+    };
+  }
+
+  const comparisons = [
+    { label: "Google", value: latestWithValue(points, "google")?.google },
+    { label: "Checkpoint.sg", value: latestWithValue(points, "checkpointSg")?.checkpointSg },
+    { label: "BTJ", value: latestWithValue(points, "beatTheJam")?.beatTheJam },
+  ]
+    .filter((item) => Number.isFinite(item.value) && item.value > 0)
+    .map((item) => ({
+      ...item,
+      pct: Math.abs(latestOurs.ours - item.value) / item.value,
+    }));
+
+  if (!comparisons.length) {
+    return {
+      level: "pending",
+      label: "PENDING",
+      color: "#64748b",
+      fill: "#e2e8f0",
+      summary: "PENDING: no external source reading",
+    };
+  }
+
+  const worst = comparisons.sort((a, b) => b.pct - a.pct)[0];
+  if (worst.pct <= 0.1) {
+    return {
+      level: "green",
+      label: "GREEN",
+      color: "#0f8a4b",
+      fill: "#dff8ea",
+      summary: `GREEN: max variance ${Math.round(worst.pct * 100)}% vs ${worst.label}`,
+    };
+  }
+  if (worst.pct <= 0.3) {
+    return {
+      level: "amber",
+      label: "AMBER",
+      color: "#b45309",
+      fill: "#fff3cf",
+      summary: `AMBER: max variance ${Math.round(worst.pct * 100)}% vs ${worst.label}`,
+    };
+  }
+  return {
+    level: "red",
+    label: "RED",
+    color: "#dc2626",
+    fill: "#ffe4e1",
+    summary: `RED: max variance ${Math.round(worst.pct * 100)}% vs ${worst.label}`,
+  };
+}
+
+function buildRouteInsight(points, checkpoint, direction, accuracySummary, status) {
   const latestOurs = latestWithValue(points, "ours");
   const latestGoogle = latestWithValue(points, "google");
   const latestCompetitor = latestWithValue(points, "competitor");
@@ -567,7 +646,7 @@ function buildRouteInsight(points, checkpoint, direction, accuracySummary) {
     ? `MAE ${stat.mae}m, bias ${deltaText(stat.bias)} over ${stat.sampleSize} scores`
     : "accuracy score pending horizon maturity";
 
-  return `Now ${formatMinutes(latestOurs.ours)}; ${comparisons.join(", ") || "comparison pending"}; ${trendText}. ${accuracyText}.`;
+  return `${status.summary}; now ${formatMinutes(latestOurs.ours)}; ${comparisons.join(", ") || "comparison pending"}; ${trendText}. ${accuracyText}.`;
 }
 
 function routeRecommendation(points, checkpoint, direction, accuracySummary) {
@@ -629,15 +708,13 @@ function timeTickLabel(ms) {
   return `${hour - 12}pm`;
 }
 
-function buildSvgChart({ checkpoint, direction, points, insight, capturedAt }) {
+function buildSvgChart({ checkpoint, direction, points, insight, status, capturedAt }) {
   const width = 1200;
   const height = 760;
   const margin = { top: 112, right: 68, bottom: 132, left: 132 };
   const chartWidth = width - margin.left - margin.right;
   const chartHeight = height - margin.top - margin.bottom;
-  const nowMs = new Date(capturedAt).getTime();
-  const minMs = nowMs - 24 * 60 * 60000;
-  const maxMs = nowMs;
+  const { startMs: minMs, endMs: maxMs } = singaporeDayBounds(new Date(capturedAt));
   const values = points.flatMap((point) => [point.ours, point.google, point.competitor]).filter(Number.isFinite);
   const maxValue = Math.max(120, Math.ceil((Math.max(...values, 90) + 12) / 30) * 30);
 
@@ -664,7 +741,7 @@ function buildSvgChart({ checkpoint, direction, points, insight, capturedAt }) {
       return `<text x="${margin.left - 20}" y="${y + 9}" text-anchor="end" font-size="32" font-weight="800" fill="#3f4a54">${value}m</text>`;
   }).join("");
 
-  const tickHours = [0, 4, 8, 12, 16, 20].map((hoursAgo) => maxMs - (24 - hoursAgo) * 60 * 60000);
+  const tickHours = [0, 4, 8, 12, 16, 20, 24].map((hour) => minMs + hour * 60 * 60000);
   const xTicks = tickHours
     .filter((ms) => ms >= minMs && ms <= maxMs)
     .map((ms) => {
@@ -683,7 +760,7 @@ function buildSvgChart({ checkpoint, direction, points, insight, capturedAt }) {
   const series = [
     { key: "ours", label: "CrossBorder.sg", color: "#008c8c", dashed: false },
     { key: "google", label: "Google Maps", color: "#2563eb", dashed: false },
-    { key: "competitor", label: "Checkpoint.sg + BTJ", color: "#d9467c", dashed: true },
+    { key: "competitor", label: "Apps avg", color: "#d9467c", dashed: true },
   ];
   const lines = series.map((item) => `
     <g stroke="${item.color}">
@@ -714,6 +791,9 @@ function buildSvgChart({ checkpoint, direction, points, insight, capturedAt }) {
       <rect width="${width}" height="${height}" rx="30" fill="#f8fbfd" />
       <text x="${margin.left}" y="46" font-size="36" font-weight="800" fill="#0f1720">${sanitizeSvgText(routeLabel(checkpoint, direction))}</text>
       <text x="${width - margin.right}" y="46" text-anchor="end" font-size="24" font-weight="700" fill="#53606b">${sanitizeSvgText(formatSingaporeStamp(new Date(capturedAt)))}</text>
+      <rect x="${width - margin.right - 178}" y="62" width="178" height="42" rx="21" fill="${status.fill}" stroke="${status.color}" stroke-width="2" />
+      <circle cx="${width - margin.right - 150}" cy="83" r="10" fill="${status.color}" />
+      <text x="${width - margin.right - 126}" y="93" font-size="27" font-weight="900" fill="${status.color}">${sanitizeSvgText(status.label)}</text>
       ${legend}
       <clipPath id="plot-${checkpoint}-${direction.replaceAll(" ", "-")}">
         <rect x="${margin.left}" y="${margin.top}" width="${chartWidth}" height="${chartHeight}" />
@@ -740,7 +820,7 @@ async function svgToPng(svg) {
 
 async function buildGraphReports(allRows, accuracySummary, capturedAt) {
   await mkdir(graphRoot, { recursive: true });
-  const sinceMs = new Date(capturedAt).getTime() - 24 * 60 * 60000;
+  const { startMs: sinceMs } = singaporeDayBounds(new Date(capturedAt));
   const routes = [
     { checkpoint: "Woodlands", direction: "Towards JB" },
     { checkpoint: "Tuas", direction: "Towards JB" },
@@ -753,14 +833,16 @@ async function buildGraphReports(allRows, accuracySummary, capturedAt) {
     const capturedMs = new Date(capturedAt).getTime();
     const points = buildRouteSeries(allRows, route.checkpoint, route.direction, sinceMs)
       .filter((point) => point.capturedMs <= capturedMs);
-    const insight = buildRouteInsight(points, route.checkpoint, route.direction, accuracySummary);
-    const svg = buildSvgChart({ ...route, points, insight, capturedAt });
+    const status = routeTrafficStatus(points);
+    const insight = buildRouteInsight(points, route.checkpoint, route.direction, accuracySummary, status);
+    const svg = buildSvgChart({ ...route, points, insight, status, capturedAt });
     const png = await svgToPng(svg);
     const filename = `${route.checkpoint.toLowerCase()}-${route.direction.toLowerCase().replaceAll(" ", "-")}.png`;
     await writeFile(join(graphRoot, filename), png);
     reports.push({
       ...route,
       points,
+      status,
       insight,
       png,
       filename,
