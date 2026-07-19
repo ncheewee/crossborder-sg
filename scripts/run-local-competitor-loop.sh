@@ -11,6 +11,12 @@ if [[ -f "local-env/competitor-telegram.env" ]]; then
   set +a
 fi
 
+if [[ -f "$HOME/Library/Application Support/CrossBorder.sg/competitor-telegram.env" ]]; then
+  set -a
+  source "$HOME/Library/Application Support/CrossBorder.sg/competitor-telegram.env"
+  set +a
+fi
+
 mkdir -p .competitor-captures/logs
 
 {

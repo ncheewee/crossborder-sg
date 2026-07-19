@@ -17,6 +17,7 @@ const accuracyHorizons = (process.env.ACCURACY_HORIZONS_MINUTES || "60,180")
   .map((value) => Number(value.trim()))
   .filter((value) => Number.isFinite(value) && value > 0);
 const accuracyToleranceMinutes = Number(process.env.ACCURACY_TARGET_TOLERANCE_MINUTES || 45);
+const competitorMaxAgeMinutes = Number(process.env.COMPETITOR_MAX_AGE_MINUTES || 90);
 
 const routeEndpoints = {
   woodlands: {
@@ -565,8 +566,13 @@ function latestWithValue(points, key) {
   return null;
 }
 
-function routeTrafficStatus(points) {
-  const latestOurs = latestWithValue(points, "ours");
+function currentSourceValue(latestOurs, key) {
+  if (!latestOurs || !Number.isFinite(latestOurs[key])) return null;
+  return latestOurs[key];
+}
+
+function routeTrafficStatus(points, capturedAt) {
+  const latestOurs = points.find((point) => point.capturedAt === capturedAt && Number.isFinite(point.ours)) ?? null;
   if (!latestOurs) {
     return {
       level: "pending",
@@ -578,9 +584,9 @@ function routeTrafficStatus(points) {
   }
 
   const comparisons = [
-    { label: "Google", value: latestWithValue(points, "google")?.google },
-    { label: "Checkpoint.sg", value: latestWithValue(points, "checkpointSg")?.checkpointSg },
-    { label: "BTJ", value: latestWithValue(points, "beatTheJam")?.beatTheJam },
+    { label: "Google", value: currentSourceValue(latestOurs, "google") },
+    { label: "Checkpoint.sg", value: currentSourceValue(latestOurs, "checkpointSg") },
+    { label: "BTJ", value: currentSourceValue(latestOurs, "beatTheJam") },
   ]
     .filter((item) => Number.isFinite(item.value) && item.value > 0)
     .map((item) => ({
@@ -626,19 +632,19 @@ function routeTrafficStatus(points) {
   };
 }
 
-function buildRouteInsight(points, checkpoint, direction, accuracySummary, status) {
-  const latestOurs = latestWithValue(points, "ours");
-  const latestGoogle = latestWithValue(points, "google");
-  const latestCheckpointSg = latestWithValue(points, "checkpointSg");
-  const latestBeatTheJam = latestWithValue(points, "beatTheJam");
+function buildRouteInsight(points, checkpoint, direction, accuracySummary, status, capturedAt) {
+  const latestOurs = points.find((point) => point.capturedAt === capturedAt && Number.isFinite(point.ours)) ?? null;
+  const latestGoogle = currentSourceValue(latestOurs, "google");
+  const latestCheckpointSg = currentSourceValue(latestOurs, "checkpointSg");
+  const latestBeatTheJam = currentSourceValue(latestOurs, "beatTheJam");
   const stat = accuracyForRoute(accuracySummary, checkpoint, direction, "CrossBorder.sg");
 
   if (!latestOurs) return "No CrossBorder.sg line available yet; keep collecting hourly samples.";
 
   const comparisons = [];
-  if (latestGoogle) comparisons.push(`vs Google ${deltaText(latestOurs.ours - latestGoogle.google)}`);
-  if (latestCheckpointSg) comparisons.push(`vs Checkpoint.sg ${deltaText(latestOurs.ours - latestCheckpointSg.checkpointSg)}`);
-  if (latestBeatTheJam) comparisons.push(`vs BTJ ${deltaText(latestOurs.ours - latestBeatTheJam.beatTheJam)}`);
+  if (Number.isFinite(latestGoogle)) comparisons.push(`vs Google ${deltaText(latestOurs.ours - latestGoogle)}`);
+  if (Number.isFinite(latestCheckpointSg)) comparisons.push(`vs Checkpoint.sg ${deltaText(latestOurs.ours - latestCheckpointSg)}`);
+  if (Number.isFinite(latestBeatTheJam)) comparisons.push(`vs BTJ ${deltaText(latestOurs.ours - latestBeatTheJam)}`);
 
   const previousOurs = [...points]
     .reverse()
@@ -654,7 +660,7 @@ function buildRouteInsight(points, checkpoint, direction, accuracySummary, statu
   return `${status.summary}; now ${formatMinutes(latestOurs.ours)}; ${comparisons.join(", ") || "comparison pending"}; ${trendText}. ${accuracyText}.`;
 }
 
-function routeRecommendation(points, checkpoint, direction, accuracySummary) {
+function routeRecommendation(points, checkpoint, direction, accuracySummary, capturedAt) {
   const stat = accuracyForRoute(accuracySummary, checkpoint, direction, "CrossBorder.sg");
   if (stat && stat.sampleSize >= 3 && Math.abs(stat.bias) >= 8) {
     return stat.bias < 0
@@ -662,11 +668,11 @@ function routeRecommendation(points, checkpoint, direction, accuracySummary) {
       : `${routeLabel(checkpoint, direction)}: lower baseline by about ${Math.abs(stat.bias)}m.`;
   }
 
-  const latestOurs = latestWithValue(points, "ours");
-  const latestGoogle = latestWithValue(points, "google");
-  const latestCheckpointSg = latestWithValue(points, "checkpointSg");
-  const latestBeatTheJam = latestWithValue(points, "beatTheJam");
-  const reference = average([latestGoogle?.google, latestCheckpointSg?.checkpointSg, latestBeatTheJam?.beatTheJam]);
+  const latestOurs = points.find((point) => point.capturedAt === capturedAt && Number.isFinite(point.ours)) ?? null;
+  const latestGoogle = currentSourceValue(latestOurs, "google");
+  const latestCheckpointSg = currentSourceValue(latestOurs, "checkpointSg");
+  const latestBeatTheJam = currentSourceValue(latestOurs, "beatTheJam");
+  const reference = average([latestGoogle, latestCheckpointSg, latestBeatTheJam]);
   if (latestOurs && Number.isFinite(reference) && Math.abs(latestOurs.ours - reference) >= 20) {
     return `${routeLabel(checkpoint, direction)}: inspect ${latestOurs.ours > reference ? "high" : "low"} live estimate versus market by ${Math.round(Math.abs(latestOurs.ours - reference))}m.`;
   }
@@ -840,8 +846,8 @@ async function buildGraphReports(allRows, accuracySummary, capturedAt) {
     const capturedMs = new Date(capturedAt).getTime();
     const points = buildRouteSeries(allRows, route.checkpoint, route.direction, sinceMs)
       .filter((point) => point.capturedMs <= capturedMs);
-    const status = routeTrafficStatus(points);
-    const insight = buildRouteInsight(points, route.checkpoint, route.direction, accuracySummary, status);
+    const status = routeTrafficStatus(points, capturedAt);
+    const insight = buildRouteInsight(points, route.checkpoint, route.direction, accuracySummary, status, capturedAt);
     const svg = buildSvgChart({ ...route, points, insight, status, capturedAt });
     const png = await svgToPng(svg);
     const filename = `${route.checkpoint.toLowerCase()}-${route.direction.toLowerCase().replaceAll(" ", "-")}.png`;
@@ -874,6 +880,7 @@ function buildOverallAssessment(graphReports, accuracySummary, scoredAccuracyRow
       report.checkpoint,
       report.direction,
       accuracySummary,
+      capturedAt,
     )).filter(Boolean),
   ];
   const uniqueRecommendations = [...new Set(recommendations)].slice(0, 5);
@@ -910,6 +917,20 @@ function buildOverallAssessment(graphReports, accuracySummary, scoredAccuracyRow
 
 const competitorRecords = JSON.parse(await readFile(join(outRoot, "latest-summary.json"), "utf8"));
 const capturedAt = new Date().toISOString();
+const capturedMs = new Date(capturedAt).getTime();
+const freshCompetitorRecords = competitorRecords.filter((record) => {
+  const recordMs = new Date(record.capturedAt).getTime();
+  if (!Number.isFinite(recordMs)) {
+    fetchWarnings.push(`${record.app ?? "Competitor app"}: missing capture timestamp; excluded from current comparison.`);
+    return false;
+  }
+  const ageMinutes = Math.round((capturedMs - recordMs) / 60000);
+  if (ageMinutes > competitorMaxAgeMinutes) {
+    fetchWarnings.push(`${record.app ?? "Competitor app"}: capture is ${ageMinutes}m old; excluded from current comparison.`);
+    return false;
+  }
+  return true;
+});
 const liveByDirection = Object.fromEntries(await Promise.all(
   Object.values(directionMap).map(async ({ apiDirection }) => [
     apiDirection,
@@ -952,7 +973,7 @@ for (const [directionKey, { apiDirection, label }] of Object.entries(directionMa
       }
     }
 
-    for (const record of competitorRecords) {
+    for (const record of freshCompetitorRecords) {
       const range = record.normalizedReadings?.[checkpoint]?.[directionKey] ?? null;
       const sourceMid = midpoint(range);
       sources.push({
