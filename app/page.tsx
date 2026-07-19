@@ -1819,7 +1819,6 @@ export default function Home() {
           </a>
           <div>
             <h1 id="login-title">Sign in to continue</h1>
-            <p>Use Google sign-in so we can track adoption and improve model accuracy from real usage.</p>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
