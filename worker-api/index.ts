@@ -120,8 +120,12 @@ function parseMinutes(value: unknown) {
   return rounded;
 }
 
-function authEnabled(env: Env) {
-  return Boolean(env.GOOGLE_CLIENT_ID) && env.AUTH_REQUIRED !== "false";
+function authConfigured(env: Env) {
+  return Boolean(env.GOOGLE_CLIENT_ID);
+}
+
+function authRequired(env: Env) {
+  return authConfigured(env) && env.AUTH_REQUIRED === "true";
 }
 
 function unauthorized(env: Env, message = "Sign in with Google to continue.") {
@@ -322,14 +326,16 @@ async function recordAuthEvent(
 }
 
 async function authenticateRequest(request: Request, env: Env): Promise<AuthUser | Response | null> {
-  if (!authEnabled(env)) return null;
+  if (!authConfigured(env)) return null;
   const authorization = request.headers.get("Authorization") ?? "";
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
-  if (!token) return unauthorized(env);
+  if (!token) return authRequired(env) ? unauthorized(env) : null;
   try {
     return await verifyGoogleIdToken(token, env);
   } catch {
-    return unauthorized(env, "Google sign-in expired. Please sign in again.");
+    return authRequired(env)
+      ? unauthorized(env, "Google sign-in expired. Please sign in again.")
+      : null;
   }
 }
 

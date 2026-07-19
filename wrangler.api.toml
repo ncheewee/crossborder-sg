@@ -5,9 +5,9 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ALLOWED_ORIGIN = "https://ncheewee.github.io"
-# Set this to your Google OAuth Web client id to require verified Google sign-in
-# for public API calls. Keep AUTH_REQUIRED as "false" while testing if needed.
-GOOGLE_CLIENT_ID = ""
+# Google OAuth Web client id. With AUTH_REQUIRED=false the Worker verifies and
+# tracks signed-in browser users while keeping monitor scripts/API checks alive.
+GOOGLE_CLIENT_ID = "309032431650-0lbuaj6igc4s9tc0gddv92ffe6ngkrr4.apps.googleusercontent.com"
 AUTH_REQUIRED = "false"
 # Optional comma-separated controls:
 # ALLOWED_EMAILS = "you@gmail.com"

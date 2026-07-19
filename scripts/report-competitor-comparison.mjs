@@ -715,7 +715,7 @@ function buildSvgChart({ checkpoint, direction, points, insight, status, capture
   const chartWidth = width - margin.left - margin.right;
   const chartHeight = height - margin.top - margin.bottom;
   const { startMs: minMs, endMs: maxMs } = singaporeDayBounds(new Date(capturedAt));
-  const minValue = 20;
+  const minValue = 30;
   const maxValue = 90;
 
   const xForTime = (ms) => margin.left + ((Math.max(minMs, Math.min(maxMs, ms)) - minMs) / (maxMs - minMs)) * (chartWidth - 18);
@@ -723,14 +723,15 @@ function buildSvgChart({ checkpoint, direction, points, insight, status, capture
 
   const thresholdBands = [
     { from: minValue, to: 45, fill: "#dff8ea" },
-    { from: 45, to: 90, fill: "#fff3cf" },
+    { from: 45, to: 75, fill: "#fff3cf" },
+    { from: 75, to: maxValue, fill: "#ffe4e1" },
   ].map((band) => {
     const y = yForValue(band.to);
     const bandHeight = yForValue(band.from) - y;
     return `<rect x="${margin.left}" y="${y}" width="${chartWidth}" height="${bandHeight}" fill="${band.fill}" />`;
   }).join("");
 
-  const yTicks = [20, 45, 60, 90];
+  const yTicks = [30, 45, 60, 75, 90];
   const yGridLines = yTicks.map((value) => {
     const y = yForValue(value);
     return `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="#cbd5df" stroke-width="1.5" />`;
