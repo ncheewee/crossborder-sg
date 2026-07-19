@@ -1,4 +1,4 @@
-import { access, appendFile, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,7 @@ const GOOGLE_ROUTES_API_KEY = process.env.GOOGLE_ROUTES_API_KEY;
 const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
 const useGoogleRoutesApi = process.env.USE_GOOGLE_ROUTES_API === "true";
 const outRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
+const graphRoot = join(outRoot, "report-graphs");
 const accuracyHorizons = (process.env.ACCURACY_HORIZONS_MINUTES || "60,180")
   .split(",")
   .map((value) => Number(value.trim()))
@@ -38,8 +39,8 @@ function midpoint(range) {
   return Array.isArray(range) ? Math.round((Number(range[0]) + Number(range[1])) / 2) : null;
 }
 
-function formatRange(range) {
-  return Array.isArray(range) ? `${range[0]}-${range[1]}m` : "n/a";
+function formatMinutes(value) {
+  return Number.isFinite(value) ? `${Math.round(value)}m` : "n/a";
 }
 
 function deltaText(delta) {
@@ -53,13 +54,6 @@ function severity(delta) {
   if (value <= 10) return "OK";
   if (value <= 25) return "WATCH";
   return "GAP";
-}
-
-function bar(delta) {
-  if (!Number.isFinite(delta)) return "";
-  const blocks = Math.min(10, Math.max(1, Math.round(Math.abs(delta) / 8)));
-  const direction = delta >= 0 ? "high" : "low";
-  return `${direction} ${"#".repeat(blocks)}`;
 }
 
 function parseDurationMinutes(duration) {
@@ -163,6 +157,28 @@ async function sendTelegram(text) {
   }
 }
 
+async function sendTelegramPhoto(buffer, filename, caption) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.log(`\nTelegram photo not sent: ${filename}`);
+    console.log(caption);
+    return;
+  }
+
+  const form = new FormData();
+  form.append("chat_id", TELEGRAM_CHAT_ID);
+  form.append("caption", caption.slice(0, 1000));
+  form.append("photo", new Blob([new Uint8Array(buffer)], { type: "image/png" }), filename);
+
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Telegram photo send failed: ${response.status} ${body}`);
+  }
+}
+
 function csvEscape(value) {
   const text = String(value ?? "");
   return /[",\n]/.test(text) ? `"${text.replaceAll("\"", "\"\"")}"` : text;
@@ -215,6 +231,7 @@ async function readCsvRows(fileName) {
 }
 
 function toNumber(value) {
+  if (value == null || String(value).trim() === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -437,6 +454,371 @@ function summarizeAccuracy(rows, sinceMs) {
   return { sourceStats, winners, tuning };
 }
 
+function singaporeParts(date) {
+  const parts = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
+function singaporeHour(date) {
+  return Number(singaporeParts(date).hour);
+}
+
+function formatSingaporeStamp(date) {
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function routeLabel(checkpoint, direction) {
+  return `${checkpoint} ${direction}`;
+}
+
+function average(values) {
+  const clean = values.filter(Number.isFinite);
+  return clean.length ? clean.reduce((total, value) => total + value, 0) / clean.length : null;
+}
+
+function sourceMidpoint(row) {
+  return toNumber(row.midpoint);
+}
+
+function buildRouteSeries(rows, checkpoint, direction, sinceMs) {
+  const routeRows = rows
+    .filter((row) => (
+      row.checkpoint === checkpoint
+      && row.direction === direction
+      && new Date(row.capturedAt).getTime() >= sinceMs
+    ))
+    .sort((a, b) => new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime());
+
+  const byTime = new Map();
+  for (const row of routeRows) {
+    const capturedMs = new Date(row.capturedAt).getTime();
+    if (!Number.isFinite(capturedMs)) continue;
+    const current = byTime.get(row.capturedAt) || {
+      capturedAt: row.capturedAt,
+      capturedMs,
+      ours: null,
+      google: null,
+      competitorValues: [],
+    };
+    const value = sourceMidpoint(row);
+    if (value == null) continue;
+    if (row.source === "CrossBorder.sg") current.ours = value;
+    if (row.source === "Google Maps" || row.source === "Google Routes") current.google = value;
+    if (row.source === "Checkpoint.sg" || row.source === "Beat the Jam") current.competitorValues.push(value);
+    byTime.set(row.capturedAt, current);
+  }
+
+  return [...byTime.values()]
+    .map((point) => ({
+      ...point,
+      competitor: average(point.competitorValues),
+    }))
+    .filter((point) => point.ours != null || point.google != null || point.competitor != null)
+    .sort((a, b) => a.capturedMs - b.capturedMs);
+}
+
+function accuracyForRoute(summary, checkpoint, direction, source) {
+  return summary.sourceStats.find((stat) => (
+    stat.checkpoint === checkpoint
+    && stat.direction === direction
+    && stat.source === source
+  ));
+}
+
+function latestWithValue(points, key) {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    if (Number.isFinite(points[index][key])) return points[index];
+  }
+  return null;
+}
+
+function buildRouteInsight(points, checkpoint, direction, accuracySummary) {
+  const latestOurs = latestWithValue(points, "ours");
+  const latestGoogle = latestWithValue(points, "google");
+  const latestCompetitor = latestWithValue(points, "competitor");
+  const stat = accuracyForRoute(accuracySummary, checkpoint, direction, "CrossBorder.sg");
+
+  if (!latestOurs) return "No CrossBorder.sg line available yet; keep collecting hourly samples.";
+
+  const comparisons = [];
+  if (latestGoogle) comparisons.push(`vs Google ${deltaText(latestOurs.ours - latestGoogle.google)}`);
+  if (latestCompetitor) comparisons.push(`vs app consensus ${deltaText(latestOurs.ours - latestCompetitor.competitor)}`);
+
+  const previousOurs = [...points]
+    .reverse()
+    .filter((point) => Number.isFinite(point.ours))[1];
+  const trend = previousOurs ? latestOurs.ours - previousOurs.ours : null;
+  const trendText = Number.isFinite(trend)
+    ? `trend ${trend > 3 ? "rising" : trend < -3 ? "easing" : "steady"} (${deltaText(trend)})`
+    : "trend needs another sample";
+  const accuracyText = stat
+    ? `MAE ${stat.mae}m, bias ${deltaText(stat.bias)} over ${stat.sampleSize} scores`
+    : "accuracy score pending horizon maturity";
+
+  return `Now ${formatMinutes(latestOurs.ours)}; ${comparisons.join(", ") || "comparison pending"}; ${trendText}. ${accuracyText}.`;
+}
+
+function routeRecommendation(points, checkpoint, direction, accuracySummary) {
+  const stat = accuracyForRoute(accuracySummary, checkpoint, direction, "CrossBorder.sg");
+  if (stat && stat.sampleSize >= 3 && Math.abs(stat.bias) >= 8) {
+    return stat.bias < 0
+      ? `${routeLabel(checkpoint, direction)}: raise baseline by about ${Math.abs(stat.bias)}m.`
+      : `${routeLabel(checkpoint, direction)}: lower baseline by about ${Math.abs(stat.bias)}m.`;
+  }
+
+  const latestOurs = latestWithValue(points, "ours");
+  const latestGoogle = latestWithValue(points, "google");
+  const latestCompetitor = latestWithValue(points, "competitor");
+  const reference = average([latestGoogle?.google, latestCompetitor?.competitor]);
+  if (latestOurs && Number.isFinite(reference) && Math.abs(latestOurs.ours - reference) >= 20) {
+    return `${routeLabel(checkpoint, direction)}: inspect ${latestOurs.ours > reference ? "high" : "low"} live estimate versus market by ${Math.round(Math.abs(latestOurs.ours - reference))}m.`;
+  }
+  return null;
+}
+
+function sanitizeSvgText(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;");
+}
+
+function chartPath(points, key, xForTime, yForValue, minMs, maxMs, dashed = false) {
+  const commands = points
+    .filter((point) => Number.isFinite(point[key]) && point.capturedMs >= minMs && point.capturedMs <= maxMs)
+    .map((point) => `${xForTime(point.capturedMs).toFixed(1)},${yForValue(point[key]).toFixed(1)}`);
+  if (commands.length < 2) return "";
+  return `<polyline points="${commands.join(" ")}" fill="none" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"${dashed ? " stroke-dasharray=\"10 12\"" : ""} />`;
+}
+
+function wrapSvgText(text, maxChars) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.slice(0, 2);
+}
+
+function timeTickLabel(ms) {
+  const hour = singaporeHour(new Date(ms));
+  if (hour === 0) return "12am";
+  if (hour < 12) return `${hour}am`;
+  if (hour === 12) return "12pm";
+  return `${hour - 12}pm`;
+}
+
+function buildSvgChart({ checkpoint, direction, points, insight, capturedAt }) {
+  const width = 1200;
+  const height = 760;
+  const margin = { top: 112, right: 68, bottom: 132, left: 132 };
+  const chartWidth = width - margin.left - margin.right;
+  const chartHeight = height - margin.top - margin.bottom;
+  const nowMs = new Date(capturedAt).getTime();
+  const minMs = nowMs - 24 * 60 * 60000;
+  const maxMs = nowMs;
+  const values = points.flatMap((point) => [point.ours, point.google, point.competitor]).filter(Number.isFinite);
+  const maxValue = Math.max(120, Math.ceil((Math.max(...values, 90) + 12) / 30) * 30);
+
+  const xForTime = (ms) => margin.left + ((Math.max(minMs, Math.min(maxMs, ms)) - minMs) / (maxMs - minMs)) * (chartWidth - 18);
+  const yForValue = (value) => margin.top + chartHeight - (Math.max(0, Math.min(maxValue, value)) / maxValue) * chartHeight;
+
+  const thresholdBands = [
+    { from: 0, to: 45, fill: "#dff8ea" },
+    { from: 45, to: 90, fill: "#fff3cf" },
+    { from: 90, to: maxValue, fill: "#ffe4e1" },
+  ].map((band) => {
+    const y = yForValue(band.to);
+    const bandHeight = yForValue(band.from) - y;
+    return `<rect x="${margin.left}" y="${y}" width="${chartWidth}" height="${bandHeight}" fill="${band.fill}" />`;
+  }).join("");
+
+  const yTicks = [0, 60, 120].filter((value) => value <= maxValue);
+  const yGridLines = yTicks.map((value) => {
+    const y = yForValue(value);
+    return `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="#cbd5df" stroke-width="1.5" />`;
+  }).join("");
+  const yLabels = yTicks.map((value) => {
+    const y = yForValue(value);
+      return `<text x="${margin.left - 20}" y="${y + 9}" text-anchor="end" font-size="32" font-weight="800" fill="#3f4a54">${value}m</text>`;
+  }).join("");
+
+  const tickHours = [0, 4, 8, 12, 16, 20].map((hoursAgo) => maxMs - (24 - hoursAgo) * 60 * 60000);
+  const xTicks = tickHours
+    .filter((ms) => ms >= minMs && ms <= maxMs)
+    .map((ms) => {
+      const x = xForTime(ms);
+      return `
+        <line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="#d6dee7" stroke-width="1.5" />
+      `;
+    }).join("");
+  const xLabels = tickHours
+    .filter((ms) => ms >= minMs && ms <= maxMs)
+    .map((ms) => {
+      const x = xForTime(ms);
+      return `<text x="${x}" y="${height - 88}" text-anchor="middle" font-size="28" font-weight="700" fill="#53606b">${timeTickLabel(ms)}</text>`;
+    }).join("");
+
+  const series = [
+    { key: "ours", label: "CrossBorder.sg", color: "#008c8c", dashed: false },
+    { key: "google", label: "Google Maps", color: "#2563eb", dashed: false },
+    { key: "competitor", label: "Checkpoint.sg + BTJ", color: "#d9467c", dashed: true },
+  ];
+  const lines = series.map((item) => `
+    <g stroke="${item.color}">
+      ${chartPath(points, item.key, xForTime, yForValue, minMs, maxMs, item.dashed)}
+    </g>
+  `).join("");
+  const latest = latestWithValue(points, "ours");
+  const latestDot = latest
+    ? `<circle cx="${xForTime(latest.capturedMs)}" cy="${yForValue(latest.ours)}" r="9" fill="#008c8c" stroke="#ffffff" stroke-width="4" />`
+    : "";
+  const legend = series.map((item, index) => {
+    const x = margin.left + index * 282;
+    return `
+      <g transform="translate(${x}, 76)">
+        <line x1="0" y1="0" x2="48" y2="0" stroke="${item.color}" stroke-width="5" stroke-linecap="round"${item.dashed ? " stroke-dasharray=\"10 10\"" : ""} />
+        <text x="62" y="9" font-size="25" font-weight="700" fill="#25313b">${sanitizeSvgText(item.label)}</text>
+      </g>
+    `;
+  }).join("");
+
+  const insightLines = wrapSvgText(insight, 86).map((line, index) => (
+    `<tspan x="${margin.left}" dy="${index === 0 ? 0 : 30}">${sanitizeSvgText(line)}</tspan>`
+  )).join("");
+
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <style>text{font-family:Inter,Arial,sans-serif}</style>
+      <rect width="${width}" height="${height}" rx="30" fill="#f8fbfd" />
+      <text x="${margin.left}" y="46" font-size="36" font-weight="800" fill="#0f1720">${sanitizeSvgText(routeLabel(checkpoint, direction))}</text>
+      <text x="${width - margin.right}" y="46" text-anchor="end" font-size="24" font-weight="700" fill="#53606b">${sanitizeSvgText(formatSingaporeStamp(new Date(capturedAt)))}</text>
+      ${legend}
+      <clipPath id="plot-${checkpoint}-${direction.replaceAll(" ", "-")}">
+        <rect x="${margin.left}" y="${margin.top}" width="${chartWidth}" height="${chartHeight}" />
+      </clipPath>
+      <g clip-path="url(#plot-${checkpoint}-${direction.replaceAll(" ", "-")})">
+        ${thresholdBands}
+        ${xTicks}
+        ${yGridLines}
+        ${lines}
+        ${latestDot}
+      </g>
+      ${yLabels}
+      ${xLabels}
+      <rect x="${margin.left}" y="${margin.top}" width="${chartWidth}" height="${chartHeight}" fill="none" stroke="#97a6b5" stroke-width="2" />
+      <text x="${margin.left}" y="${height - 46}" font-size="23" font-weight="700" fill="#31404d">${insightLines}</text>
+    </svg>
+  `;
+}
+
+async function svgToPng(svg) {
+  const { default: sharp } = await import("sharp");
+  return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
+}
+
+async function buildGraphReports(allRows, accuracySummary, capturedAt) {
+  await mkdir(graphRoot, { recursive: true });
+  const sinceMs = new Date(capturedAt).getTime() - 24 * 60 * 60000;
+  const routes = [
+    { checkpoint: "Woodlands", direction: "Towards JB" },
+    { checkpoint: "Tuas", direction: "Towards JB" },
+    { checkpoint: "Woodlands", direction: "Towards SG" },
+    { checkpoint: "Tuas", direction: "Towards SG" },
+  ];
+
+  const reports = [];
+  for (const route of routes) {
+    const capturedMs = new Date(capturedAt).getTime();
+    const points = buildRouteSeries(allRows, route.checkpoint, route.direction, sinceMs)
+      .filter((point) => point.capturedMs <= capturedMs);
+    const insight = buildRouteInsight(points, route.checkpoint, route.direction, accuracySummary);
+    const svg = buildSvgChart({ ...route, points, insight, capturedAt });
+    const png = await svgToPng(svg);
+    const filename = `${route.checkpoint.toLowerCase()}-${route.direction.toLowerCase().replaceAll(" ", "-")}.png`;
+    await writeFile(join(graphRoot, filename), png);
+    reports.push({
+      ...route,
+      points,
+      insight,
+      png,
+      filename,
+    });
+  }
+  return reports;
+}
+
+function buildOverallAssessment(graphReports, accuracySummary, scoredAccuracyRows, capturedAt) {
+  const oursStats = accuracySummary.sourceStats.filter((stat) => stat.source === "CrossBorder.sg");
+  const totalSamples = oursStats.reduce((total, stat) => total + stat.sampleSize, 0);
+  const weightedMae = totalSamples
+    ? Math.round(oursStats.reduce((total, stat) => total + stat.mae * stat.sampleSize, 0) / totalSamples)
+    : null;
+  const weightedBias = totalSamples
+    ? Math.round(oursStats.reduce((total, stat) => total + stat.bias * stat.sampleSize, 0) / totalSamples)
+    : null;
+  const recommendations = [
+    ...accuracySummary.tuning.slice(0, 4),
+    ...graphReports.map((report) => routeRecommendation(
+      report.points,
+      report.checkpoint,
+      report.direction,
+      accuracySummary,
+    )).filter(Boolean),
+  ];
+  const uniqueRecommendations = [...new Set(recommendations)].slice(0, 5);
+  const isTuningHour = singaporeHour(new Date(capturedAt)) === 10;
+
+  const lines = [
+    "CrossBorder.sg model scorecard",
+    formatSingaporeStamp(new Date(capturedAt)),
+    "",
+    weightedMae == null
+      ? `Accuracy: waiting for ${accuracyHorizons.join("/")}m horizons to mature.`
+      : `Accuracy: recent CrossBorder.sg MAE ${weightedMae}m, bias ${deltaText(weightedBias)} across ${totalSamples} scored samples.`,
+    `New scored samples this run: ${scoredAccuracyRows.length}.`,
+  ];
+
+  if (fetchWarnings.length) {
+    lines.push("");
+    lines.push("Data warnings:");
+    for (const warning of fetchWarnings.slice(0, 4)) lines.push(`- ${warning}`);
+  }
+
+  lines.push("");
+  lines.push(isTuningHour ? "1000hrs tuning check:" : "Next scheduled tuning check: 1000hrs SGT.");
+  if (uniqueRecommendations.length) {
+    for (const item of uniqueRecommendations) lines.push(`- ${item}`);
+  } else {
+    lines.push("- Hold model settings; keep collecting hourly samples.");
+  }
+
+  lines.push("");
+  lines.push("Google Maps anchors: current proxy uses fixed SG-side and MY-side checkpoint points. Better next step is fixed queue-entry to cleared-exit anchors per route.");
+  return lines.join("\n");
+}
+
 const competitorRecords = JSON.parse(await readFile(join(outRoot, "latest-summary.json"), "utf8"));
 const capturedAt = new Date().toISOString();
 const liveByDirection = Object.fromEntries(await Promise.all(
@@ -552,67 +934,20 @@ await writeFile(join(outRoot, "latest-accuracy.json"), `${JSON.stringify({
   ...accuracySummary,
 }, null, 2)}\n`);
 
-const lines = [
-  "CrossBorder.sg hourly variance",
-  new Intl.DateTimeFormat("en-SG", {
-    timeZone: "Asia/Singapore",
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(capturedAt)),
-  "",
-  "Delta = source midpoint minus ours",
-  "",
-];
+const allBenchmarkRows = [...previousBenchmarkRows, ...historyRows];
+const graphReports = await buildGraphReports(allBenchmarkRows, accuracySummary, capturedAt);
 
-if (fetchWarnings.length) {
-  lines.push("Data warnings");
-  for (const warning of fetchWarnings) lines.push(warning);
-  lines.push("");
+for (const report of graphReports) {
+  await sendTelegramPhoto(
+    report.png,
+    report.filename,
+    `${routeLabel(report.checkpoint, report.direction)}\n${report.insight}`,
+  );
 }
 
-for (const entry of benchmark) {
-  lines.push(`${entry.displayCheckpoint} ${entry.label}`);
-  for (const source of entry.sources) {
-    if (source.source === "CrossBorder.sg") {
-      lines.push(`Ours          ${formatRange(source.range)} baseline`);
-      continue;
-    }
-    lines.push(`${source.source.padEnd(13).slice(0, 13)} ${formatRange(source.range).padEnd(8)} ${deltaText(source.deltaVsOurs).padStart(5)} [${source.severity}] ${bar(source.deltaVsOurs)}`);
-  }
-  lines.push("");
-}
-
-const gapRows = historyRows
-  .filter((row) => row.severity === "GAP")
-  .sort((a, b) => Math.abs(Number(b.deltaVsOurs)) - Math.abs(Number(a.deltaVsOurs)))
-  .slice(0, 3);
-
-if (gapRows.length) {
-  lines.push("Largest gaps");
-  for (const row of gapRows) {
-    lines.push(`${row.checkpoint} ${row.direction}: ${row.source} ${deltaText(Number(row.deltaVsOurs))}`);
-  }
-  lines.push("");
-}
-
-lines.push("Accuracy loop");
-if (!accuracyRows.length) {
-  lines.push(`Waiting for ${accuracyHorizons.join("/")}m horizons to mature.`);
-} else {
-  lines.push(`${scoredAccuracyRows.length} new scored samples; ${accuracyRows.length} total local proxy scores.`);
-  const winners = accuracySummary.winners.slice(0, 4);
-  if (winners.length) {
-    lines.push("Best recent source by route");
-    for (const winner of winners) {
-      lines.push(`${winner.checkpoint} ${winner.direction}: ${winner.source} MAE ${winner.mae}m, bias ${deltaText(winner.bias)}, ${winner.within15Pct}% <=15m (${winner.sampleSize})`);
-    }
-  }
-  if (accuracySummary.tuning.length) {
-    lines.push("Tuning candidates");
-    for (const item of accuracySummary.tuning.slice(0, 4)) lines.push(item);
-  } else {
-    lines.push("Tuning candidates: need >=3 samples and >=8m bias per route.");
-  }
-}
-
-await sendTelegram(lines.join("\n"));
+await sendTelegram(buildOverallAssessment(
+  graphReports,
+  accuracySummary,
+  scoredAccuracyRows,
+  capturedAt,
+));
