@@ -32,6 +32,75 @@ const routeEndpoints = {
   },
 };
 
+const approachRoutes = [
+  {
+    id: "wl-sg-bke",
+    checkpoint: "woodlands",
+    displayCheckpoint: "Woodlands",
+    directionKey: "towardsJb",
+    apiDirection: "sg-my",
+    label: "BKE / Woodlands Crossing",
+    origin: { latitude: 1.4377, longitude: 103.7750 },
+    destination: { latitude: 1.4599, longitude: 103.7649 },
+    cameraCheckpoint: "Woodlands",
+  },
+  {
+    id: "wl-sg-ave3",
+    checkpoint: "woodlands",
+    displayCheckpoint: "Woodlands",
+    directionKey: "towardsJb",
+    apiDirection: "sg-my",
+    label: "Woodlands Ave 3",
+    origin: { latitude: 1.4365, longitude: 103.7858 },
+    destination: { latitude: 1.4599, longitude: 103.7649 },
+    cameraCheckpoint: "Woodlands",
+  },
+  {
+    id: "wl-sg-woodlands-rd",
+    checkpoint: "woodlands",
+    displayCheckpoint: "Woodlands",
+    directionKey: "towardsJb",
+    apiDirection: "sg-my",
+    label: "Woodlands Road / Kranji",
+    origin: { latitude: 1.4260, longitude: 103.7595 },
+    destination: { latitude: 1.4599, longitude: 103.7649 },
+    cameraCheckpoint: "Woodlands",
+  },
+  {
+    id: "wl-my-inner-ring",
+    checkpoint: "woodlands",
+    displayCheckpoint: "Woodlands",
+    directionKey: "towardsSg",
+    apiDirection: "my-sg",
+    label: "JB Inner Ring / Route 188",
+    origin: { latitude: 1.4657, longitude: 103.7616 },
+    destination: { latitude: 1.4456, longitude: 103.7683 },
+    cameraCheckpoint: "Woodlands",
+  },
+  {
+    id: "wl-my-wong-ah-fook",
+    checkpoint: "woodlands",
+    displayCheckpoint: "Woodlands",
+    directionKey: "towardsSg",
+    apiDirection: "my-sg",
+    label: "Jalan Wong Ah Fook",
+    origin: { latitude: 1.4589, longitude: 103.7645 },
+    destination: { latitude: 1.4456, longitude: 103.7683 },
+    cameraCheckpoint: "Woodlands",
+  },
+  {
+    id: "wl-my-tun-abdul-razak",
+    checkpoint: "woodlands",
+    displayCheckpoint: "Woodlands",
+    directionKey: "towardsSg",
+    apiDirection: "my-sg",
+    label: "Jalan Tun Abdul Razak",
+    origin: { latitude: 1.4691, longitude: 103.7594 },
+    destination: { latitude: 1.4456, longitude: 103.7683 },
+    cameraCheckpoint: "Woodlands",
+  },
+];
+
 const directionMap = {
   towardsJb: { apiDirection: "sg-my", label: "Towards JB" },
   towardsSg: { apiDirection: "my-sg", label: "Towards SG" },
@@ -63,10 +132,10 @@ function parseDurationMinutes(duration) {
   return match ? Math.round(Number(match[1]) / 60) : null;
 }
 
-function routeBody(checkpoint, apiDirection) {
+function routeBody(checkpoint, apiDirection, route = null) {
   const endpoints = routeEndpoints[checkpoint];
-  const origin = apiDirection === "sg-my" ? endpoints.sg : endpoints.my;
-  const destination = apiDirection === "sg-my" ? endpoints.my : endpoints.sg;
+  const origin = route?.origin ?? (apiDirection === "sg-my" ? endpoints.sg : endpoints.my);
+  const destination = route?.destination ?? (apiDirection === "sg-my" ? endpoints.my : endpoints.sg);
   return {
     origin: { location: { latLng: origin } },
     destination: { location: { latLng: destination } },
@@ -120,6 +189,31 @@ async function googleRouteMinutes(checkpoint, apiDirection) {
   }
   const payload = await response.json();
   return parseDurationMinutes(payload.routes?.[0]?.duration);
+}
+
+async function googleApproachRoute(route) {
+  if (!useGoogleRoutesApi || !GOOGLE_ROUTES_API_KEY) return null;
+  const response = await fetch(GOOGLE_ROUTES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": GOOGLE_ROUTES_API_KEY,
+      "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters,routes.description",
+    },
+    body: JSON.stringify(routeBody(route.checkpoint, route.apiDirection, route)),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Google approach ${route.id} failed: ${response.status} ${body}`);
+  }
+  const payload = await response.json();
+  const best = payload.routes?.[0];
+  return {
+    trafficMinutes: parseDurationMinutes(best?.duration),
+    staticMinutes: parseDurationMinutes(best?.staticDuration),
+    distanceMeters: Number.isFinite(best?.distanceMeters) ? best.distanceMeters : null,
+    description: typeof best?.description === "string" ? best.description : "",
+  };
 }
 
 async function sendTelegram(text) {
@@ -264,6 +358,58 @@ async function appendBenchmarkHistory(rows) {
     await appendFile(csvPath, `${lines.join("\n")}\n`);
   } else {
     await writeFile(csvPath, `${header}${lines.join("\n")}\n`);
+  }
+}
+
+async function appendApproachHistory(rows) {
+  if (!rows.length) return;
+  const csvPath = join(outRoot, "approach-history.csv");
+  let exists = true;
+  try {
+    await access(csvPath);
+  } catch {
+    exists = false;
+  }
+  const header = [
+    "capturedAt",
+    "checkpoint",
+    "direction",
+    "source",
+    "approachId",
+    "approachLabel",
+    "trafficMinutes",
+    "staticMinutes",
+    "trafficLiftMinutes",
+    "distanceMeters",
+    "cameraAgeMinutes",
+    "cameraConfidence",
+    "confidence",
+    "rank",
+    "deltaVsBest",
+    "description",
+  ].join(",");
+  const lines = rows.map((row) => [
+    row.capturedAt,
+    row.checkpoint,
+    row.direction,
+    row.source,
+    row.approachId,
+    row.approachLabel,
+    row.trafficMinutes,
+    row.staticMinutes,
+    row.trafficLiftMinutes,
+    row.distanceMeters,
+    row.cameraAgeMinutes,
+    row.cameraConfidence,
+    row.confidence,
+    row.rank,
+    row.deltaVsBest,
+    row.description,
+  ].map(csvEscape).join(","));
+  if (exists) {
+    await appendFile(csvPath, `${lines.join("\n")}\n`);
+  } else {
+    await writeFile(csvPath, `${header}\n${lines.join("\n")}\n`);
   }
 }
 
@@ -503,6 +649,179 @@ function average(values) {
 
 function sourceMidpoint(row) {
   return toNumber(row.midpoint);
+}
+
+function cameraAgeMinutes(livePayload, checkpointDisplay, capturedAt) {
+  const updatedAt = livePayload?.checkpoints?.[checkpointDisplay]?.cameraUpdatedAt;
+  const updatedMs = new Date(updatedAt).getTime();
+  const capturedMs = new Date(capturedAt).getTime();
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(capturedMs)) return null;
+  return Math.max(0, Math.round((capturedMs - updatedMs) / 60000));
+}
+
+function cameraConfidence(ageMinutes) {
+  if (!Number.isFinite(ageMinutes)) return "unknown";
+  if (ageMinutes <= 7) return "fresh";
+  if (ageMinutes <= 15) return "aging";
+  return "stale";
+}
+
+function approachConfidence(cameraStatus, winnerGapMinutes, trafficLiftMinutes) {
+  let score = 0;
+  if (cameraStatus === "fresh") score += 2;
+  if (cameraStatus === "aging") score += 1;
+  if (Number.isFinite(winnerGapMinutes) && winnerGapMinutes >= 5) score += 1;
+  if (Number.isFinite(trafficLiftMinutes) && trafficLiftMinutes >= 8) score += 1;
+  if (cameraStatus === "stale" || cameraStatus === "unknown") score -= 1;
+  if (score >= 3) return "high";
+  if (score >= 1) return "medium";
+  return "low";
+}
+
+function summarizeApproachGroup(rows, directionLabel) {
+  const usable = rows.filter((row) => Number.isFinite(row.trafficMinutes));
+  if (!usable.length) return `${directionLabel}: approach routes pending Google traffic data.`;
+  const sorted = [...usable].sort((a, b) => a.trafficMinutes - b.trafficMinutes);
+  const best = sorted[0];
+  const second = sorted[1] ?? null;
+  const gap = Number.isFinite(second?.trafficMinutes) ? second.trafficMinutes - best.trafficMinutes : 0;
+  const confidence = approachConfidence(best.cameraConfidence, gap, best.trafficLiftMinutes);
+  const alternatives = sorted.slice(1, 3).map((row) => `${row.approachLabel} ${formatMinutes(row.trafficMinutes)}`).join(", ");
+  return `${directionLabel}: fastest ${best.approachLabel} at ${formatMinutes(best.trafficMinutes)} (${confidence} confidence, +${Math.max(0, Math.round(gap))}m vs next).${alternatives ? ` Next: ${alternatives}.` : ""}`;
+}
+
+function googleMapsApproachRows(records, liveByDirection, capturedAt) {
+  const googleMaps = records.find((record) => record.app === "Google Maps");
+  const rows = [];
+  for (const route of googleMaps?.routes ?? []) {
+    if (route.checkpoint !== "Woodlands") continue;
+    const direction = directionMap[route.directionKey]?.label;
+    if (!direction) continue;
+    const live = liveByDirection[route.direction];
+    const age = cameraAgeMinutes(live, route.checkpoint, capturedAt);
+    const routeCameraConfidence = cameraConfidence(age);
+    const text = (route.uiText ?? []).join("\n").replace(/\u00a0/g, " ");
+    const matches = [...text.matchAll(/\b(Selected|Alternate) route\s+(\d{1,3})\s+minutes?\s+via\s+([^,\n]+)/gi)];
+    const alternatives = matches.length
+      ? matches
+      : route.minutes
+        ? [["", "Selected", String(route.minutes), "Google selected route"]]
+        : [];
+    for (const [index, match] of alternatives.entries()) {
+      const routeKind = String(match[1] ?? "Route");
+      const minutes = Number(match[2]);
+      const via = String(match[3] ?? "Google route").trim();
+      if (!Number.isFinite(minutes)) continue;
+      rows.push({
+        capturedAt,
+        checkpoint: route.checkpoint,
+        direction,
+        source: "Google Maps emulator",
+        approachId: `gm-${route.directionKey}-${index + 1}`,
+        approachLabel: via || routeKind,
+        trafficMinutes: minutes,
+        staticMinutes: null,
+        trafficLiftMinutes: null,
+        distanceMeters: null,
+        cameraAgeMinutes: age,
+        cameraConfidence: routeCameraConfidence,
+        confidence: "pending",
+        rank: "",
+        deltaVsBest: "",
+        description: routeKind,
+      });
+    }
+  }
+  return rows;
+}
+
+function rankApproachRows(rows) {
+  const byDirection = new Map();
+  for (const row of rows) {
+    const key = `${row.checkpoint}|${row.direction}`;
+    const group = byDirection.get(key) || [];
+    group.push(row);
+    byDirection.set(key, group);
+  }
+
+  for (const group of byDirection.values()) {
+    const ranked = group
+      .filter((row) => Number.isFinite(row.trafficMinutes))
+      .sort((a, b) => a.trafficMinutes - b.trafficMinutes);
+    const best = ranked[0] ?? null;
+    const second = ranked[1] ?? null;
+    const winnerGap = Number.isFinite(second?.trafficMinutes) && Number.isFinite(best?.trafficMinutes)
+      ? second.trafficMinutes - best.trafficMinutes
+      : 0;
+    for (const [index, row] of ranked.entries()) {
+      row.rank = index + 1;
+      row.deltaVsBest = Number.isFinite(best?.trafficMinutes) ? row.trafficMinutes - best.trafficMinutes : "";
+      row.confidence = approachConfidence(row.cameraConfidence, index === 0 ? winnerGap : 0, row.trafficLiftMinutes);
+    }
+  }
+
+  const summaries = [...byDirection.entries()].map(([key, group]) => {
+    const [, direction] = key.split("|");
+    return summarizeApproachGroup(group, direction);
+  });
+
+  return { rows, summaries };
+}
+
+async function buildApproachReport(liveByDirection, competitorRecords, capturedAt) {
+  const rows = [];
+
+  if (!useGoogleRoutesApi) {
+    fetchWarnings.push("Approach routing: USE_GOOGLE_ROUTES_API is off; using Android Google Maps route alternatives.");
+  } else if (!GOOGLE_ROUTES_API_KEY) {
+    fetchWarnings.push("Approach routing: GOOGLE_ROUTES_API_KEY missing; using Android Google Maps route alternatives.");
+  }
+
+  for (const route of approachRoutes) {
+    const live = liveByDirection[route.apiDirection];
+    const age = cameraAgeMinutes(live, route.displayCheckpoint, capturedAt);
+    const routeCameraConfidence = cameraConfidence(age);
+    let google = null;
+    try {
+      google = await googleApproachRoute(route);
+    } catch (error) {
+      fetchWarnings.push(`Approach ${route.label}: ${error instanceof Error ? error.message : "Google route unavailable"}`);
+    }
+    const trafficMinutes = google?.trafficMinutes ?? null;
+    const staticMinutes = google?.staticMinutes ?? null;
+    const trafficLiftMinutes = Number.isFinite(trafficMinutes) && Number.isFinite(staticMinutes)
+      ? trafficMinutes - staticMinutes
+      : null;
+    const row = {
+      capturedAt,
+      checkpoint: route.displayCheckpoint,
+      direction: directionMap[route.directionKey].label,
+      source: "Google Routes",
+      approachId: route.id,
+      approachLabel: route.label,
+      trafficMinutes,
+      staticMinutes,
+      trafficLiftMinutes,
+      distanceMeters: google?.distanceMeters ?? null,
+      cameraAgeMinutes: age,
+      cameraConfidence: routeCameraConfidence,
+      confidence: "pending",
+      rank: "",
+      deltaVsBest: "",
+      description: google?.description ?? "",
+    };
+    rows.push(row);
+  }
+
+  const hasRoutesApiData = rows.some((row) => Number.isFinite(row.trafficMinutes));
+  if (hasRoutesApiData) return rankApproachRows(rows);
+
+  const fallbackRows = googleMapsApproachRows(competitorRecords, liveByDirection, capturedAt);
+  if (fallbackRows.length) {
+    return rankApproachRows(fallbackRows);
+  }
+
+  return rankApproachRows(rows);
 }
 
 function buildRouteSeries(rows, checkpoint, direction, sinceMs) {
@@ -864,7 +1183,7 @@ async function buildGraphReports(allRows, accuracySummary, capturedAt) {
   return reports;
 }
 
-function buildOverallAssessment(graphReports, accuracySummary, scoredAccuracyRows, capturedAt) {
+function buildOverallAssessment(graphReports, accuracySummary, scoredAccuracyRows, approachReport, capturedAt) {
   const oursStats = accuracySummary.sourceStats.filter((stat) => stat.source === "CrossBorder.sg");
   const totalSamples = oursStats.reduce((total, stat) => total + stat.sampleSize, 0);
   const weightedMae = totalSamples
@@ -903,6 +1222,14 @@ function buildOverallAssessment(graphReports, accuracySummary, scoredAccuracyRow
   }
 
   lines.push("");
+  lines.push("Approach routing:");
+  if (approachReport?.summaries?.length) {
+    for (const summary of approachReport.summaries) lines.push(`- ${summary}`);
+  } else {
+    lines.push("- Waiting for route-level Google traffic samples.");
+  }
+
+  lines.push("");
   lines.push(isTuningHour ? "1000hrs tuning check:" : "Next scheduled tuning check: 1000hrs SGT.");
   if (uniqueRecommendations.length) {
     for (const item of uniqueRecommendations) lines.push(`- ${item}`);
@@ -911,7 +1238,7 @@ function buildOverallAssessment(graphReports, accuracySummary, scoredAccuracyRow
   }
 
   lines.push("");
-  lines.push("Google Maps anchors: current proxy uses fixed SG-side and MY-side checkpoint points. Better next step is fixed queue-entry to cleared-exit anchors per route.");
+  lines.push("Scientific loop: checkpoint estimate stays separate from approach route timing; Google ranks approaches, cameras moderate confidence, hourly history tunes the anchors.");
   return lines.join("\n");
 }
 
@@ -937,6 +1264,7 @@ const liveByDirection = Object.fromEntries(await Promise.all(
     await fetchLiveTraffic(apiDirection),
   ]),
 ));
+const approachReport = await buildApproachReport(liveByDirection, freshCompetitorRecords, capturedAt);
 
 const benchmark = [];
 
@@ -1013,6 +1341,7 @@ const historyRows = benchmark.flatMap((entry) => entry.sources.map((source) => (
 const previousBenchmarkRows = await readCsvRows("benchmark-history.csv");
 const existingAccuracyRows = await readCsvRows("accuracy-history.csv");
 await appendBenchmarkHistory(historyRows);
+await appendApproachHistory(approachReport.rows);
 
 const scoredAccuracyRows = buildAccuracyRows(
   [...previousBenchmarkRows, ...historyRows],
@@ -1043,6 +1372,16 @@ await writeFile(join(outRoot, "latest-accuracy.json"), `${JSON.stringify({
   newSamples: scoredAccuracyRows.length,
   ...accuracySummary,
 }, null, 2)}\n`);
+await writeFile(join(outRoot, "latest-approaches.json"), `${JSON.stringify({
+  capturedAt,
+  method: {
+    primary: "Google Routes traffic-aware duration by named approach",
+    corroboration: "CrossBorder.sg live camera freshness moderates confidence",
+    scope: "Woodlands approach routing, checkpoint crossing model remains separate",
+  },
+  routes: approachReport.rows,
+  summaries: approachReport.summaries,
+}, null, 2)}\n`);
 
 const allBenchmarkRows = [...previousBenchmarkRows, ...historyRows];
 const graphReports = await buildGraphReports(allBenchmarkRows, accuracySummary, capturedAt);
@@ -1059,5 +1398,6 @@ await sendTelegram(buildOverallAssessment(
   graphReports,
   accuracySummary,
   scoredAccuracyRows,
+  approachReport,
   capturedAt,
 ));
