@@ -72,7 +72,14 @@ function historicalPrior(
 
   const tuasAdjustment = direction === "sg-my" ? -11 : -7;
   const peakRelief = hour >= 16 && hour < 21 ? -5 : 0;
-  return Math.max(18, woodlands + (checkpoint === "Tuas" ? tuasAdjustment + peakRelief : 0));
+  let wait = woodlands + (checkpoint === "Tuas" ? tuasAdjustment + peakRelief : 0);
+
+  // Calibrated from repeated 07:00-08:59 SGT app and Google captures on 2026-07-20.
+  if (!weekend && checkpoint === "Woodlands" && hour >= 7 && hour < 9) {
+    wait += direction === "sg-my" ? -14 : 13;
+  }
+
+  return Math.max(18, wait);
 }
 
 function cameraFreshnessAdjustment(camera: OfficialCamera, now: Date) {
