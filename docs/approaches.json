@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-21T10:11:59.608Z",
+  "generatedAt": "2026-07-21T12:41:59.940Z",
   "source": "Google Routes API traffic-aware duration",
   "scope": "Woodlands towards JB · queue join to post-Johor clearance",
   "routes": [
@@ -15,9 +15,9 @@
         "latitude": 1.4428,
         "longitude": 103.7721
       },
-      "durationMinutes": 52,
-      "staticMinutes": 37,
-      "distanceMeters": 14319
+      "durationMinutes": 64,
+      "staticMinutes": 38,
+      "distanceMeters": 14244
     },
     {
       "id": "woodlands-bke-left",
@@ -31,7 +31,7 @@
         "latitude": 1.4417,
         "longitude": 103.7733
       },
-      "durationMinutes": 49,
+      "durationMinutes": 58,
       "staticMinutes": 32,
       "distanceMeters": 13067
     },
@@ -47,8 +47,8 @@
         "latitude": 1.435,
         "longitude": 103.76
       },
-      "durationMinutes": 43,
-      "staticMinutes": 29,
+      "durationMinutes": 55,
+      "staticMinutes": 30,
       "distanceMeters": 13729
     }
   ]
