@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-21T13:43:05.929Z",
+  "generatedAt": "2026-07-21T15:12:36.903Z",
   "source": "Google Routes API traffic-aware duration",
   "scope": "Woodlands towards JB · queue join to post-Johor clearance",
   "routes": [
@@ -11,7 +11,7 @@
         "latitude": 1.439328,
         "longitude": 103.768422
       },
-      "durationMinutes": 24,
+      "durationMinutes": 23,
       "staticMinutes": 8,
       "distanceMeters": 3565
     },
@@ -35,7 +35,7 @@
         "latitude": 1.440516,
         "longitude": 103.768108
       },
-      "durationMinutes": 17,
+      "durationMinutes": 18,
       "staticMinutes": 8,
       "distanceMeters": 3352
     }
