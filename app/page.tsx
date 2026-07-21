@@ -1233,6 +1233,12 @@ function V3WoodlandsApproach({
   const snapshotTime = snapshot?.generatedAt ? formatTimeLabel(snapshot.generatedAt) : null;
   const hasGoogleSnapshot = routes.every((route) => route.source === "google");
 
+  useEffect(() => {
+    if (!activeTrip && snapshot?.generatedAt) setSelectedApproach(best.id);
+  }, [activeTrip, best.id, snapshot?.generatedAt]);
+
+  const selectedGap = Math.max(0, selected.durationMinutes - best.durationMinutes);
+
   const startMeasurement = () => {
     if (!("geolocation" in navigator)) {
       setMeasurementStatus("error");
@@ -1296,14 +1302,35 @@ function V3WoodlandsApproach({
           <span>Woodlands · towards JB</span>
           <small>{hasGoogleSnapshot && snapshotTime ? `Google snapshot ${snapshotTime}` : "Live checkpoint model · Google snapshot pending"}</small>
         </div>
-        <h1 id="v3-title">Take {best.label.slice(0, 1)}</h1>
-        <p className="v3-instruction">{best.instruction}</p>
+        <h1 id="v3-title">{selectedGap === 0 ? `Take ${selected.label.slice(0, 1)}` : `${selected.label.slice(0, 1)} route`}</h1>
+        <p className="v3-instruction">{selected.instruction}</p>
+        <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
+          <img src={staticAssetUrl("woodlands-approaches-3d.png")} alt="" />
+          <svg className="v3-route-overlay" viewBox="0 0 388 194" aria-hidden="true">
+            <defs>
+              <marker id="v3-route-arrow" viewBox="0 0 12 12" refX="8" refY="6" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
+                <path d="M 0 0 L 12 6 L 0 12 z" />
+              </marker>
+            </defs>
+            {Object.entries(woodlandsApproachVisualPaths).map(([id, path]) => (
+              <path
+                key={id}
+                className={`v3-route-path ${id === selected.id ? "active" : ""}`}
+                d={path}
+                markerEnd={id === selected.id ? "url(#v3-route-arrow)" : undefined}
+              />
+            ))}
+            <circle className="v3-route-start" cx={woodlandsApproachVisualStarts[selected.id].x} cy="176" r="4.5" />
+          </svg>
+          <span className="v3-route-origin">Queue entry</span>
+          <span className="v3-route-destination">Johor clear</span>
+        </div>
         <div className="v3-answer-row">
           <div>
             <span>Queue to Johor clearance</span>
-            <strong>{best.durationMinutes} <em>min</em></strong>
+            <strong>{selected.durationMinutes} <em>min</em></strong>
           </div>
-          <p>{saving > 0 ? `About ${saving} min ahead` : "No meaningful gap"}</p>
+          <p>{selectedGap > 0 ? `${selectedGap} min behind route ${best.label.slice(0, 1)}` : saving > 0 ? `About ${saving} min ahead` : "No meaningful gap"}</p>
         </div>
         <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
           {routes.map((route) => {
@@ -1319,7 +1346,7 @@ function V3WoodlandsApproach({
                 onClick={() => setSelectedApproach(route.id)}
               >
                 <span className="v3-route-letter">{route.label.slice(0, 1)}</span>
-                <span className="v3-route-copy"><strong>{route.label.slice(4)}</strong><small>{route.instruction}</small></span>
+                <span className="v3-route-copy"><strong>{route.label.slice(4)}</strong></span>
                 <span className="v3-route-time">{route.durationMinutes} min</span>
               </button>
             );
@@ -1689,22 +1716,34 @@ const woodlandsApproachDefinitions: Array<{
   {
     id: "woodlands-bke-right",
     label: "A · BKE flyover",
-    instruction: "Keep right on the flyover",
-    waypoint: { latitude: 1.4428, longitude: 103.7721 },
+    instruction: "Right flyover lane",
+    waypoint: { latitude: 1.439328, longitude: 103.768422 },
   },
   {
     id: "woodlands-bke-left",
     label: "B · BKE mainline",
-    instruction: "Keep left through the traffic lights",
-    waypoint: { latitude: 1.4417, longitude: 103.7733 },
+    instruction: "Left mainline lane",
+    waypoint: { latitude: 1.439356, longitude: 103.768285 },
   },
   {
     id: "woodlands-road-left",
     label: "C · Woodlands Rd",
-    instruction: "Turn left towards the checkpoint",
-    waypoint: { latitude: 1.4350, longitude: 103.7600 },
+    instruction: "Left-turn feeder",
+    waypoint: { latitude: 1.440516, longitude: 103.768108 },
   },
 ];
+
+const woodlandsApproachVisualPaths: Record<ApproachId, string> = {
+  "woodlands-bke-right": "M 318 176 C 298 151 281 126 261 101 C 243 78 235 47 229 18",
+  "woodlands-bke-left": "M 208 176 C 207 139 207 110 207 82 C 207 55 207 35 207 18",
+  "woodlands-road-left": "M 67 176 C 81 153 99 130 119 108 C 146 80 170 54 191 18",
+};
+
+const woodlandsApproachVisualStarts: Record<ApproachId, { x: number }> = {
+  "woodlands-bke-right": { x: 318 },
+  "woodlands-bke-left": { x: 208 },
+  "woodlands-road-left": { x: 67 },
+};
 
 function staticAssetUrl(asset: string) {
   if (typeof window === "undefined") return asset;
@@ -1718,7 +1757,7 @@ function roundedCoordinate(value: number) {
 function googleMapsNavigationUrl(approach: ApproachId) {
   const definition = woodlandsApproachDefinitions.find((item) => item.id === approach)
     ?? woodlandsApproachDefinitions[0];
-  const destination = "1.4599,103.7649";
+  const destination = "1.466582,103.768091";
   const waypoint = `${definition.waypoint.latitude},${definition.waypoint.longitude}`;
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&waypoints=${encodeURIComponent(waypoint)}`;
 }

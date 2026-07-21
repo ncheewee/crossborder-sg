@@ -3,28 +3,25 @@ import { join } from "node:path";
 
 const apiKey = process.env.GOOGLE_ROUTES_API_KEY;
 const routesUrl = "https://routes.googleapis.com/directions/v2:computeRoutes";
-const destination = { latitude: 1.4599, longitude: 103.7649 };
+const destination = { latitude: 1.466582, longitude: 103.768091 };
 const routes = [
   {
     id: "woodlands-bke-right",
     label: "A · BKE flyover",
-    instruction: "Keep right on the flyover",
-    origin: { latitude: 1.4377, longitude: 103.7750 },
-    waypoint: { latitude: 1.4428, longitude: 103.7721 },
+    instruction: "Right flyover lane",
+    origin: { latitude: 1.439328, longitude: 103.768422 },
   },
   {
     id: "woodlands-bke-left",
     label: "B · BKE mainline",
-    instruction: "Keep left through the traffic lights",
-    origin: { latitude: 1.4377, longitude: 103.7750 },
-    waypoint: { latitude: 1.4417, longitude: 103.7733 },
+    instruction: "Left mainline lane",
+    origin: { latitude: 1.439356, longitude: 103.768285 },
   },
   {
     id: "woodlands-road-left",
     label: "C · Woodlands Rd",
-    instruction: "Turn left towards the checkpoint",
-    origin: { latitude: 1.4260, longitude: 103.7595 },
-    waypoint: { latitude: 1.4350, longitude: 103.7600 },
+    instruction: "Left-turn feeder",
+    origin: { latitude: 1.440516, longitude: 103.768108 },
   },
 ];
 
@@ -44,7 +41,6 @@ async function routeDuration(route) {
     body: JSON.stringify({
       origin: { location: { latLng: route.origin } },
       destination: { location: { latLng: destination } },
-      intermediates: [{ location: { latLng: route.waypoint } }],
       travelMode: "DRIVE",
       routingPreference: "TRAFFIC_AWARE",
     }),
