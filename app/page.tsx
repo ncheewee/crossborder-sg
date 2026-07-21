@@ -1304,32 +1304,40 @@ function V3WoodlandsApproach({
         </div>
         <h1 id="v3-title">{selectedGap === 0 ? `Take ${selected.label.slice(0, 1)}` : `${selected.label.slice(0, 1)} route`}</h1>
         <p className="v3-instruction">{selected.instruction}</p>
-        <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
-          <img src="woodlands-approaches-3d.png" alt="" />
+        <div className={`v3-route-visual ${selected.id === "woodlands-bke-right" ? "reference-route" : ""}`} role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
+          <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
           <svg className="v3-route-overlay" viewBox="0 0 388 194" aria-hidden="true">
-            {Object.entries(woodlandsApproachVisualPaths).map(([id, path]) => (
-              <path
-                key={id}
-                className={`v3-route-path ${id === selected.id ? "active" : ""}`}
-                d={path}
-              />
-            ))}
-            <circle className="v3-route-start" cx={woodlandsApproachVisualStarts[selected.id].x} cy="176" r="4.5" />
-            <path
-              className="v3-route-end-arrow"
-              d="M -6 -7 L 5 0 L -6 7"
-              transform={`translate(${woodlandsApproachVisualEnds[selected.id].x} ${woodlandsApproachVisualEnds[selected.id].y}) rotate(-90)`}
-            />
+            {selected.id === "woodlands-bke-right" ? (
+              <path className="v3-route-baked-pulse" d={woodlandsApproachVisualPaths[selected.id]} />
+            ) : (
+              <>
+                {Object.entries(woodlandsApproachVisualPaths).map(([id, path]) => (
+                  <path
+                    key={id}
+                    className={`v3-route-path ${id === selected.id ? "active" : ""}`}
+                    d={path}
+                  />
+                ))}
+                <circle className="v3-route-start" cx={woodlandsApproachVisualStarts[selected.id].x} cy="176" r="4.5" />
+                <path
+                  className="v3-route-end-arrow"
+                  d="M -6 -7 L 5 0 L -6 7"
+                  transform={`translate(${woodlandsApproachVisualEnds[selected.id].x} ${woodlandsApproachVisualEnds[selected.id].y}) rotate(-90)`}
+                />
+              </>
+            )}
           </svg>
-          <span className="v3-route-origin">Queue entry</span>
-          <span className="v3-route-destination">Johor clear</span>
+          {selected.id !== "woodlands-bke-right" && <>
+            <span className="v3-route-origin">Queue entry</span>
+            <span className="v3-route-destination">Johor clear</span>
+          </>}
         </div>
         <div className="v3-answer-row">
           <div>
             <span>Queue to Johor clearance</span>
             <strong>{selected.durationMinutes} <em>min</em></strong>
           </div>
-          <p>{selectedGap > 0 ? `${selectedGap} min behind route ${best.label.slice(0, 1)}` : saving > 0 ? `About ${saving} min ahead` : "No meaningful gap"}</p>
+          <p>{selectedGap > 0 ? `${selectedGap} min behind ${best.label.slice(0, 1)}` : saving > 0 ? `About ${saving} min ahead` : "No meaningful gap"}</p>
         </div>
         <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
           {routes.map((route) => {
@@ -1733,9 +1741,15 @@ const woodlandsApproachDefinitions: Array<{
 ];
 
 const woodlandsApproachVisualPaths: Record<ApproachId, string> = {
-  "woodlands-bke-right": "M 318 176 C 298 151 281 126 261 101 C 243 78 235 47 229 18",
+  "woodlands-bke-right": "M 256 158 C 247 149 227 143 223 134 C 220 126 230 122 243 117 C 255 113 262 109 260 106 C 259 103 250 102 225 105",
   "woodlands-bke-left": "M 208 176 C 207 139 207 110 207 82 C 207 55 207 35 207 18",
   "woodlands-road-left": "M 67 176 C 81 153 99 130 119 108 C 146 80 170 54 191 18",
+};
+
+const woodlandsApproachVisualImages: Record<ApproachId, string> = {
+  "woodlands-bke-right": "woodlands-bke-right.png",
+  "woodlands-bke-left": "woodlands-bke-mainline.png",
+  "woodlands-road-left": "woodlands-approaches-3d.png",
 };
 
 const woodlandsApproachVisualStarts: Record<ApproachId, { x: number }> = {
