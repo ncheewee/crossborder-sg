@@ -1305,7 +1305,7 @@ function V3WoodlandsApproach({
         <h1 id="v3-title">{selectedGap === 0 ? `Take ${selected.label.slice(0, 1)}` : `${selected.label.slice(0, 1)} route`}</h1>
         <p className="v3-instruction">{selected.instruction}</p>
         <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
-          <img src={staticAssetUrl("woodlands-approaches-3d.png")} alt="" />
+          <img src="woodlands-approaches-3d.png" alt="" />
           <svg className="v3-route-overlay" viewBox="0 0 388 194" aria-hidden="true">
             {Object.entries(woodlandsApproachVisualPaths).map(([id, path]) => (
               <path
