@@ -69,6 +69,7 @@ const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const checkpoints: Checkpoint[] = ["Woodlands", "Tuas"];
 let googleKeysCache: { expiresAt: number; keys: JsonWebKey[] } | null = null;
 let authTablesReady: Promise<void> | null = null;
+let approachTripTableReady: Promise<void> | null = null;
 
 function corsHeaders(env: Env) {
   return {
@@ -119,6 +120,29 @@ function parseMinutes(value: unknown) {
   const rounded = Math.round(minutes);
   if (rounded < 5 || rounded > 240) return null;
   return rounded;
+}
+
+function parseCoordinate(value: unknown) {
+  const coordinate = Number(value);
+  if (!Number.isFinite(coordinate)) return null;
+  const isLatitude = coordinate >= 1.2 && coordinate <= 1.6;
+  const isLongitude = coordinate >= 103.4 && coordinate <= 104.1;
+  if (!isLatitude && !isLongitude) return null;
+  return Math.round(coordinate * 10_000) / 10_000;
+}
+
+function parseTimestamp(value: unknown) {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function parseApproachId(value: unknown) {
+  return value === "woodlands-bke-right"
+    || value === "woodlands-bke-left"
+    || value === "woodlands-road-left"
+    ? value
+    : null;
 }
 
 function authConfigured(env: Env) {
@@ -265,6 +289,37 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>) {
     `;
   })();
   return authTablesReady;
+}
+
+async function ensureApproachTripTable(sql: ReturnType<typeof neon>) {
+  if (!approachTripTableReady) {
+    approachTripTableReady = (async () => {
+      await sql`
+        create table if not exists approach_trip_reports (
+          id bigserial primary key,
+          reported_at timestamptz not null,
+          direction text not null,
+          checkpoint text not null,
+          approach_id text not null,
+          started_at timestamptz not null,
+          cleared_at timestamptz not null,
+          estimated_minutes integer not null,
+          actual_wait_minutes integer not null,
+          join_latitude numeric(8,4),
+          join_longitude numeric(8,4),
+          clear_latitude numeric(8,4),
+          clear_longitude numeric(8,4),
+          location_accuracy_meters integer,
+          created_at timestamptz not null default now()
+        )
+      `;
+      await sql`
+        create index if not exists approach_trip_reports_lookup_idx
+          on approach_trip_reports (direction, checkpoint, approach_id, reported_at desc)
+      `;
+    })();
+  }
+  return approachTripTableReady;
 }
 
 async function recordAuthEvent(
@@ -690,6 +745,97 @@ async function handleReport(request: Request, env: Env, user: AuthUser | null = 
   }
 }
 
+async function handleApproachReport(request: Request, env: Env, user: AuthUser | null = null) {
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    const direction = parseReportDirection(body.direction);
+    const checkpoint = parseCheckpoint(body.checkpoint);
+    const approachId = parseApproachId(body.approachId);
+    const startedAt = parseTimestamp(body.startedAt);
+    const clearedAt = parseTimestamp(body.clearedAt);
+    const estimatedMinutes = parseMinutes(body.estimatedMinutes);
+    const actualWaitMinutes = parseMinutes(body.actualWaitMinutes);
+    const joinLatitude = parseCoordinate(body.joinLatitude);
+    const joinLongitude = parseCoordinate(body.joinLongitude);
+    const clearLatitude = body.clearLatitude == null ? null : parseCoordinate(body.clearLatitude);
+    const clearLongitude = body.clearLongitude == null ? null : parseCoordinate(body.clearLongitude);
+    const accuracyMeters = body.locationAccuracyMeters == null ? null : Math.round(Number(body.locationAccuracyMeters));
+    const durationMinutes = startedAt && clearedAt
+      ? Math.round((clearedAt.getTime() - startedAt.getTime()) / 60_000)
+      : null;
+
+    if (
+      direction !== "sg-my"
+      || checkpoint !== "Woodlands"
+      || !approachId
+      || !startedAt
+      || !clearedAt
+      || estimatedMinutes == null
+      || actualWaitMinutes == null
+      || durationMinutes == null
+      || durationMinutes < 5
+      || durationMinutes > 240
+      || Math.abs(durationMinutes - actualWaitMinutes) > 1
+      || joinLatitude == null
+      || joinLongitude == null
+      || (body.clearLatitude != null && clearLatitude == null)
+      || (body.clearLongitude != null && clearLongitude == null)
+      || (accuracyMeters != null && (!Number.isFinite(accuracyMeters) || accuracyMeters < 0 || accuracyMeters > 2_000))
+    ) {
+      return json(env, {
+        error: "invalid_approach_report",
+        message: "Record a 5–240 minute Woodlands-to-JB crossing with a valid approach and start point.",
+      }, { status: 400 });
+    }
+
+    const sql = neon(env.DATABASE_URL);
+    await ensureApproachTripTable(sql);
+    if (user) await recordAuthEvent(sql, user, "approach-report", request);
+    await sql`
+      insert into approach_trip_reports (
+        reported_at,
+        direction,
+        checkpoint,
+        approach_id,
+        started_at,
+        cleared_at,
+        estimated_minutes,
+        actual_wait_minutes,
+        join_latitude,
+        join_longitude,
+        clear_latitude,
+        clear_longitude,
+        location_accuracy_meters
+      )
+      values (
+        ${new Date().toISOString()},
+        ${direction},
+        ${checkpoint},
+        ${approachId},
+        ${startedAt.toISOString()},
+        ${clearedAt.toISOString()},
+        ${estimatedMinutes},
+        ${actualWaitMinutes},
+        ${joinLatitude},
+        ${joinLongitude},
+        ${clearLatitude},
+        ${clearLongitude},
+        ${accuracyMeters}
+      )
+    `;
+
+    return json(env, {
+      ok: true,
+      message: "Crossing recorded for approach calibration.",
+    });
+  } catch {
+    return json(env, {
+      error: "approach_report_unavailable",
+      message: "Unable to save this approach report right now.",
+    }, { status: 503 });
+  }
+}
+
 async function handleGoogleAuth(request: Request, env: Env) {
   if (!env.GOOGLE_CLIENT_ID) {
     return json(env, {
@@ -744,6 +890,12 @@ export default {
       const user = await authenticateRequest(request, env);
       if (user instanceof Response) return user;
       return handleReport(request, env, user);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/approach-reports") {
+      const user = await authenticateRequest(request, env);
+      if (user instanceof Response) return user;
+      return handleApproachReport(request, env, user);
     }
 
     return json(env, { error: "not_found" }, { status: 404 });

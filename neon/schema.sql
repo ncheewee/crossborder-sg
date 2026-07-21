@@ -31,3 +31,24 @@ create table if not exists traveler_reports (
 
 create index if not exists traveler_reports_lookup_idx
   on traveler_reports (direction, checkpoint, reported_at desc);
+
+create table if not exists approach_trip_reports (
+  id bigserial primary key,
+  reported_at timestamptz not null,
+  direction text not null,
+  checkpoint text not null,
+  approach_id text not null,
+  started_at timestamptz not null,
+  cleared_at timestamptz not null,
+  estimated_minutes integer not null,
+  actual_wait_minutes integer not null,
+  join_latitude numeric(8,4),
+  join_longitude numeric(8,4),
+  clear_latitude numeric(8,4),
+  clear_longitude numeric(8,4),
+  location_accuracy_meters integer,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists approach_trip_reports_lookup_idx
+  on approach_trip_reports (direction, checkpoint, approach_id, reported_at desc);

@@ -110,6 +110,28 @@ type AuthState =
   | { status: "signed-out" | "loading" | "error"; message?: string }
   | { status: "ready"; credential: string; user: AuthUser };
 type GoogleCredentialResponse = { credential?: string; select_by?: string };
+type ApproachId = "woodlands-bke-right" | "woodlands-bke-left" | "woodlands-road-left";
+type ApproachSnapshotRoute = {
+  id: ApproachId;
+  label: string;
+  instruction: string;
+  durationMinutes: number | null;
+  staticMinutes: number | null;
+  updatedAt?: string;
+};
+type ApproachSnapshot = {
+  generatedAt?: string;
+  source?: string;
+  routes?: ApproachSnapshotRoute[];
+};
+type ApproachTrip = {
+  approachId: ApproachId;
+  startedAt: string;
+  estimatedMinutes: number;
+  joinLatitude: number;
+  joinLongitude: number;
+  accuracyMeters: number | null;
+};
 
 declare global {
   interface Window {
@@ -1149,6 +1171,185 @@ function V2CameraStrip({
   );
 }
 
+function V3WoodlandsApproach({
+  trafficByDirection,
+  onSubmitTrip,
+}: {
+  trafficByDirection: TrafficByDirection;
+  onSubmitTrip: (trip: ApproachTrip, clearedPosition: Coordinate | null) => Promise<void>;
+}) {
+  const [snapshot, setSnapshot] = useState<ApproachSnapshot | null>(null);
+  const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
+  const [activeTrip, setActiveTrip] = useState<ApproachTrip | null>(null);
+  const [measurementStatus, setMeasurementStatus] = useState<"idle" | "locating" | "active" | "saving" | "saved" | "error">("idle");
+  const [measurementMessage, setMeasurementMessage] = useState("");
+  const woodlands = compactCheckpointData(trafficByDirection["sg-my"], "sg-my", "Woodlands");
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(staticAssetUrl("approaches.json"), { cache: "no-store" })
+      .then(async (response) => response.ok ? response.json() as Promise<ApproachSnapshot> : null)
+      .then((payload) => {
+        if (!cancelled && payload?.routes?.length) setSnapshot(payload);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(approachTripStorageKey) ?? "null") as ApproachTrip | null;
+      if (stored?.startedAt && stored.approachId) {
+        setActiveTrip(stored);
+        setSelectedApproach(stored.approachId);
+        setMeasurementStatus("active");
+      }
+    } catch {
+      window.localStorage.removeItem(approachTripStorageKey);
+    }
+  }, []);
+
+  const routes = useMemo(() => {
+    const source = new Map((snapshot?.routes ?? []).map((route) => [route.id, route]));
+    const fallbackMinutes = [woodlands.waitMinutes + 6, woodlands.waitMinutes, woodlands.waitMinutes + 2];
+    return woodlandsApproachDefinitions.map((definition, index) => {
+      const live = source.get(definition.id);
+      return {
+        ...definition,
+        durationMinutes: live?.durationMinutes ?? fallbackMinutes[index],
+        source: live?.durationMinutes != null ? "google" as const : "model" as const,
+      };
+    });
+  }, [snapshot, woodlands.waitMinutes]);
+
+  const best = routes.reduce((current, route) => route.durationMinutes < current.durationMinutes ? route : current, routes[0]);
+  const selected = routes.find((route) => route.id === selectedApproach) ?? best;
+  const runnerUp = routes
+    .filter((route) => route.id !== best.id)
+    .sort((left, right) => left.durationMinutes - right.durationMinutes)[0];
+  const saving = Math.max(0, (runnerUp?.durationMinutes ?? best.durationMinutes) - best.durationMinutes);
+  const snapshotTime = snapshot?.generatedAt ? formatTimeLabel(snapshot.generatedAt) : null;
+  const hasGoogleSnapshot = routes.every((route) => route.source === "google");
+
+  const startMeasurement = () => {
+    if (!("geolocation" in navigator)) {
+      setMeasurementStatus("error");
+      setMeasurementMessage("Precise location is unavailable on this device.");
+      return;
+    }
+    setMeasurementStatus("locating");
+    setMeasurementMessage("");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const trip: ApproachTrip = {
+          approachId: selected.id,
+          startedAt: new Date().toISOString(),
+          estimatedMinutes: selected.durationMinutes,
+          joinLatitude: roundedCoordinate(position.coords.latitude),
+          joinLongitude: roundedCoordinate(position.coords.longitude),
+          accuracyMeters: Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null,
+        };
+        window.localStorage.setItem(approachTripStorageKey, JSON.stringify(trip));
+        setActiveTrip(trip);
+        setMeasurementStatus("active");
+      },
+      () => {
+        setMeasurementStatus("error");
+        setMeasurementMessage("Location was not shared. Navigation still works without it.");
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 0 },
+    );
+  };
+
+  const completeMeasurement = () => {
+    if (!activeTrip) return;
+    const finish = async (position: Coordinate | null) => {
+      setMeasurementStatus("saving");
+      try {
+        await onSubmitTrip(activeTrip, position);
+        window.localStorage.removeItem(approachTripStorageKey);
+        setActiveTrip(null);
+        setMeasurementStatus("saved");
+        setMeasurementMessage("Crossing recorded. Thank you.");
+      } catch {
+        setMeasurementStatus("error");
+        setMeasurementMessage("Could not save this crossing yet. Keep this screen open and try again.");
+      }
+    };
+    if (!("geolocation" in navigator)) {
+      void finish(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => void finish({ latitude: roundedCoordinate(position.coords.latitude), longitude: roundedCoordinate(position.coords.longitude) }),
+      () => void finish(null),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    );
+  };
+
+  return (
+    <section className="v3-landing" id="top" aria-labelledby="v3-title">
+      <article className="v3-approach-card">
+        <div className="v3-kicker-row">
+          <span>Woodlands · towards JB</span>
+          <small>{hasGoogleSnapshot && snapshotTime ? `Google snapshot ${snapshotTime}` : "Live checkpoint model · Google snapshot pending"}</small>
+        </div>
+        <h1 id="v3-title">Take {best.label.slice(0, 1)}</h1>
+        <p className="v3-instruction">{best.instruction}</p>
+        <div className="v3-answer-row">
+          <div>
+            <span>Queue to Johor clearance</span>
+            <strong>{best.durationMinutes} <em>min</em></strong>
+          </div>
+          <p>{saving > 0 ? `About ${saving} min ahead` : "No meaningful gap"}</p>
+        </div>
+        <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
+          {routes.map((route) => {
+            const isRecommended = route.id === best.id;
+            const isSelected = route.id === selected.id;
+            return (
+              <button
+                key={route.id}
+                type="button"
+                className={`${isSelected ? "selected " : ""}${isRecommended ? "recommended" : ""}`}
+                role="radio"
+                aria-checked={isSelected}
+                onClick={() => setSelectedApproach(route.id)}
+              >
+                <span className="v3-route-letter">{route.label.slice(0, 1)}</span>
+                <span className="v3-route-copy"><strong>{route.label.slice(4)}</strong><small>{route.instruction}</small></span>
+                <span className="v3-route-time">{route.durationMinutes} min</span>
+              </button>
+            );
+          })}
+        </div>
+        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">
+          Navigate with Google Maps
+        </a>
+        <div className="v3-measurement">
+          {measurementStatus === "active" && activeTrip ? (
+            <>
+              <span>Crossing in progress · {woodlandsApproachDefinitions.find((item) => item.id === activeTrip.approachId)?.label}</span>
+              <button type="button" onClick={completeMeasurement}>I cleared Johor</button>
+            </>
+          ) : (
+            <>
+              <span>Make this route smarter</span>
+              <button type="button" onClick={startMeasurement} disabled={measurementStatus === "locating"}>
+                {measurementStatus === "locating" ? "Getting location…" : "Measure this crossing"}
+              </button>
+            </>
+          )}
+          {(measurementMessage || measurementStatus === "saved") && <small>{measurementMessage}</small>}
+        </div>
+        <p className="v3-method">{hasGoogleSnapshot ? "Google route duration is the primary signal. Cameras moderate confidence." : "Google route snapshot is loading. Current values use the live Woodlands checkpoint model."} The optional measurement records only start and finish points.</p>
+      </article>
+    </section>
+  );
+}
+
 function V2Landing({
   trafficByDirection,
 }: {
@@ -1477,6 +1678,50 @@ function googleClientId() {
 }
 
 const authStorageKey = "crossborder.google-auth.v1";
+const approachTripStorageKey = "crossborder.woodlands-approach-trip.v1";
+
+const woodlandsApproachDefinitions: Array<{
+  id: ApproachId;
+  label: string;
+  instruction: string;
+  waypoint: Coordinate;
+}> = [
+  {
+    id: "woodlands-bke-right",
+    label: "A · BKE flyover",
+    instruction: "Keep right on the flyover",
+    waypoint: { latitude: 1.4428, longitude: 103.7721 },
+  },
+  {
+    id: "woodlands-bke-left",
+    label: "B · BKE mainline",
+    instruction: "Keep left through the traffic lights",
+    waypoint: { latitude: 1.4417, longitude: 103.7733 },
+  },
+  {
+    id: "woodlands-road-left",
+    label: "C · Woodlands Rd",
+    instruction: "Turn left towards the checkpoint",
+    waypoint: { latitude: 1.4350, longitude: 103.7600 },
+  },
+];
+
+function staticAssetUrl(asset: string) {
+  if (typeof window === "undefined") return asset;
+  return new URL(asset, document.baseURI).toString();
+}
+
+function roundedCoordinate(value: number) {
+  return Math.round(value * 10_000) / 10_000;
+}
+
+function googleMapsNavigationUrl(approach: ApproachId) {
+  const definition = woodlandsApproachDefinitions.find((item) => item.id === approach)
+    ?? woodlandsApproachDefinitions[0];
+  const destination = "1.4599,103.7649";
+  const waypoint = `${definition.waypoint.latitude},${definition.waypoint.longitude}`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&waypoints=${encodeURIComponent(waypoint)}`;
+}
 
 function decodeJwtPayload<T>(credential: string): T | null {
   try {
@@ -1985,6 +2230,34 @@ export default function Home() {
     }
   }
 
+  async function submitApproachTrip(trip: ApproachTrip, clearedPosition: Coordinate | null) {
+    const clearedAt = new Date();
+    const startedAt = new Date(trip.startedAt);
+    const actualWaitMinutes = Math.round((clearedAt.getTime() - startedAt.getTime()) / 60_000);
+    if (!Number.isFinite(actualWaitMinutes) || actualWaitMinutes < 5 || actualWaitMinutes > 240) {
+      throw new Error("Crossing duration is outside the report range");
+    }
+    const response = await authFetch(`${apiBase()}/api/approach-reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        direction: "sg-my",
+        checkpoint: "Woodlands",
+        approachId: trip.approachId,
+        startedAt: trip.startedAt,
+        clearedAt: clearedAt.toISOString(),
+        estimatedMinutes: trip.estimatedMinutes,
+        actualWaitMinutes,
+        joinLatitude: trip.joinLatitude,
+        joinLongitude: trip.joinLongitude,
+        clearLatitude: clearedPosition?.latitude ?? null,
+        clearLongitude: clearedPosition?.longitude ?? null,
+        locationAccuracyMeters: trip.accuracyMeters,
+      }),
+    });
+    if (!response.ok) throw new Error(`Approach report API returned ${response.status}`);
+  }
+
   if (isAuthConfigured && auth.status !== "ready") {
     return (
       <main className="app-shell login-shell">
@@ -2019,7 +2292,7 @@ export default function Home() {
         )}
       </header>
 
-      <V2Landing trafficByDirection={trafficByDirection} />
+      <V3WoodlandsApproach trafficByDirection={trafficByDirection} onSubmitTrip={submitApproachTrip} />
 
     </main>
   );
