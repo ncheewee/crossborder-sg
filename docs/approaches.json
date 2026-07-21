@@ -1,6 +1,43 @@
 {
-  "generatedAt": null,
+  "generatedAt": "2026-07-21T13:43:05.929Z",
   "source": "Google Routes API traffic-aware duration",
   "scope": "Woodlands towards JB · queue join to post-Johor clearance",
-  "routes": []
+  "routes": [
+    {
+      "id": "woodlands-bke-right",
+      "label": "A · BKE flyover",
+      "instruction": "Right flyover lane",
+      "origin": {
+        "latitude": 1.439328,
+        "longitude": 103.768422
+      },
+      "durationMinutes": 24,
+      "staticMinutes": 8,
+      "distanceMeters": 3565
+    },
+    {
+      "id": "woodlands-bke-left",
+      "label": "B · BKE mainline",
+      "instruction": "Left mainline lane",
+      "origin": {
+        "latitude": 1.439356,
+        "longitude": 103.768285
+      },
+      "durationMinutes": 19,
+      "staticMinutes": 9,
+      "distanceMeters": 3476
+    },
+    {
+      "id": "woodlands-road-left",
+      "label": "C · Woodlands Rd",
+      "instruction": "Left-turn feeder",
+      "origin": {
+        "latitude": 1.440516,
+        "longitude": 103.768108
+      },
+      "durationMinutes": 17,
+      "staticMinutes": 8,
+      "distanceMeters": 3352
+    }
+  ]
 }
