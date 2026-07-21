@@ -1307,20 +1307,19 @@ function V3WoodlandsApproach({
         <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
           <img src={staticAssetUrl("woodlands-approaches-3d.png")} alt="" />
           <svg className="v3-route-overlay" viewBox="0 0 388 194" aria-hidden="true">
-            <defs>
-              <marker id="v3-route-arrow" viewBox="0 0 12 12" refX="8" refY="6" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
-                <path d="M 0 0 L 12 6 L 0 12 z" />
-              </marker>
-            </defs>
             {Object.entries(woodlandsApproachVisualPaths).map(([id, path]) => (
               <path
                 key={id}
                 className={`v3-route-path ${id === selected.id ? "active" : ""}`}
                 d={path}
-                markerEnd={id === selected.id ? "url(#v3-route-arrow)" : undefined}
               />
             ))}
             <circle className="v3-route-start" cx={woodlandsApproachVisualStarts[selected.id].x} cy="176" r="4.5" />
+            <path
+              className="v3-route-end-arrow"
+              d="M -6 -7 L 5 0 L -6 7"
+              transform={`translate(${woodlandsApproachVisualEnds[selected.id].x} ${woodlandsApproachVisualEnds[selected.id].y}) rotate(-90)`}
+            />
           </svg>
           <span className="v3-route-origin">Queue entry</span>
           <span className="v3-route-destination">Johor clear</span>
@@ -1743,6 +1742,12 @@ const woodlandsApproachVisualStarts: Record<ApproachId, { x: number }> = {
   "woodlands-bke-right": { x: 318 },
   "woodlands-bke-left": { x: 208 },
   "woodlands-road-left": { x: 67 },
+};
+
+const woodlandsApproachVisualEnds: Record<ApproachId, { x: number; y: number }> = {
+  "woodlands-bke-right": { x: 229, y: 18 },
+  "woodlands-bke-left": { x: 207, y: 18 },
+  "woodlands-road-left": { x: 191, y: 18 },
 };
 
 function staticAssetUrl(asset: string) {

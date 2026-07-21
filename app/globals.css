@@ -732,8 +732,6 @@ button { font: inherit; }
   overflow: visible;
 }
 
-.v3-route-overlay marker path { fill: #2563eb; }
-
 .v3-route-path {
   fill: none;
   stroke: rgba(255, 255, 255, 0.46);
@@ -758,6 +756,16 @@ button { font: inherit; }
   animation: v3-route-pulse 1s ease-in-out infinite;
 }
 
+.v3-route-end-arrow {
+  fill: none;
+  stroke: #2563eb;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+  filter: drop-shadow(0 0 2px rgba(37, 99, 235, 0.9));
+  animation: v3-route-arrow-pulse 0.8s ease-in-out infinite;
+}
+
 .v3-route-origin,
 .v3-route-destination {
   position: absolute;
@@ -777,6 +785,10 @@ button { font: inherit; }
 
 @keyframes v3-route-pulse {
   50% { r: 6; opacity: 0.9; }
+}
+
+@keyframes v3-route-arrow-pulse {
+  50% { opacity: 0.6; }
 }
 
 .v3-answer-row {
