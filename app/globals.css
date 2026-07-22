@@ -207,6 +207,9 @@ button { font: inherit; }
 
 .landing-shell {
   width: min(100%, 460px);
+  height: var(--landing-visible-height);
+  min-height: 0;
+  overflow: hidden;
   padding-bottom: 0;
 }
 
@@ -639,8 +642,10 @@ button { font: inherit; }
 
 .v3-landing {
   display: grid;
-  gap: 12px;
-  padding: 10px 0 84px;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(var(--landing-visible-height) - var(--landing-topbar-height));
+  gap: 8px;
+  padding: 8px 0 70px;
 }
 
 .v3-checkpoint-tabs {
@@ -648,7 +653,7 @@ button { font: inherit; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px;
   padding: 3px;
-  border: 1px solid var(--line);
+  border: 1px solid #0f766e;
   border-radius: 10px;
   background: var(--surface-2);
 }
@@ -658,21 +663,25 @@ button { font: inherit; }
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--muted);
+  color: #0f766e;
   font-size: 14px;
   font-weight: 800;
 }
 
 .v3-checkpoint-tabs button[aria-selected="true"] {
-  background: var(--surface);
-  color: var(--ink);
-  box-shadow: 0 1px 3px rgba(17, 24, 39, 0.1);
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.12);
 }
 
 .v3-checkpoint-tabs button:disabled { opacity: 0.42; }
 
 .v3-approach-card {
-  padding: 14px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
   border: 1px solid rgba(17, 24, 39, 0.14);
   border-radius: 16px;
   background: var(--surface);
@@ -718,10 +727,11 @@ button { font: inherit; }
 
 .v3-route-visual {
   position: relative;
-  aspect-ratio: 1;
-  width: calc(100% + 56px);
-  margin: 12px -28px 0;
+  width: 100%;
+  height: clamp(190px, calc(var(--landing-visible-height) - 470px), 280px);
+  margin: 0;
   overflow: hidden;
+  border-radius: 12px;
   background: #ffffff;
 }
 
@@ -734,13 +744,29 @@ button { font: inherit; }
   filter: none;
 }
 
+.v3-road-chip {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  transform: translateX(-50%);
+  background: #0f766e;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 820;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .v3-navigate {
   min-height: 48px;
   display: grid;
   place-items: center;
-  margin-top: 10px;
+  margin-top: 0;
   border-radius: 10px;
-  background: var(--ink);
+  background: #0f766e;
   color: #ffffff;
   font-size: 15px;
   font-weight: 800;
@@ -786,19 +812,19 @@ button { font: inherit; }
 .v3-route-list {
   display: grid;
   gap: 1px;
-  margin-top: 12px;
+  margin: 0;
   overflow: hidden;
   border-top: 1px solid var(--line);
 }
 
 .v3-route-list button {
   width: 100%;
-  min-height: 56px;
+  min-height: 43px;
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 9px 0;
+  padding: 5px 0;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
@@ -811,7 +837,14 @@ button { font: inherit; }
   margin-inline: -8px;
   width: calc(100% + 16px);
   padding-inline: 8px;
-  background: var(--teal-soft);
+  background: #eef2f3;
+}
+
+.v3-route-list button.recommended {
+  margin-inline: -8px;
+  width: calc(100% + 16px);
+  padding-inline: 8px;
+  background: rgba(15, 118, 110, 0.12);
 }
 
 .v3-route-letter {
@@ -859,7 +892,9 @@ button { font: inherit; }
   bottom: 0;
   left: 0;
   width: min(100%, 560px);
-  min-height: 66px;
+  min-height: 62px;
+  gap: 5px;
+  padding: 5px;
   margin: 0 auto;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -877,6 +912,7 @@ button { font: inherit; }
   align-content: center;
   gap: 1px;
   border: 0;
+  border-radius: 10px;
   background: transparent;
   color: var(--muted-2);
   font-size: 12px;
@@ -884,7 +920,10 @@ button { font: inherit; }
 }
 
 .v3-bottom-nav button > span { font-size: 22px; font-weight: 700; line-height: 1; }
-.v3-bottom-nav button.active { color: var(--ink); }
+.v3-bottom-nav button.active {
+  background: #4b5563;
+  color: #ffffff;
+}
 .v3-bottom-nav button:disabled { opacity: 0.45; }
 
 .v2-decision-grid {

@@ -1177,7 +1177,15 @@ function V3WoodlandsApproach({
     void fetch(staticAssetUrl("approaches.json"), { cache: "no-store" })
       .then(async (response) => response.ok ? response.json() as Promise<ApproachSnapshot> : null)
       .then((payload) => {
-        if (!cancelled && payload?.routes?.length) setSnapshot(payload);
+        if (!cancelled && payload?.routes?.length) {
+          setSnapshot(payload);
+          const recommended = payload.routes
+            .filter((route): route is ApproachSnapshotRoute & { durationMinutes: number } => route.durationMinutes != null)
+            .reduce<ApproachSnapshotRoute | null>((bestRoute, route) => (
+              !bestRoute || route.durationMinutes! < bestRoute.durationMinutes! ? route : bestRoute
+            ), null);
+          if (recommended) setSelectedApproach(recommended.id);
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -1200,26 +1208,14 @@ function V3WoodlandsApproach({
 
   const best = routes.reduce((current, route) => route.durationMinutes < current.durationMinutes ? route : current, routes[0]);
   const selected = routes.find((route) => route.id === selectedApproach) ?? best;
-  useEffect(() => {
-    if (snapshot?.generatedAt) setSelectedApproach(best.id);
-  }, [best.id, snapshot?.generatedAt]);
 
   return (
-    <section className="v3-landing" id="top" aria-labelledby="v3-title">
+    <section className="v3-landing" id="top" aria-label="Woodlands approach recommendation">
       <div className="v3-checkpoint-tabs" role="tablist" aria-label="Checkpoint">
         <button type="button" role="tab" aria-selected="true">Woodlands</button>
         <button type="button" role="tab" aria-selected="false" disabled>Tuas</button>
       </div>
       <article className="v3-approach-card">
-        <div className="v3-kicker-row">
-          <span>Towards Johor</span>
-        </div>
-        <h1 id="v3-title">{selected.id === best.id ? `Take ${selected.label.slice(0, 1)}` : `${selected.label.slice(0, 1)} route`}</h1>
-        <p className="v3-instruction">{selected.instruction}</p>
-        <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
-          <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
-        </div>
-        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">Navigate here</a>
         <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
           {routes.map((route) => {
             const isRecommended = route.id === best.id;
@@ -1240,6 +1236,11 @@ function V3WoodlandsApproach({
             );
           })}
         </div>
+        <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
+          <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
+          <span className="v3-road-chip">{woodlandsApproachRoadNames[selected.id]}</span>
+        </div>
+        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">Navigate here</a>
       </article>
       <nav className="v3-bottom-nav" aria-label="Travel direction">
         <button type="button" className="active" aria-current="page">
@@ -1616,13 +1617,15 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-road-left": "woodlands-approach-c.gif",
 };
 
+const woodlandsApproachRoadNames: Record<ApproachId, string> = {
+  "woodlands-bke-right": "Bukit Timah Expressway",
+  "woodlands-bke-left": "Bukit Timah Expressway",
+  "woodlands-road-left": "Woodlands Road",
+};
+
 function staticAssetUrl(asset: string) {
   if (typeof window === "undefined") return asset;
   return new URL(asset, document.baseURI).toString();
-}
-
-function roundedCoordinate(value: number) {
-  return Math.round(value * 10_000) / 10_000;
 }
 
 function googleMapsNavigationUrl(approach: ApproachId) {
@@ -1714,6 +1717,11 @@ export default function Home() {
     setLiveTraffic(null);
   }, []);
 
+  const expireAuth = useCallback(() => {
+    window.localStorage.removeItem(authStorageKey);
+    setAuth({ status: "signed-out" });
+  }, []);
+
   const completeGoogleSignIn = useCallback(async (credential: string) => {
     setAuth({ status: "loading" });
     try {
@@ -1744,11 +1752,11 @@ export default function Home() {
     if (auth.status === "ready") headers.set("Authorization", `Bearer ${auth.credential}`);
     const response = await fetch(input, { ...init, headers });
     if (response.status === 401 && isAuthConfigured) {
-      signOut();
+      expireAuth();
       throw new Error("Google sign-in expired");
     }
     return response;
-  }, [auth, isAuthConfigured, signOut]);
+  }, [auth, expireAuth, isAuthConfigured]);
 
   const loadTraffic = useCallback(async () => {
     if (isAuthConfigured && auth.status !== "ready") {
@@ -1793,9 +1801,9 @@ export default function Home() {
   useEffect(() => {
     if (!isAuthConfigured) return;
     if (auth.status === "ready" && !credentialIsFresh(auth.credential)) {
-      window.setTimeout(signOut, 0);
+      window.setTimeout(expireAuth, 0);
     }
-  }, [auth, isAuthConfigured, signOut]);
+  }, [auth, expireAuth, isAuthConfigured]);
 
   useEffect(() => {
     if (!isAuthConfigured || auth.status === "ready") return;
@@ -1807,8 +1815,8 @@ export default function Home() {
       button.replaceChildren();
       window.google.accounts.id.initialize({
         client_id: clientId,
-        auto_select: false,
-        use_fedcm_for_prompt: false,
+        auto_select: true,
+        use_fedcm_for_prompt: true,
         callback: (response) => {
           if (response.credential) void completeGoogleSignIn(response.credential);
         },
@@ -1820,6 +1828,7 @@ export default function Home() {
         text: "continue_with",
         width: 292,
       });
+      window.google.accounts.id.prompt();
     };
 
     if (window.google) {
