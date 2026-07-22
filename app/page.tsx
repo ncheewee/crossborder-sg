@@ -124,14 +124,6 @@ type ApproachSnapshot = {
   source?: string;
   routes?: ApproachSnapshotRoute[];
 };
-type ApproachTrip = {
-  approachId: ApproachId;
-  startedAt: string;
-  estimatedMinutes: number;
-  joinLatitude: number;
-  joinLongitude: number;
-  accuracyMeters: number | null;
-};
 
 declare global {
   interface Window {
@@ -1173,16 +1165,11 @@ function V2CameraStrip({
 
 function V3WoodlandsApproach({
   trafficByDirection,
-  onSubmitTrip,
 }: {
   trafficByDirection: TrafficByDirection;
-  onSubmitTrip: (trip: ApproachTrip, clearedPosition: Coordinate | null) => Promise<void>;
 }) {
   const [snapshot, setSnapshot] = useState<ApproachSnapshot | null>(null);
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
-  const [activeTrip, setActiveTrip] = useState<ApproachTrip | null>(null);
-  const [measurementStatus, setMeasurementStatus] = useState<"idle" | "locating" | "active" | "saving" | "saved" | "error">("idle");
-  const [measurementMessage, setMeasurementMessage] = useState("");
   const woodlands = compactCheckpointData(trafficByDirection["sg-my"], "sg-my", "Woodlands");
 
   useEffect(() => {
@@ -1196,19 +1183,6 @@ function V3WoodlandsApproach({
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => {
-    try {
-      const stored = JSON.parse(window.localStorage.getItem(approachTripStorageKey) ?? "null") as ApproachTrip | null;
-      if (stored?.startedAt && stored.approachId) {
-        setActiveTrip(stored);
-        setSelectedApproach(stored.approachId);
-        setMeasurementStatus("active");
-      }
-    } catch {
-      window.localStorage.removeItem(approachTripStorageKey);
-    }
   }, []);
 
   const routes = useMemo(() => {
@@ -1226,94 +1200,26 @@ function V3WoodlandsApproach({
 
   const best = routes.reduce((current, route) => route.durationMinutes < current.durationMinutes ? route : current, routes[0]);
   const selected = routes.find((route) => route.id === selectedApproach) ?? best;
-  const runnerUp = routes
-    .filter((route) => route.id !== best.id)
-    .sort((left, right) => left.durationMinutes - right.durationMinutes)[0];
-  const saving = Math.max(0, (runnerUp?.durationMinutes ?? best.durationMinutes) - best.durationMinutes);
-  const snapshotTime = snapshot?.generatedAt ? formatTimeLabel(snapshot.generatedAt) : null;
-  const hasGoogleSnapshot = routes.every((route) => route.source === "google");
-
   useEffect(() => {
-    if (!activeTrip && snapshot?.generatedAt) setSelectedApproach(best.id);
-  }, [activeTrip, best.id, snapshot?.generatedAt]);
-
-  const selectedGap = Math.max(0, selected.durationMinutes - best.durationMinutes);
-
-  const startMeasurement = () => {
-    if (!("geolocation" in navigator)) {
-      setMeasurementStatus("error");
-      setMeasurementMessage("Precise location is unavailable on this device.");
-      return;
-    }
-    setMeasurementStatus("locating");
-    setMeasurementMessage("");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const trip: ApproachTrip = {
-          approachId: selected.id,
-          startedAt: new Date().toISOString(),
-          estimatedMinutes: selected.durationMinutes,
-          joinLatitude: roundedCoordinate(position.coords.latitude),
-          joinLongitude: roundedCoordinate(position.coords.longitude),
-          accuracyMeters: Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null,
-        };
-        window.localStorage.setItem(approachTripStorageKey, JSON.stringify(trip));
-        setActiveTrip(trip);
-        setMeasurementStatus("active");
-      },
-      () => {
-        setMeasurementStatus("error");
-        setMeasurementMessage("Location was not shared. Navigation still works without it.");
-      },
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 0 },
-    );
-  };
-
-  const completeMeasurement = () => {
-    if (!activeTrip) return;
-    const finish = async (position: Coordinate | null) => {
-      setMeasurementStatus("saving");
-      try {
-        await onSubmitTrip(activeTrip, position);
-        window.localStorage.removeItem(approachTripStorageKey);
-        setActiveTrip(null);
-        setMeasurementStatus("saved");
-        setMeasurementMessage("Crossing recorded. Thank you.");
-      } catch {
-        setMeasurementStatus("error");
-        setMeasurementMessage("Could not save this crossing yet. Keep this screen open and try again.");
-      }
-    };
-    if (!("geolocation" in navigator)) {
-      void finish(null);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => void finish({ latitude: roundedCoordinate(position.coords.latitude), longitude: roundedCoordinate(position.coords.longitude) }),
-      () => void finish(null),
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
-    );
-  };
+    if (snapshot?.generatedAt) setSelectedApproach(best.id);
+  }, [best.id, snapshot?.generatedAt]);
 
   return (
     <section className="v3-landing" id="top" aria-labelledby="v3-title">
+      <div className="v3-checkpoint-tabs" role="tablist" aria-label="Checkpoint">
+        <button type="button" role="tab" aria-selected="true">Woodlands</button>
+        <button type="button" role="tab" aria-selected="false" disabled>Tuas</button>
+      </div>
       <article className="v3-approach-card">
         <div className="v3-kicker-row">
-          <span>Woodlands · towards JB</span>
-          <small>{hasGoogleSnapshot && snapshotTime ? `Google snapshot ${snapshotTime}` : "Live checkpoint model · Google snapshot pending"}</small>
+          <span>Towards Johor</span>
         </div>
-        <h1 id="v3-title">{selectedGap === 0 ? `Take ${selected.label.slice(0, 1)}` : `${selected.label.slice(0, 1)} route`}</h1>
+        <h1 id="v3-title">{selected.id === best.id ? `Take ${selected.label.slice(0, 1)}` : `${selected.label.slice(0, 1)} route`}</h1>
         <p className="v3-instruction">{selected.instruction}</p>
         <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
         </div>
-        <div className="v3-answer-row">
-          <div>
-            <span>Queue to Johor clearance</span>
-            <strong>{selected.durationMinutes} <em>min</em></strong>
-          </div>
-          <p>{selectedGap > 0 ? `${selectedGap} min behind ${best.label.slice(0, 1)}` : saving > 0 ? `About ${saving} min ahead` : "No meaningful gap"}</p>
-        </div>
+        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">Navigate here</a>
         <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
           {routes.map((route) => {
             const isRecommended = route.id === best.id;
@@ -1329,32 +1235,22 @@ function V3WoodlandsApproach({
               >
                 <span className="v3-route-letter">{route.label.slice(0, 1)}</span>
                 <span className="v3-route-copy"><strong>{route.label.slice(4)}</strong></span>
-                <span className="v3-route-time">{route.durationMinutes} min</span>
+                <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
               </button>
             );
           })}
         </div>
-        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">
-          Navigate with Google Maps
-        </a>
-        <div className="v3-measurement">
-          {measurementStatus === "active" && activeTrip ? (
-            <>
-              <span>Crossing in progress · {woodlandsApproachDefinitions.find((item) => item.id === activeTrip.approachId)?.label}</span>
-              <button type="button" onClick={completeMeasurement}>I cleared Johor</button>
-            </>
-          ) : (
-            <>
-              <span>Make this route smarter</span>
-              <button type="button" onClick={startMeasurement} disabled={measurementStatus === "locating"}>
-                {measurementStatus === "locating" ? "Getting location…" : "Measure this crossing"}
-              </button>
-            </>
-          )}
-          {(measurementMessage || measurementStatus === "saved") && <small>{measurementMessage}</small>}
-        </div>
-        <p className="v3-method">{hasGoogleSnapshot ? "Google route duration is the primary signal. Cameras moderate confidence." : "Google route snapshot is loading. Current values use the live Woodlands checkpoint model."} The optional measurement records only start and finish points.</p>
       </article>
+      <nav className="v3-bottom-nav" aria-label="Travel direction">
+        <button type="button" className="active" aria-current="page">
+          <span aria-hidden="true">↗</span>
+          <strong>To Johor</strong>
+        </button>
+        <button type="button" disabled>
+          <span aria-hidden="true">↙</span>
+          <strong>To Singapore</strong>
+        </button>
+      </nav>
     </section>
   );
 }
@@ -1687,7 +1583,6 @@ function googleClientId() {
 }
 
 const authStorageKey = "crossborder.google-auth.v1";
-const approachTripStorageKey = "crossborder.woodlands-approach-trip.v1";
 
 const woodlandsApproachDefinitions: Array<{
   id: ApproachId;
@@ -1736,6 +1631,12 @@ function googleMapsNavigationUrl(approach: ApproachId) {
   const destination = "1.466582,103.768091";
   const waypoint = `${definition.waypoint.latitude},${definition.waypoint.longitude}`;
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&waypoints=${encodeURIComponent(waypoint)}`;
+}
+
+function durationTone(minutes: number) {
+  if (minutes < 45) return "good";
+  if (minutes < 75) return "amber";
+  return "bad";
 }
 
 function decodeJwtPayload<T>(credential: string): T | null {
@@ -2245,34 +2146,6 @@ export default function Home() {
     }
   }
 
-  async function submitApproachTrip(trip: ApproachTrip, clearedPosition: Coordinate | null) {
-    const clearedAt = new Date();
-    const startedAt = new Date(trip.startedAt);
-    const actualWaitMinutes = Math.round((clearedAt.getTime() - startedAt.getTime()) / 60_000);
-    if (!Number.isFinite(actualWaitMinutes) || actualWaitMinutes < 5 || actualWaitMinutes > 240) {
-      throw new Error("Crossing duration is outside the report range");
-    }
-    const response = await authFetch(`${apiBase()}/api/approach-reports`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        direction: "sg-my",
-        checkpoint: "Woodlands",
-        approachId: trip.approachId,
-        startedAt: trip.startedAt,
-        clearedAt: clearedAt.toISOString(),
-        estimatedMinutes: trip.estimatedMinutes,
-        actualWaitMinutes,
-        joinLatitude: trip.joinLatitude,
-        joinLongitude: trip.joinLongitude,
-        clearLatitude: clearedPosition?.latitude ?? null,
-        clearLongitude: clearedPosition?.longitude ?? null,
-        locationAccuracyMeters: trip.accuracyMeters,
-      }),
-    });
-    if (!response.ok) throw new Error(`Approach report API returned ${response.status}`);
-  }
-
   if (isAuthConfigured && auth.status !== "ready") {
     return (
       <main className="app-shell login-shell">
@@ -2307,7 +2180,7 @@ export default function Home() {
         )}
       </header>
 
-      <V3WoodlandsApproach trafficByDirection={trafficByDirection} onSubmitTrip={submitApproachTrip} />
+      <V3WoodlandsApproach trafficByDirection={trafficByDirection} />
 
     </main>
   );
