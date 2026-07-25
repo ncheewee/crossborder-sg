@@ -1265,9 +1265,8 @@ function V3WoodlandsApproach({
           onClick={useCurrentLocation}
           disabled={locationState === "locating" || locationState === "loading"}
         >
-          {locationState === "locating" ? "Finding your location…" : locationState === "loading" ? "Checking full journey times…" : locationState === "ready" ? "Update my location" : "Use my location for total time"}
+          {locationState === "locating" ? "Finding your location…" : locationState === "loading" ? "Checking full journey times…" : "Use my location"}
         </button>
-        {locationState === "ready" && <p className="v3-location-status">Total time includes the drive to each approach and clearance into Johor.</p>}
         {locationState === "error" && <p className="v3-location-status error">Could not load live total times. Showing the queue-to-clearance comparison.</p>}
         <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
           {routes.map((route) => {
@@ -1297,7 +1296,7 @@ function V3WoodlandsApproach({
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
           <span className="v3-road-chip">{woodlandsApproachRoadNames[selected.id]}</span>
         </div>
-        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">Navigate here</a>
+        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>
       </article>
       <nav className="v3-bottom-nav" aria-label="Travel direction">
         <button type="button" className="active" aria-current="page">
@@ -1650,19 +1649,19 @@ const woodlandsApproachDefinitions: Array<{
 }> = [
   {
     id: "woodlands-bke-right",
-    label: "A · BKE flyover",
+    label: "A · BKE → Flyover",
     instruction: "Right flyover lane",
     waypoint: { latitude: 1.439328, longitude: 103.768422 },
   },
   {
     id: "woodlands-bke-left",
-    label: "B · BKE mainline",
+    label: "B · BKE → Traffic junction",
     instruction: "Left mainline lane",
     waypoint: { latitude: 1.439356, longitude: 103.768285 },
   },
   {
     id: "woodlands-road-left",
-    label: "C · Woodlands Rd",
+    label: "C · Woodlands Road",
     instruction: "Left-turn feeder",
     waypoint: { latitude: 1.440516, longitude: 103.768108 },
   },

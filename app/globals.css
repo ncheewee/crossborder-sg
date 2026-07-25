@@ -35,7 +35,7 @@ body {
     radial-gradient(circle at 50% -10%, rgba(55, 65, 81, 0.09), transparent 28rem),
     var(--background);
   color: var(--ink);
-  font-family: var(--font-geist-sans), Arial, sans-serif;
+  font-family: "Avenir Next", Avenir, "SF Pro Rounded", "Trebuchet MS", Arial, sans-serif;
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
 }
@@ -750,7 +750,7 @@ button { font: inherit; }
 .v3-route-visual {
   position: relative;
   width: 100%;
-  height: clamp(170px, calc(var(--landing-visible-height) - 570px), 220px);
+  height: min(80vw, calc(var(--landing-visible-height) - 470px), 320px);
   display: grid;
   place-items: center;
   margin: 0;
@@ -761,8 +761,8 @@ button { font: inherit; }
 
 .v3-route-visual img {
   display: block;
-  width: min(100%, 220px);
-  height: min(100%, 220px);
+  width: min(80vw, calc(var(--landing-visible-height) - 470px), 320px);
+  height: min(80vw, calc(var(--landing-visible-height) - 470px), 320px);
   object-fit: cover;
   object-position: 2% center;
   border-radius: 12px;
@@ -771,7 +771,7 @@ button { font: inherit; }
 
 .v3-road-chip {
   position: absolute;
-  bottom: 22px;
+  top: 22px;
   left: 50%;
   min-height: 28px;
   padding: 6px 10px;
@@ -866,13 +866,11 @@ button { font: inherit; }
 }
 
 .v3-route-list button.recommended {
-  margin-inline: -8px;
-  width: calc(100% + 16px);
-  padding-inline: 8px;
-  min-height: 66px;
-  background: #e8f0ff;
-  box-shadow: inset 3px 0 #2563eb;
+  background: transparent;
+  box-shadow: none;
 }
+
+.v3-route-list button.recommended.selected { background: #eef2f3; }
 
 .v3-route-letter {
   display: grid;
@@ -887,7 +885,7 @@ button { font: inherit; }
 }
 
 .v3-route-list button.recommended .v3-route-letter {
-  background: #2563eb;
+  background: #0f766e;
   color: #ffffff;
 }
 
@@ -895,8 +893,9 @@ button { font: inherit; }
 .v3-route-copy strong,
 .v3-route-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .v3-route-copy strong { color: var(--ink); font-size: 15px; font-weight: 820; }
+.v3-route-list button.recommended .v3-route-copy strong { color: #0f766e; }
 .v3-route-copy small { margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 690; }
-.v3-route-copy .v3-fastest-note { color: #2563eb; font-size: 11px; font-weight: 840; }
+.v3-route-copy .v3-fastest-note { color: #0f766e; font-size: 11px; font-weight: 840; }
 .v3-route-time {
   min-width: 62px;
   min-height: 30px;
