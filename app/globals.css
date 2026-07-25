@@ -787,6 +787,8 @@ button { font: inherit; }
 }
 
 .v3-navigate {
+  width: min(80vw, calc(var(--landing-visible-height) - 470px), 320px);
+  align-self: center;
   min-height: 48px;
   display: grid;
   place-items: center;
@@ -845,7 +847,7 @@ button { font: inherit; }
 
 .v3-route-list button {
   width: 100%;
-  min-height: 62px;
+  min-height: 66px;
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
@@ -893,17 +895,28 @@ button { font: inherit; }
 .v3-route-copy { min-width: 0; }
 .v3-route-copy strong,
 .v3-route-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.v3-route-copy strong { color: var(--ink); font-size: 15px; font-weight: 650; }
+.v3-route-copy strong { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 15px; font-weight: 650; }
+.v3-route-copy strong > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .v3-route-list button.recommended .v3-route-copy strong { color: #0f766e; }
 .v3-route-copy small { margin-top: 1px; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.15; }
+.v3-fastest-chip {
+  flex: 0 0 auto;
+  padding: 3px 5px;
+  border: 1px solid #2563eb;
+  border-radius: 7px;
+  color: #2563eb;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
 .v3-route-time {
-  min-width: 62px;
-  min-height: 30px;
+  min-width: 70px;
+  min-height: 38px;
   display: inline-grid;
   place-items: center;
   border-radius: 10px;
   color: #ffffff;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 750;
   white-space: nowrap;
 }

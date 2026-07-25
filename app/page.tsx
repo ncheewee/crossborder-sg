@@ -1283,7 +1283,10 @@ function V3WoodlandsApproach({
               >
                 <span className="v3-route-letter">{route.label.slice(0, 1)}</span>
                 <span className="v3-route-copy">
-                  <strong>{route.label.slice(4)}</strong>
+                  <strong>
+                    <span>{route.label.slice(4)}</span>
+                    {isRecommended && <span className="v3-fastest-chip">FASTEST</span>}
+                  </strong>
                   {route.preApproachMinutes != null && <small>{route.preApproachMinutes} min to approach · {route.crossingMinutes} min crossing</small>}
                 </span>
                 <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
@@ -1293,7 +1296,7 @@ function V3WoodlandsApproach({
         </div>
         <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
-          <span className="v3-road-chip">{woodlandsApproachRoadNames[selected.id]}</span>
+          <span className="v3-road-chip">{selected.label.slice(4)}</span>
         </div>
         <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>
       </article>
@@ -1648,13 +1651,13 @@ const woodlandsApproachDefinitions: Array<{
 }> = [
   {
     id: "woodlands-bke-right",
-    label: "A · BKE → Flyover",
+    label: "A · BKE (right) → Flyover",
     instruction: "Right flyover lane",
     waypoint: { latitude: 1.439328, longitude: 103.768422 },
   },
   {
     id: "woodlands-bke-left",
-    label: "B · BKE → Traffic junction",
+    label: "B · BKE (left) → Junction",
     instruction: "Left mainline lane",
     waypoint: { latitude: 1.439356, longitude: 103.768285 },
   },
@@ -1670,12 +1673,6 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-bke-right": "woodlands-approach-a.gif",
   "woodlands-bke-left": "woodlands-approach-b.gif",
   "woodlands-road-left": "woodlands-approach-c.gif",
-};
-
-const woodlandsApproachRoadNames: Record<ApproachId, string> = {
-  "woodlands-bke-right": "Bukit Timah Expressway",
-  "woodlands-bke-left": "Bukit Timah Expressway",
-  "woodlands-road-left": "Woodlands Road",
 };
 
 function staticAssetUrl(asset: string) {
