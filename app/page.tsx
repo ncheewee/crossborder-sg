@@ -1670,9 +1670,9 @@ const woodlandsApproachDefinitions: Array<{
 ];
 
 const woodlandsApproachVisualImages: Record<ApproachId, string> = {
-  "woodlands-bke-right": "woodlands-approach-a.gif",
-  "woodlands-bke-left": "woodlands-approach-b.gif",
-  "woodlands-road-left": "woodlands-approach-c.gif",
+  "woodlands-bke-right": "woodlands-approach-a.gif?v=2",
+  "woodlands-bke-left": "woodlands-approach-b.gif?v=2",
+  "woodlands-road-left": "woodlands-approach-c.gif?v=2",
 };
 
 function staticAssetUrl(asset: string) {
