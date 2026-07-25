@@ -1285,7 +1285,6 @@ function V3WoodlandsApproach({
                 <span className="v3-route-copy">
                   <strong>{route.label.slice(4)}</strong>
                   {route.preApproachMinutes != null && <small>{route.preApproachMinutes} min to approach · {route.crossingMinutes} min crossing</small>}
-                  {isRecommended && route.preApproachMinutes != null && <small className="v3-fastest-note">FASTEST FROM HERE · {Math.max(0, routes.filter((item) => item.id !== route.id).reduce((closest, item) => Math.min(closest, item.durationMinutes), Number.POSITIVE_INFINITY) - route.durationMinutes)} min quicker</small>}
                 </span>
                 <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
               </button>

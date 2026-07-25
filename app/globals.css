@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
 
 :root {
@@ -35,7 +36,7 @@ body {
     radial-gradient(circle at 50% -10%, rgba(55, 65, 81, 0.09), transparent 28rem),
     var(--background);
   color: var(--ink);
-  font-family: "Avenir Next", Avenir, "SF Pro Rounded", "Trebuchet MS", Arial, sans-serif;
+  font-family: "Nunito", "Avenir Next", Avenir, "SF Pro Rounded", Arial, sans-serif;
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
 }
@@ -74,7 +75,7 @@ button { font: inherit; }
 .updated-line span {
   color: #ffffff;
   font-size: 13px;
-  font-weight: 780;
+  font-weight: 650;
 }
 
 .updated-line small {
@@ -90,7 +91,7 @@ button { font: inherit; }
   color: var(--ink);
   text-decoration: none;
   font-size: 20px;
-  font-weight: 760;
+  font-weight: 700;
   letter-spacing: -0.04em;
 }
 
@@ -665,7 +666,7 @@ button { font: inherit; }
   background: transparent;
   color: #0f766e;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .v3-checkpoint-tabs button[aria-selected="true"] {
@@ -695,7 +696,7 @@ button { font: inherit; }
   background: #ffffff;
   color: #0f766e;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .v3-location-action:disabled { opacity: 0.66; }
@@ -780,7 +781,7 @@ button { font: inherit; }
   background: #2563eb;
   color: #ffffff;
   font-size: 12px;
-  font-weight: 820;
+  font-weight: 700;
   line-height: 1;
   white-space: nowrap;
 }
@@ -794,7 +795,7 @@ button { font: inherit; }
   background: #0f766e;
   color: #ffffff;
   font-size: 15px;
-  font-weight: 800;
+  font-weight: 750;
   text-decoration: none;
 }
 
@@ -844,12 +845,12 @@ button { font: inherit; }
 
 .v3-route-list button {
   width: 100%;
-  min-height: 58px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 5px 0;
+  padding: 8px 0;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
@@ -881,7 +882,7 @@ button { font: inherit; }
   background: var(--surface-2);
   color: var(--muted);
   font-size: 14px;
-  font-weight: 840;
+  font-weight: 700;
 }
 
 .v3-route-list button.recommended .v3-route-letter {
@@ -892,10 +893,9 @@ button { font: inherit; }
 .v3-route-copy { min-width: 0; }
 .v3-route-copy strong,
 .v3-route-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.v3-route-copy strong { color: var(--ink); font-size: 15px; font-weight: 820; }
+.v3-route-copy strong { color: var(--ink); font-size: 15px; font-weight: 650; }
 .v3-route-list button.recommended .v3-route-copy strong { color: #0f766e; }
-.v3-route-copy small { margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 690; }
-.v3-route-copy .v3-fastest-note { color: #0f766e; font-size: 11px; font-weight: 840; }
+.v3-route-copy small { margin-top: 1px; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.15; }
 .v3-route-time {
   min-width: 62px;
   min-height: 30px;
@@ -904,7 +904,7 @@ button { font: inherit; }
   border-radius: 10px;
   color: #ffffff;
   font-size: 14px;
-  font-weight: 840;
+  font-weight: 750;
   white-space: nowrap;
 }
 
