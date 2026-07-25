@@ -124,6 +124,16 @@ type ApproachSnapshot = {
   source?: string;
   routes?: ApproachSnapshotRoute[];
 };
+type ApproachRouteOption = {
+  id: ApproachId;
+  preApproachMinutes: number;
+  crossingMinutes: number;
+  totalMinutes: number;
+};
+type ApproachOptionsResponse = {
+  generatedAt?: string;
+  routes?: ApproachRouteOption[];
+};
 
 declare global {
   interface Window {
@@ -1165,11 +1175,15 @@ function V2CameraStrip({
 
 function V3WoodlandsApproach({
   trafficByDirection,
+  loadApproachOptions,
 }: {
   trafficByDirection: TrafficByDirection;
+  loadApproachOptions: (coordinate: Coordinate) => Promise<ApproachOptionsResponse>;
 }) {
   const [snapshot, setSnapshot] = useState<ApproachSnapshot | null>(null);
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
+  const [locationState, setLocationState] = useState<"idle" | "locating" | "loading" | "ready" | "error">("idle");
+  const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const woodlands = compactCheckpointData(trafficByDirection["sg-my"], "sg-my", "Woodlands");
 
   useEffect(() => {
@@ -1198,16 +1212,45 @@ function V3WoodlandsApproach({
     const fallbackMinutes = [woodlands.waitMinutes + 6, woodlands.waitMinutes, woodlands.waitMinutes + 2];
     return woodlandsApproachDefinitions.map((definition, index) => {
       const live = source.get(definition.id);
+      const option = routeOptions[definition.id];
       return {
         ...definition,
-        durationMinutes: live?.durationMinutes ?? fallbackMinutes[index],
-        source: live?.durationMinutes != null ? "google" as const : "model" as const,
+        crossingMinutes: option?.crossingMinutes ?? live?.durationMinutes ?? fallbackMinutes[index],
+        preApproachMinutes: option?.preApproachMinutes ?? null,
+        durationMinutes: option?.totalMinutes ?? live?.durationMinutes ?? fallbackMinutes[index],
+        source: option || live?.durationMinutes != null ? "google" as const : "model" as const,
       };
     });
-  }, [snapshot, woodlands.waitMinutes]);
+  }, [routeOptions, snapshot, woodlands.waitMinutes]);
 
   const best = routes.reduce((current, route) => route.durationMinutes < current.durationMinutes ? route : current, routes[0]);
   const selected = routes.find((route) => route.id === selectedApproach) ?? best;
+
+  function useCurrentLocation() {
+    if (!("geolocation" in navigator)) {
+      setLocationState("error");
+      return;
+    }
+    setLocationState("locating");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocationState("loading");
+        void loadApproachOptions({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }).then((payload) => {
+          const options = Object.fromEntries((payload.routes ?? []).map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
+          if (!Object.keys(options).length) throw new Error("No approach routes returned");
+          setRouteOptions(options);
+          setLocationState("ready");
+        }).catch(() => {
+          setLocationState("error");
+        });
+      },
+      () => setLocationState("error"),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    );
+  }
 
   return (
     <section className="v3-landing" id="top" aria-label="Woodlands approach recommendation">
@@ -1216,6 +1259,16 @@ function V3WoodlandsApproach({
         <button type="button" role="tab" aria-selected="false" disabled>Tuas</button>
       </div>
       <article className="v3-approach-card">
+        <button
+          className="v3-location-action"
+          type="button"
+          onClick={useCurrentLocation}
+          disabled={locationState === "locating" || locationState === "loading"}
+        >
+          {locationState === "locating" ? "Finding your location…" : locationState === "loading" ? "Checking full journey times…" : locationState === "ready" ? "Update my location" : "Use my location for total time"}
+        </button>
+        {locationState === "ready" && <p className="v3-location-status">Total time includes the drive to each approach and clearance into Johor.</p>}
+        {locationState === "error" && <p className="v3-location-status error">Could not load live total times. Showing the queue-to-clearance comparison.</p>}
         <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
           {routes.map((route) => {
             const isRecommended = route.id === best.id;
@@ -1230,7 +1283,11 @@ function V3WoodlandsApproach({
                 onClick={() => setSelectedApproach(route.id)}
               >
                 <span className="v3-route-letter">{route.label.slice(0, 1)}</span>
-                <span className="v3-route-copy"><strong>{route.label.slice(4)}</strong></span>
+                <span className="v3-route-copy">
+                  <strong>{route.label.slice(4)}</strong>
+                  {route.preApproachMinutes != null && <small>{route.preApproachMinutes} min to approach · {route.crossingMinutes} min crossing</small>}
+                  {isRecommended && route.preApproachMinutes != null && <small className="v3-fastest-note">FASTEST FROM HERE · {Math.max(0, routes.filter((item) => item.id !== route.id).reduce((closest, item) => Math.min(closest, item.durationMinutes), Number.POSITIVE_INFINITY) - route.durationMinutes)} min quicker</small>}
+                </span>
                 <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
               </button>
             );
@@ -1758,6 +1815,16 @@ export default function Home() {
     return response;
   }, [auth, expireAuth, isAuthConfigured]);
 
+  const loadApproachOptions = useCallback(async (coordinate: Coordinate) => {
+    const response = await authFetch(`${apiBase()}/api/approach-options`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(coordinate),
+    });
+    if (!response.ok) throw new Error(`Approach options returned ${response.status}`);
+    return response.json() as Promise<ApproachOptionsResponse>;
+  }, [authFetch]);
+
   const loadTraffic = useCallback(async () => {
     if (isAuthConfigured && auth.status !== "ready") {
       setRefreshing(false);
@@ -2189,7 +2256,7 @@ export default function Home() {
         )}
       </header>
 
-      <V3WoodlandsApproach trafficByDirection={trafficByDirection} />
+      <V3WoodlandsApproach trafficByDirection={trafficByDirection} loadApproachOptions={loadApproachOptions} />
 
     </main>
   );

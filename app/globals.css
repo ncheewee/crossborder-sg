@@ -688,6 +688,28 @@ button { font: inherit; }
   box-shadow: 0 10px 28px rgba(17, 24, 39, 0.08);
 }
 
+.v3-location-action {
+  min-height: 36px;
+  border: 1px solid #0f766e;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.v3-location-action:disabled { opacity: 0.66; }
+
+.v3-location-status {
+  margin: -2px 2px 0;
+  color: #52606d;
+  font-size: 11px;
+  font-weight: 690;
+  line-height: 1.25;
+}
+
+.v3-location-status.error { color: #a3391f; }
+
 .v3-kicker-row {
   display: flex;
   align-items: center;
@@ -728,7 +750,9 @@ button { font: inherit; }
 .v3-route-visual {
   position: relative;
   width: 100%;
-  height: clamp(190px, calc(var(--landing-visible-height) - 470px), 280px);
+  height: clamp(170px, calc(var(--landing-visible-height) - 570px), 220px);
+  display: grid;
+  place-items: center;
   margin: 0;
   overflow: hidden;
   border-radius: 12px;
@@ -737,22 +761,23 @@ button { font: inherit; }
 
 .v3-route-visual img {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: min(100%, 220px);
+  height: min(100%, 220px);
   object-fit: cover;
-  object-position: left center;
+  object-position: 2% center;
+  border-radius: 12px;
   filter: none;
 }
 
 .v3-road-chip {
   position: absolute;
-  bottom: 10px;
+  bottom: 22px;
   left: 50%;
   min-height: 28px;
   padding: 6px 10px;
   border-radius: 10px;
   transform: translateX(-50%);
-  background: #0f766e;
+  background: #2563eb;
   color: #ffffff;
   font-size: 12px;
   font-weight: 820;
@@ -819,7 +844,7 @@ button { font: inherit; }
 
 .v3-route-list button {
   width: 100%;
-  min-height: 43px;
+  min-height: 58px;
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
@@ -844,7 +869,9 @@ button { font: inherit; }
   margin-inline: -8px;
   width: calc(100% + 16px);
   padding-inline: 8px;
-  background: rgba(15, 118, 110, 0.12);
+  min-height: 66px;
+  background: #e8f0ff;
+  box-shadow: inset 3px 0 #2563eb;
 }
 
 .v3-route-letter {
@@ -860,7 +887,7 @@ button { font: inherit; }
 }
 
 .v3-route-list button.recommended .v3-route-letter {
-  background: var(--ink);
+  background: #2563eb;
   color: #ffffff;
 }
 
@@ -869,6 +896,7 @@ button { font: inherit; }
 .v3-route-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .v3-route-copy strong { color: var(--ink); font-size: 15px; font-weight: 820; }
 .v3-route-copy small { margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 690; }
+.v3-route-copy .v3-fastest-note { color: #2563eb; font-size: 11px; font-weight: 840; }
 .v3-route-time {
   min-width: 62px;
   min-height: 30px;

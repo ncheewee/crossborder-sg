@@ -19,6 +19,15 @@ type Env = {
   MONITOR_API_KEY?: string;
   ALLOWED_EMAILS?: string;
   ALLOWED_DOMAINS?: string;
+  GOOGLE_ROUTES_API_KEY?: string;
+};
+
+type ApproachId = "woodlands-bke-right" | "woodlands-bke-left" | "woodlands-road-left";
+type ApproachRouteOption = {
+  id: ApproachId;
+  preApproachMinutes: number;
+  crossingMinutes: number;
+  totalMinutes: number;
 };
 
 type CameraPayload = {
@@ -66,10 +75,18 @@ type AuthUser = {
 
 const SOURCE_URL = "https://api.data.gov.sg/v1/transport/traffic-images";
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
+const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
+const johorClearance = { latitude: 1.466582, longitude: 103.768091 };
+const woodlandsApproachAnchors: Array<{ id: ApproachId; latitude: number; longitude: number }> = [
+  { id: "woodlands-bke-right", latitude: 1.439328, longitude: 103.768422 },
+  { id: "woodlands-bke-left", latitude: 1.439356, longitude: 103.768285 },
+  { id: "woodlands-road-left", latitude: 1.440516, longitude: 103.768108 },
+];
 const checkpoints: Checkpoint[] = ["Woodlands", "Tuas"];
 let googleKeysCache: { expiresAt: number; keys: JsonWebKey[] } | null = null;
 let authTablesReady: Promise<void> | null = null;
 let approachTripTableReady: Promise<void> | null = null;
+const approachRouteCache = new Map<string, { expiresAt: number; routes: ApproachRouteOption[] }>();
 
 function corsHeaders(env: Env) {
   return {
@@ -143,6 +160,15 @@ function parseApproachId(value: unknown) {
     || value === "woodlands-road-left"
     ? value
     : null;
+}
+
+function parseRouteDuration(value: unknown) {
+  const seconds = typeof value === "string" ? Number(value.replace(/s$/, "")) : Number.NaN;
+  return Number.isFinite(seconds) ? Math.max(1, Math.round(seconds / 60)) : null;
+}
+
+function routeCacheKey(latitude: number, longitude: number) {
+  return `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
 }
 
 function authConfigured(env: Env) {
@@ -745,6 +771,80 @@ async function handleReport(request: Request, env: Env, user: AuthUser | null = 
   }
 }
 
+async function computeApproachRoute(
+  origin: { latitude: number; longitude: number },
+  approach: { id: ApproachId; latitude: number; longitude: number },
+  apiKey: string,
+): Promise<ApproachRouteOption> {
+  const response = await fetch(GOOGLE_ROUTES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "routes.duration,routes.legs.duration",
+    },
+    body: JSON.stringify({
+      origin: { location: { latLng: origin } },
+      intermediates: [{ location: { latLng: { latitude: approach.latitude, longitude: approach.longitude } } }],
+      destination: { location: { latLng: johorClearance } },
+      travelMode: "DRIVE",
+      routingPreference: "TRAFFIC_AWARE",
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Google Routes returned ${response.status}`);
+  const route = (await response.json() as {
+    routes?: Array<{ duration?: string; legs?: Array<{ duration?: string }> }>;
+  }).routes?.[0];
+  const totalMinutes = parseRouteDuration(route?.duration);
+  const preApproachMinutes = parseRouteDuration(route?.legs?.[0]?.duration);
+  const crossingMinutes = parseRouteDuration(route?.legs?.[1]?.duration);
+  if (totalMinutes == null || preApproachMinutes == null || crossingMinutes == null) {
+    throw new Error("Google Routes response did not include both journey legs");
+  }
+
+  return { id: approach.id, preApproachMinutes, crossingMinutes, totalMinutes };
+}
+
+async function handleApproachOptions(request: Request, env: Env, user: AuthUser | null = null) {
+  if (!env.GOOGLE_ROUTES_API_KEY) {
+    return json(env, {
+      error: "google_routes_not_configured",
+      message: "Live location routing is not configured yet.",
+    }, { status: 503 });
+  }
+
+  try {
+    const body = await request.json() as { latitude?: unknown; longitude?: unknown };
+    const latitude = parseCoordinate(body.latitude);
+    const longitude = parseCoordinate(body.longitude);
+    if (latitude == null || longitude == null || latitude > 2 || longitude < 100) {
+      return json(env, {
+        error: "invalid_location",
+        message: "A valid Singapore location is required.",
+      }, { status: 400 });
+    }
+
+    const key = routeCacheKey(latitude, longitude);
+    const cached = approachRouteCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return json(env, { generatedAt: new Date().toISOString(), cached: true, routes: cached.routes });
+    }
+
+    const routes = await Promise.all(woodlandsApproachAnchors.map((approach) => (
+      computeApproachRoute({ latitude, longitude }, approach, env.GOOGLE_ROUTES_API_KEY!)
+    )));
+    approachRouteCache.set(key, { expiresAt: Date.now() + 90_000, routes });
+    if (user) await recordAuthEvent(neon(env.DATABASE_URL), user, "approach-options", request);
+    return json(env, { generatedAt: new Date().toISOString(), cached: false, routes });
+  } catch {
+    return json(env, {
+      error: "approach_options_unavailable",
+      message: "Live total journey times are unavailable right now.",
+    }, { status: 503 });
+  }
+}
+
 async function handleApproachReport(request: Request, env: Env, user: AuthUser | null = null) {
   try {
     const body = await request.json() as Record<string, unknown>;
@@ -890,6 +990,12 @@ export default {
       const user = await authenticateRequest(request, env);
       if (user instanceof Response) return user;
       return handleReport(request, env, user);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/approach-options") {
+      const user = await authenticateRequest(request, env);
+      if (user instanceof Response) return user;
+      return handleApproachOptions(request, env, user);
     }
 
     if (request.method === "POST" && url.pathname === "/api/approach-reports") {
