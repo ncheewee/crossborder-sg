@@ -110,20 +110,13 @@ type AuthState =
   | { status: "signed-out" | "loading" | "error"; message?: string }
   | { status: "ready"; credential: string; user: AuthUser };
 type GoogleCredentialResponse = { credential?: string; select_by?: string };
-type ApproachId = "woodlands-bke-right" | "woodlands-bke-left" | "woodlands-road-left";
-type ApproachSnapshotRoute = {
-  id: ApproachId;
-  label: string;
-  instruction: string;
-  durationMinutes: number | null;
-  staticMinutes: number | null;
-  updatedAt?: string;
-};
-type ApproachSnapshot = {
-  generatedAt?: string;
-  source?: string;
-  routes?: ApproachSnapshotRoute[];
-};
+type ApproachId =
+  | "woodlands-bke-right"
+  | "woodlands-bke-left"
+  | "woodlands-road-left"
+  | "woodlands-jln-lingkaran-dalam"
+  | "woodlands-ah2"
+  | "woodlands-bukit-chagar";
 type ApproachRouteOption = {
   id: ApproachId;
   preApproachMinutes: number;
@@ -1174,57 +1167,55 @@ function V2CameraStrip({
 }
 
 function V3WoodlandsApproach({
-  trafficByDirection,
   loadApproachOptions,
 }: {
-  trafficByDirection: TrafficByDirection;
-  loadApproachOptions: (coordinate: Coordinate) => Promise<ApproachOptionsResponse>;
+  loadApproachOptions: (coordinate: Coordinate, direction: Direction) => Promise<ApproachOptionsResponse>;
 }) {
-  const [snapshot, setSnapshot] = useState<ApproachSnapshot | null>(null);
+  const [travelDirection, setTravelDirection] = useState<Direction>("sg-my");
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
   const [locationState, setLocationState] = useState<"idle" | "locating" | "loading" | "ready" | "error">("idle");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
-  const woodlands = compactCheckpointData(trafficByDirection["sg-my"], "sg-my", "Woodlands");
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch(staticAssetUrl("approaches.json"), { cache: "no-store" })
-      .then(async (response) => response.ok ? response.json() as Promise<ApproachSnapshot> : null)
-      .then((payload) => {
-        if (!cancelled && payload?.routes?.length) {
-          setSnapshot(payload);
-          const recommended = payload.routes
-            .filter((route): route is ApproachSnapshotRoute & { durationMinutes: number } => route.durationMinutes != null)
-            .reduce<ApproachSnapshotRoute | null>((bestRoute, route) => (
-              !bestRoute || route.durationMinutes! < bestRoute.durationMinutes! ? route : bestRoute
-            ), null);
-          if (recommended) setSelectedApproach(recommended.id);
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
+  const definitions = woodlandsApproachDefinitions[travelDirection];
 
   const routes = useMemo(() => {
-    const source = new Map((snapshot?.routes ?? []).map((route) => [route.id, route]));
-    const fallbackMinutes = [woodlands.waitMinutes + 6, woodlands.waitMinutes, woodlands.waitMinutes + 2];
-    return woodlandsApproachDefinitions.map((definition, index) => {
-      const live = source.get(definition.id);
+    return definitions.map((definition) => {
       const option = routeOptions[definition.id];
       return {
         ...definition,
-        crossingMinutes: option?.crossingMinutes ?? live?.durationMinutes ?? fallbackMinutes[index],
+        crossingMinutes: option?.crossingMinutes ?? null,
         preApproachMinutes: option?.preApproachMinutes ?? null,
-        durationMinutes: option?.totalMinutes ?? live?.durationMinutes ?? fallbackMinutes[index],
-        source: option || live?.durationMinutes != null ? "google" as const : "model" as const,
+        durationMinutes: option?.totalMinutes ?? null,
       };
     });
-  }, [routeOptions, snapshot, woodlands.waitMinutes]);
+  }, [definitions, routeOptions]);
 
-  const best = routes.reduce((current, route) => route.durationMinutes < current.durationMinutes ? route : current, routes[0]);
-  const selected = routes.find((route) => route.id === selectedApproach) ?? best;
+  const readyRoutes = routes.filter((route): route is typeof route & { durationMinutes: number; preApproachMinutes: number; crossingMinutes: number } => (
+    route.durationMinutes != null && route.preApproachMinutes != null && route.crossingMinutes != null
+  ));
+  const best = readyRoutes.reduce<typeof readyRoutes[number] | null>((current, route) => (
+    !current || route.durationMinutes < current.durationMinutes ? route : current
+  ), null);
+  const selected = readyRoutes.find((route) => route.id === selectedApproach) ?? best;
+  const hasLiveTimes = readyRoutes.length === definitions.length;
+
+  function loadRoutes(coordinate: Coordinate, direction: Direction) {
+    setLocationState("loading");
+    void loadApproachOptions(coordinate, direction).then((payload) => {
+      const options = Object.fromEntries((payload.routes ?? []).map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
+      const nextDefinitions = woodlandsApproachDefinitions[direction];
+      if (!nextDefinitions.every((definition) => options[definition.id])) throw new Error("Incomplete route options");
+      setRouteOptions(options);
+      const recommended = nextDefinitions
+        .map((definition) => options[definition.id]!)
+        .reduce((current, route) => route.totalMinutes < current.totalMinutes ? route : current);
+      setSelectedApproach(recommended.id);
+      setLocationState("ready");
+    }).catch(() => {
+      setRouteOptions({});
+      setLocationState("error");
+    });
+  }
 
   function useCurrentLocation() {
     if (!("geolocation" in navigator)) {
@@ -1234,22 +1225,25 @@ function V3WoodlandsApproach({
     setLocationState("locating");
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setLocationState("loading");
-        void loadApproachOptions({
+        const coordinate = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
-        }).then((payload) => {
-          const options = Object.fromEntries((payload.routes ?? []).map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
-          if (!Object.keys(options).length) throw new Error("No approach routes returned");
-          setRouteOptions(options);
-          setLocationState("ready");
-        }).catch(() => {
-          setLocationState("error");
-        });
+        };
+        setCurrentLocation(coordinate);
+        loadRoutes(coordinate, travelDirection);
       },
       () => setLocationState("error"),
       { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
     );
+  }
+
+  function switchDirection(direction: Direction) {
+    if (direction === travelDirection) return;
+    setTravelDirection(direction);
+    setRouteOptions({});
+    setSelectedApproach(woodlandsApproachDefinitions[direction][0].id);
+    if (currentLocation) loadRoutes(currentLocation, direction);
+    else setLocationState("idle");
   }
 
   return (
@@ -1267,9 +1261,13 @@ function V3WoodlandsApproach({
         >
           {locationState === "locating" ? "Finding your location…" : locationState === "loading" ? "Checking full journey times…" : "Use my location"}
         </button>
-        {locationState === "error" && <p className="v3-location-status error">Could not load live total times. Showing the queue-to-clearance comparison.</p>}
-        <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
-          {routes.map((route) => {
+        {locationState === "error" && <p className="v3-location-status error">Could not load live total times. Try again.</p>}
+        {!hasLiveTimes && locationState !== "error" && (
+          <div className="v3-location-gate" aria-live="polite">Location is required for live route times.</div>
+        )}
+        {hasLiveTimes && selected && <>
+          <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
+          {readyRoutes.map((route) => {
             const isRecommended = route.id === best.id;
             const isSelected = route.id === selected.id;
             return (
@@ -1293,19 +1291,20 @@ function V3WoodlandsApproach({
               </button>
             );
           })}
-        </div>
-        <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
+          </div>
+          <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
           <span className="v3-road-chip">{selected.label.slice(4)}</span>
-        </div>
-        <a className="v3-navigate" href={googleMapsNavigationUrl(selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>
+          </div>
+          <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>
+        </>}
       </article>
       <nav className="v3-bottom-nav" aria-label="Travel direction">
-        <button type="button" className="active" aria-current="page">
+        <button type="button" className={travelDirection === "sg-my" ? "active" : ""} aria-current={travelDirection === "sg-my" ? "page" : undefined} onClick={() => switchDirection("sg-my")}>
           <span aria-hidden="true">↗</span>
           <strong>To Johor</strong>
         </button>
-        <button type="button" disabled>
+        <button type="button" className={travelDirection === "my-sg" ? "active" : ""} aria-current={travelDirection === "my-sg" ? "page" : undefined} onClick={() => switchDirection("my-sg")}>
           <span aria-hidden="true">↙</span>
           <strong>To Singapore</strong>
         </button>
@@ -1643,12 +1642,13 @@ function googleClientId() {
 
 const authStorageKey = "crossborder.google-auth.v1";
 
-const woodlandsApproachDefinitions: Array<{
+const woodlandsApproachDefinitions: Record<Direction, Array<{
   id: ApproachId;
   label: string;
   instruction: string;
   waypoint: Coordinate;
-}> = [
+}>> = {
+  "sg-my": [
   {
     id: "woodlands-bke-right",
     label: "A · BKE (right) → Flyover",
@@ -1667,12 +1667,36 @@ const woodlandsApproachDefinitions: Array<{
     instruction: "Left-turn feeder",
     waypoint: { latitude: 1.440516, longitude: 103.768108 },
   },
-];
+  ],
+  "my-sg": [
+    {
+      id: "woodlands-jln-lingkaran-dalam",
+      label: "A · Jln Lingkaran Dalam",
+      instruction: "Johor city approach",
+      waypoint: { latitude: 1.472085, longitude: 103.7651 },
+    },
+    {
+      id: "woodlands-ah2",
+      label: "B · AH2",
+      instruction: "North-south approach",
+      waypoint: { latitude: 1.482406, longitude: 103.7832 },
+    },
+    {
+      id: "woodlands-bukit-chagar",
+      label: "C · Bukit Chagar",
+      instruction: "Central Johor approach",
+      waypoint: { latitude: 1.46734, longitude: 103.7658 },
+    },
+  ],
+};
 
 const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-bke-right": "woodlands-approach-a.gif?v=2",
   "woodlands-bke-left": "woodlands-approach-b.gif?v=2",
   "woodlands-road-left": "woodlands-approach-c.gif?v=2",
+  "woodlands-jln-lingkaran-dalam": "woodlands.jpg",
+  "woodlands-ah2": "woodlands.jpg",
+  "woodlands-bukit-chagar": "woodlands.jpg",
 };
 
 function staticAssetUrl(asset: string) {
@@ -1680,10 +1704,10 @@ function staticAssetUrl(asset: string) {
   return new URL(asset, document.baseURI).toString();
 }
 
-function googleMapsNavigationUrl(approach: ApproachId) {
-  const definition = woodlandsApproachDefinitions.find((item) => item.id === approach)
-    ?? woodlandsApproachDefinitions[0];
-  const destination = "1.466582,103.768091";
+function googleMapsNavigationUrl(direction: Direction, approach: ApproachId) {
+  const definition = woodlandsApproachDefinitions[direction].find((item) => item.id === approach)
+    ?? woodlandsApproachDefinitions[direction][0];
+  const destination = direction === "sg-my" ? "1.466582,103.768091" : "1.4430746,103.7683229";
   const waypoint = `${definition.waypoint.latitude},${definition.waypoint.longitude}`;
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&waypoints=${encodeURIComponent(waypoint)}`;
 }
@@ -1810,11 +1834,11 @@ export default function Home() {
     return response;
   }, [auth, expireAuth, isAuthConfigured]);
 
-  const loadApproachOptions = useCallback(async (coordinate: Coordinate) => {
+  const loadApproachOptions = useCallback(async (coordinate: Coordinate, direction: Direction) => {
     const response = await authFetch(`${apiBase()}/api/approach-options`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(coordinate),
+      body: JSON.stringify({ ...coordinate, direction }),
     });
     if (!response.ok) throw new Error(`Approach options returned ${response.status}`);
     return response.json() as Promise<ApproachOptionsResponse>;
@@ -2251,7 +2275,7 @@ export default function Home() {
         )}
       </header>
 
-      <V3WoodlandsApproach trafficByDirection={trafficByDirection} loadApproachOptions={loadApproachOptions} />
+      <V3WoodlandsApproach loadApproachOptions={loadApproachOptions} />
 
     </main>
   );

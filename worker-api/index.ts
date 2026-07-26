@@ -22,7 +22,13 @@ type Env = {
   GOOGLE_ROUTES_API_KEY?: string;
 };
 
-type ApproachId = "woodlands-bke-right" | "woodlands-bke-left" | "woodlands-road-left";
+type ApproachId =
+  | "woodlands-bke-right"
+  | "woodlands-bke-left"
+  | "woodlands-road-left"
+  | "woodlands-jln-lingkaran-dalam"
+  | "woodlands-ah2"
+  | "woodlands-bukit-chagar";
 type ApproachRouteOption = {
   id: ApproachId;
   preApproachMinutes: number;
@@ -76,12 +82,26 @@ type AuthUser = {
 const SOURCE_URL = "https://api.data.gov.sg/v1/transport/traffic-images";
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
-const johorClearance = { latitude: 1.466582, longitude: 103.768091 };
-const woodlandsApproachAnchors: Array<{ id: ApproachId; latitude: number; longitude: number }> = [
-  { id: "woodlands-bke-right", latitude: 1.439328, longitude: 103.768422 },
-  { id: "woodlands-bke-left", latitude: 1.439356, longitude: 103.768285 },
-  { id: "woodlands-road-left", latitude: 1.440516, longitude: 103.768108 },
-];
+type ApproachAnchor = { id: ApproachId; latitude: number; longitude: number };
+type Coordinate = { latitude: number; longitude: number };
+const woodlandsRoutePlans: Record<Direction, { clearance: Coordinate; approaches: ApproachAnchor[] }> = {
+  "sg-my": {
+    clearance: { latitude: 1.466582, longitude: 103.768091 },
+    approaches: [
+      { id: "woodlands-bke-right", latitude: 1.439328, longitude: 103.768422 },
+      { id: "woodlands-bke-left", latitude: 1.439356, longitude: 103.768285 },
+      { id: "woodlands-road-left", latitude: 1.440516, longitude: 103.768108 },
+    ],
+  },
+  "my-sg": {
+    clearance: { latitude: 1.4430746, longitude: 103.7683229 },
+    approaches: [
+      { id: "woodlands-jln-lingkaran-dalam", latitude: 1.472085, longitude: 103.7651 },
+      { id: "woodlands-ah2", latitude: 1.482406, longitude: 103.7832 },
+      { id: "woodlands-bukit-chagar", latitude: 1.46734, longitude: 103.7658 },
+    ],
+  },
+};
 const checkpoints: Checkpoint[] = ["Woodlands", "Tuas"];
 let googleKeysCache: { expiresAt: number; keys: JsonWebKey[] } | null = null;
 let authTablesReady: Promise<void> | null = null;
@@ -155,10 +175,10 @@ function parseTimestamp(value: unknown) {
 }
 
 function parseApproachId(value: unknown) {
-  return value === "woodlands-bke-right"
-    || value === "woodlands-bke-left"
-    || value === "woodlands-road-left"
-    ? value
+  return Object.values(woodlandsRoutePlans)
+    .flatMap((plan) => plan.approaches)
+    .some((approach) => approach.id === value)
+    ? value as ApproachId
     : null;
 }
 
@@ -167,8 +187,8 @@ function parseRouteDuration(value: unknown) {
   return Number.isFinite(seconds) ? Math.max(1, Math.round(seconds / 60)) : null;
 }
 
-function routeCacheKey(latitude: number, longitude: number) {
-  return `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
+function routeCacheKey(latitude: number, longitude: number, direction: Direction) {
+  return `${direction}:${latitude.toFixed(3)},${longitude.toFixed(3)}`;
 }
 
 function authConfigured(env: Env) {
@@ -772,8 +792,9 @@ async function handleReport(request: Request, env: Env, user: AuthUser | null = 
 }
 
 async function computeApproachRoute(
-  origin: { latitude: number; longitude: number },
-  approach: { id: ApproachId; latitude: number; longitude: number },
+  origin: Coordinate,
+  approach: ApproachAnchor,
+  clearance: Coordinate,
   apiKey: string,
 ): Promise<ApproachRouteOption> {
   const response = await fetch(GOOGLE_ROUTES_URL, {
@@ -786,7 +807,7 @@ async function computeApproachRoute(
     body: JSON.stringify({
       origin: { location: { latLng: origin } },
       intermediates: [{ location: { latLng: { latitude: approach.latitude, longitude: approach.longitude } } }],
-      destination: { location: { latLng: johorClearance } },
+      destination: { location: { latLng: clearance } },
       travelMode: "DRIVE",
       routingPreference: "TRAFFIC_AWARE",
     }),
@@ -815,24 +836,26 @@ async function handleApproachOptions(request: Request, env: Env, user: AuthUser 
   }
 
   try {
-    const body = await request.json() as { latitude?: unknown; longitude?: unknown };
+    const body = await request.json() as { latitude?: unknown; longitude?: unknown; direction?: unknown };
     const latitude = parseCoordinate(body.latitude);
     const longitude = parseCoordinate(body.longitude);
-    if (latitude == null || longitude == null || latitude > 2 || longitude < 100) {
+    const direction = parseReportDirection(body.direction);
+    if (latitude == null || longitude == null || latitude > 2 || longitude < 100 || !direction) {
       return json(env, {
         error: "invalid_location",
-        message: "A valid Singapore location is required.",
+        message: "A valid current location and travel direction are required.",
       }, { status: 400 });
     }
 
-    const key = routeCacheKey(latitude, longitude);
+    const key = routeCacheKey(latitude, longitude, direction);
     const cached = approachRouteCache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
       return json(env, { generatedAt: new Date().toISOString(), cached: true, routes: cached.routes });
     }
 
-    const routes = await Promise.all(woodlandsApproachAnchors.map((approach) => (
-      computeApproachRoute({ latitude, longitude }, approach, env.GOOGLE_ROUTES_API_KEY!)
+    const plan = woodlandsRoutePlans[direction];
+    const routes = await Promise.all(plan.approaches.map((approach) => (
+      computeApproachRoute({ latitude, longitude }, approach, plan.clearance, env.GOOGLE_ROUTES_API_KEY!)
     )));
     approachRouteCache.set(key, { expiresAt: Date.now() + 90_000, routes });
     if (user) await recordAuthEvent(neon(env.DATABASE_URL), user, "approach-options", request);
@@ -884,7 +907,7 @@ async function handleApproachReport(request: Request, env: Env, user: AuthUser |
     ) {
       return json(env, {
         error: "invalid_approach_report",
-        message: "Record a 5–240 minute Woodlands-to-JB crossing with a valid approach and start point.",
+        message: "Record a 5–240 minute Woodlands crossing with a valid approach and start point.",
       }, { status: 400 });
     }
 
