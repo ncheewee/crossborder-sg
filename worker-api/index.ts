@@ -79,6 +79,11 @@ type AuthUser = {
   hostedDomain: string | null;
 };
 
+type AppSession = {
+  token: string;
+  expiresAt: string;
+};
+
 const SOURCE_URL = "https://api.data.gov.sg/v1/transport/traffic-images";
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
@@ -103,6 +108,7 @@ const woodlandsRoutePlans: Record<Direction, { clearance: Coordinate; approaches
   },
 };
 const checkpoints: Checkpoint[] = ["Woodlands", "Tuas"];
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 let googleKeysCache: { expiresAt: number; keys: JsonWebKey[] } | null = null;
 let authTablesReady: Promise<void> | null = null;
 let approachTripTableReady: Promise<void> | null = null;
@@ -333,6 +339,23 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>) {
         user_agent text
       )
     `;
+    await sql`
+      create table if not exists app_sessions (
+        token_hash text primary key,
+        google_sub text not null,
+        email text not null,
+        name text,
+        picture text,
+        hosted_domain text,
+        expires_at timestamptz not null,
+        created_at timestamptz not null default now(),
+        last_used_at timestamptz not null default now()
+      )
+    `;
+    await sql`
+      create index if not exists app_sessions_expiry_idx
+        on app_sessions (expires_at)
+    `;
   })();
   return authTablesReady;
 }
@@ -427,6 +450,68 @@ async function recordAuthEvent(
   }
 }
 
+function createSessionToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return `cb_${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function hashSessionToken(token: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function createAppSession(sql: ReturnType<typeof neon>, user: AuthUser): Promise<AppSession> {
+  await ensureAuthTables(sql);
+  const token = createSessionToken();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  await sql`
+    insert into app_sessions (
+      token_hash,
+      google_sub,
+      email,
+      name,
+      picture,
+      hosted_domain,
+      expires_at
+    )
+    values (
+      ${await hashSessionToken(token)},
+      ${user.sub},
+      ${user.email},
+      ${user.name},
+      ${user.picture},
+      ${user.hostedDomain},
+      ${expiresAt}
+    )
+  `;
+  return { token, expiresAt };
+}
+
+async function authenticateAppSession(token: string, sql: ReturnType<typeof neon>): Promise<AuthUser | null> {
+  await ensureAuthTables(sql);
+  const rows = await sql`
+    select google_sub, email, name, picture, hosted_domain
+    from app_sessions
+    where token_hash = ${await hashSessionToken(token)}
+      and expires_at > now()
+    limit 1
+  ` as Array<{ google_sub: string; email: string; name: string | null; picture: string | null; hosted_domain: string | null }>;
+  const session = rows[0];
+  if (!session) return null;
+  await sql`
+    update app_sessions
+    set last_used_at = now()
+    where token_hash = ${await hashSessionToken(token)}
+  `;
+  return {
+    sub: session.google_sub,
+    email: session.email,
+    name: session.name,
+    picture: session.picture,
+    hostedDomain: session.hosted_domain,
+  };
+}
+
 async function authenticateRequest(request: Request, env: Env): Promise<AuthUser | Response | null> {
   if (!authConfigured(env)) return null;
   const monitorKey = request.headers.get("X-Monitor-Key");
@@ -435,10 +520,15 @@ async function authenticateRequest(request: Request, env: Env): Promise<AuthUser
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) return authRequired(env) ? unauthorized(env) : null;
   try {
+    if (token.startsWith("cb_")) {
+      const user = await authenticateAppSession(token, neon(env.DATABASE_URL));
+      if (user) return user;
+      throw new Error("App session expired");
+    }
     return await verifyGoogleIdToken(token, env);
   } catch {
     return authRequired(env)
-      ? unauthorized(env, "Google sign-in expired. Please sign in again.")
+      ? unauthorized(env, "Your session expired. Please sign in again.")
       : null;
   }
 }
@@ -971,10 +1061,13 @@ async function handleGoogleAuth(request: Request, env: Env) {
     const body = await request.json() as { credential?: unknown };
     const credential = typeof body.credential === "string" ? body.credential : "";
     const user = await verifyGoogleIdToken(credential, env);
-    await recordAuthEvent(neon(env.DATABASE_URL), user, "login", request);
+    const sql = neon(env.DATABASE_URL);
+    await recordAuthEvent(sql, user, "login", request);
+    const session = await createAppSession(sql, user);
     return json(env, {
       ok: true,
       user,
+      session,
     });
   } catch (error) {
     return json(env, {

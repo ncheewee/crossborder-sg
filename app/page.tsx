@@ -108,7 +108,7 @@ type AuthUser = {
 type AuthState =
   | { status: "disabled" }
   | { status: "signed-out" | "loading" | "error"; message?: string }
-  | { status: "ready"; credential: string; user: AuthUser };
+  | { status: "ready"; sessionToken: string; user: AuthUser };
 type GoogleCredentialResponse = { credential?: string; select_by?: string };
 type ApproachId =
   | "woodlands-bke-right"
@@ -1640,7 +1640,7 @@ function googleClientId() {
   return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
 }
 
-const authStorageKey = "crossborder.google-auth.v1";
+const authStorageKey = "crossborder.google-auth.v2";
 
 const woodlandsApproachDefinitions: Record<Direction, Array<{
   id: ApproachId;
@@ -1718,37 +1718,22 @@ function durationTone(minutes: number) {
   return "bad";
 }
 
-function decodeJwtPayload<T>(credential: string): T | null {
-  try {
-    const payload = credential.split(".")[1];
-    if (!payload) return null;
-    const normalized = payload.replaceAll("-", "+").replaceAll("_", "/");
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    return JSON.parse(window.atob(padded)) as T;
-  } catch {
-    return null;
-  }
-}
-
-function credentialIsFresh(credential: string) {
-  const payload = decodeJwtPayload<{ exp?: number }>(credential);
-  return Boolean(payload?.exp && payload.exp * 1000 > Date.now() + 60_000);
-}
-
 function initialAuthState(): AuthState {
   if (!googleClientId()) return { status: "disabled" };
   if (typeof window === "undefined") return { status: "signed-out" };
   try {
     const saved = JSON.parse(window.localStorage.getItem(authStorageKey) ?? "null") as {
-      credential?: string;
+      sessionToken?: string;
+      expiresAt?: string;
       user?: AuthUser;
     } | null;
-    if (saved?.credential && saved.user && credentialIsFresh(saved.credential)) {
-      return { status: "ready", credential: saved.credential, user: saved.user };
+    if (saved?.sessionToken && saved.user && saved.expiresAt && new Date(saved.expiresAt).getTime() > Date.now() + 60_000) {
+      return { status: "ready", sessionToken: saved.sessionToken, user: saved.user };
     }
   } catch {
     // Ignore corrupt local auth state and show the sign-in gate.
   }
+  window.localStorage.removeItem("crossborder.google-auth.v1");
   window.localStorage.removeItem(authStorageKey);
   return { status: "signed-out" };
 }
@@ -1807,13 +1792,16 @@ export default function Home() {
         body: JSON.stringify({ credential }),
       });
       if (!response.ok) throw new Error(`Google auth returned ${response.status}`);
-      const payload = await response.json() as { user?: AuthUser };
-      if (!payload.user) throw new Error("Google auth response missing user");
+      const payload = await response.json() as { user?: AuthUser; session?: { token?: string; expiresAt?: string } };
+      if (!payload.user || !payload.session?.token || !payload.session.expiresAt) {
+        throw new Error("Google auth response missing session");
+      }
       window.localStorage.setItem(authStorageKey, JSON.stringify({
-        credential,
+        sessionToken: payload.session.token,
+        expiresAt: payload.session.expiresAt,
         user: payload.user,
       }));
-      setAuth({ status: "ready", credential, user: payload.user });
+      setAuth({ status: "ready", sessionToken: payload.session.token, user: payload.user });
     } catch {
       window.localStorage.removeItem(authStorageKey);
       setAuth({
@@ -1825,7 +1813,7 @@ export default function Home() {
 
   const authFetch = useCallback(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);
-    if (auth.status === "ready") headers.set("Authorization", `Bearer ${auth.credential}`);
+    if (auth.status === "ready") headers.set("Authorization", `Bearer ${auth.sessionToken}`);
     const response = await fetch(input, { ...init, headers });
     if (response.status === 401 && isAuthConfigured) {
       expireAuth();
@@ -1883,13 +1871,6 @@ export default function Home() {
       setRefreshing(false);
     }
   }, [auth.status, authFetch, direction, isAuthConfigured]);
-
-  useEffect(() => {
-    if (!isAuthConfigured) return;
-    if (auth.status === "ready" && !credentialIsFresh(auth.credential)) {
-      window.setTimeout(expireAuth, 0);
-    }
-  }, [auth, expireAuth, isAuthConfigured]);
 
   useEffect(() => {
     if (!isAuthConfigured || auth.status === "ready") return;
