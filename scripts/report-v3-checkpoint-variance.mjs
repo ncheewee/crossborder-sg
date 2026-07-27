@@ -13,7 +13,7 @@ const historyPath = join(captureRoot, "v3-checkpoint-history.csv");
 
 const routeSets = [
   {
-    label: "Woodlands to JB",
+    label: "Singapore to JB (Woodlands)",
     directionKey: "towardsJb",
     clearance: { latitude: 1.466582, longitude: 103.768091 },
     routes: [
@@ -23,7 +23,7 @@ const routeSets = [
     ],
   },
   {
-    label: "Woodlands to Singapore",
+    label: "JB to Singapore (Woodlands)",
     directionKey: "towardsSg",
     clearance: { latitude: 1.4430746, longitude: 103.7683229 },
     routes: [
@@ -104,30 +104,54 @@ function chartSvg(route, rows) {
   const width = 1120;
   const height = 620;
   const margin = { top: 94, right: 60, bottom: 70, left: 76 };
+  const palette = route.directionKey === "towardsJb"
+    ? { main: "#15803d", fill: "#15803d", label: "Singapore to JB" }
+    : { main: "#2563eb", fill: "#2563eb", label: "JB to Singapore" };
   const values = rows.flatMap((row) => [row.oursLow, row.oursHigh, row.checkpointLow, row.checkpointHigh]).filter(Number.isFinite);
   const low = Math.max(0, Math.floor((Math.min(...values, 20) - 10) / 10) * 10);
   const high = Math.ceil((Math.max(...values, 90) + 10) / 10) * 10;
-  const x = (index) => margin.left + index * (width - margin.left - margin.right) / Math.max(rows.length - 1, 1);
+  const dayStart = new Date(rows.at(-1)?.capturedAt ?? Date.now());
+  const singaporeDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(dayStart);
+  const minutesIntoSingaporeDay = (timestamp) => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Singapore", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).formatToParts(new Date(timestamp));
+    const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0) % 24;
+    const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+    return hour * 60 + minute;
+  };
+  const plotWidth = width - margin.left - margin.right;
+  const x = (row) => margin.left + minutesIntoSingaporeDay(row.capturedAt) / (24 * 60) * plotWidth;
   const y = (value) => height - margin.bottom - (value - low) * (height - margin.top - margin.bottom) / Math.max(high - low, 1);
-  const line = (key) => rows.map((row, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(row[key]).toFixed(1)}`).join(" ");
-  const area = `${line("oursLow")} ${rows.slice().reverse().map((row, reverseIndex) => `L${x(rows.length - 1 - reverseIndex).toFixed(1)},${y(row.oursHigh).toFixed(1)}`).join(" ")} Z`;
+  const line = (key) => rows.length < 2 ? "" : rows.map((row, index) => `${index ? "L" : "M"}${x(row).toFixed(1)},${y(row[key]).toFixed(1)}`).join(" ");
+  const area = rows.length < 2 ? "" : `${line("oursLow")} ${rows.slice().reverse().map((row) => `L${x(row).toFixed(1)},${y(row.oursHigh).toFixed(1)}`).join(" ")} Z`;
   const grids = Array.from({ length: (high - low) / 15 + 1 }, (_, index) => low + index * 15)
     .filter((value) => value <= high)
     .map((value) => `<line x1="${margin.left}" x2="${width - margin.right}" y1="${y(value)}" y2="${y(value)}" stroke="#d7dde2"/><text x="${margin.left - 14}" y="${y(value) + 5}" text-anchor="end" fill="#56616d" font-size="20">${value}m</text>`)
     .join("");
-  const ticks = rows.map((row, index) => index % Math.max(1, Math.floor(rows.length / 6)) === 0 || index === rows.length - 1
-    ? `<text x="${x(index)}" y="${height - 24}" text-anchor="middle" fill="#56616d" font-size="18">${new Date(row.capturedAt).toLocaleTimeString("en-SG", { hour: "numeric", hour12: true })}</text>` : "").join("");
+  const hourTicks = Array.from({ length: 7 }, (_, index) => index * 4).map((hour) => {
+    const tickX = margin.left + hour / 24 * plotWidth;
+    const label = hour === 0 ? "12am" : hour === 12 ? "12pm" : `${hour % 12} ${hour < 12 ? "am" : "pm"}`;
+    return `<line x1="${tickX}" x2="${tickX}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="#e4e8ec"/><text x="${tickX}" y="${height - 24}" text-anchor="middle" fill="#56616d" font-size="18">${label}</text>`;
+  }).join("");
+  const dots = rows.map((row) => `
+    <circle cx="${x(row)}" cy="${y(row.oursMid)}" r="7" fill="#ffffff" stroke="${palette.main}" stroke-width="5"/>
+    <circle cx="${x(row)}" cy="${y(row.checkpointMid)}" r="6" fill="#ffffff" stroke="${palette.main}" stroke-width="4" stroke-dasharray="3 2"/>
+  `).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     <text x="${margin.left}" y="42" fill="#111827" font-size="34" font-family="Arial, sans-serif" font-weight="700">${route.label}</text>
-    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">CrossBorder V3 route range vs Checkpoint.sg</text>
+    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Hourly route-time range vs Checkpoint.sg · ${singaporeDate}</text>
     ${grids}
-    <path d="${area}" fill="#0f766e" fill-opacity="0.16"/>
-    <path d="${line("oursMid")}" fill="none" stroke="#0f766e" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="${line("checkpointMid")}" fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="12 10"/>
-    <rect x="${width - 390}" y="24" width="16" height="16" rx="4" fill="#0f766e"/><text x="${width - 366}" y="39" fill="#23303b" font-size="18">CrossBorder V3 range</text>
-    <rect x="${width - 175}" y="24" width="16" height="16" rx="4" fill="#2563eb"/><text x="${width - 151}" y="39" fill="#23303b" font-size="18">Checkpoint.sg</text>
-    ${ticks}
+    ${hourTicks}
+    <path d="${area}" fill="${palette.fill}" fill-opacity="0.14"/>
+    <path d="${line("oursMid")}" fill="none" stroke="${palette.main}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${line("checkpointMid")}" fill="none" stroke="${palette.main}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="12 10"/>
+    ${dots}
+    <rect x="${width - 390}" y="24" width="16" height="16" rx="4" fill="${palette.main}"/><text x="${width - 366}" y="39" fill="#23303b" font-size="18">CrossBorder V3 range</text>
+    <line x1="${width - 175}" x2="${width - 159}" y1="32" y2="32" stroke="${palette.main}" stroke-width="5" stroke-dasharray="8 6"/><text x="${width - 151}" y="39" fill="#23303b" font-size="18">Checkpoint.sg</text>
   </svg>`;
 }
 
@@ -161,7 +185,12 @@ try { await access(historyPath); } catch { await writeFile(historyPath, "capture
 await appendFile(historyPath, `${historyLines.join("\n")}\n`);
 await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON.stringify({ capturedAt, rows }, null, 2)}\n`);
 for (const route of rows) {
-  const points = [...history, ...rows].filter((row) => row.label === route.label).slice(-24).map((row) => ({
+  const reportDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(route.capturedAt));
+  const points = [...history, ...rows].filter((row) => row.label === route.label && new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(row.capturedAt)) === reportDate).map((row) => ({
     ...row,
     oursLow: Number(row.oursLow), oursHigh: Number(row.oursHigh), oursMid: Number(row.oursMid),
     checkpointLow: Number(row.checkpointLow), checkpointHigh: Number(row.checkpointHigh), checkpointMid: Number(row.checkpointMid),

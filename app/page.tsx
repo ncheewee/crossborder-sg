@@ -1672,7 +1672,7 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
   "my-sg": [
     {
       id: "woodlands-jln-lingkaran-dalam",
-      label: "A · Jln Lingkaran Dalam",
+      label: "A · Jln Lingkaram Dalam (South)",
       instruction: "Johor city approach",
       waypoint: { latitude: 1.472085, longitude: 103.7651 },
     },
@@ -1690,8 +1690,8 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
     },
     {
       id: "woodlands-jb-city-square",
-      label: "D · JB City Square",
-      instruction: "City Square approach",
+      label: "D · Jln Lingkaram Dalam (North)",
+      instruction: "Northern city approach",
       waypoint: { latitude: 1.465356, longitude: 103.7702 },
     },
   ],
