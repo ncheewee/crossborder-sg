@@ -170,6 +170,7 @@ for (const route of routeSets) {
   rows.push({
     capturedAt,
     label: route.label,
+    directionKey: route.directionKey,
     routeCount: route.routes.length,
     oursLow: oursRange[0],
     oursHigh: oursRange[1],
