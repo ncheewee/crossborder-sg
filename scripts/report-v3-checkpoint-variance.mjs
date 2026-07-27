@@ -10,6 +10,8 @@ const chatId = process.env.TELEGRAM_CHAT_ID;
 const googleKey = process.env.GOOGLE_ROUTES_API_KEY;
 const routesUrl = "https://routes.googleapis.com/directions/v2:computeRoutes";
 const historyPath = join(captureRoot, "v3-checkpoint-history.csv");
+const routeSnapshotPath = join(captureRoot, "v3-google-routes-cache.json");
+const routeSnapshotMaxAgeMs = 6 * 60 * 60 * 1000;
 
 const routeSets = [
   {
@@ -123,6 +125,15 @@ async function readCsv(path) {
   }
 }
 
+async function readJson(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 async function sendPhoto(buffer, filename, caption) {
   if (!token || !chatId) throw new Error("Telegram credentials are not configured");
   let lastError;
@@ -204,17 +215,38 @@ const records = JSON.parse(await readFile(join(captureRoot, "latest-summary.json
 const checkpoint = records.find((record) => record.app === "Checkpoint.sg" && record.captureStatus !== "failed");
 if (!checkpoint) throw new Error("No fresh Checkpoint.sg capture is available");
 const capturedAt = new Date().toISOString();
+const storedRouteSnapshot = await readJson(routeSnapshotPath);
+const cachedSnapshot = storedRouteSnapshot ?? await readJson(join(captureRoot, "latest-v3-checkpoint-variance.json"));
+const cachedRouteRows = new Map((cachedSnapshot?.rows ?? []).map((row) => [row.label, row]));
+const routeSnapshotCapturedAt = typeof cachedSnapshot?.capturedAt === "string" ? cachedSnapshot.capturedAt : null;
+const hasFreshRouteSnapshot = routeSnapshotCapturedAt != null && Date.now() - new Date(routeSnapshotCapturedAt).getTime() < routeSnapshotMaxAgeMs;
 const rows = [];
+let refreshedRouteSnapshot = false;
 for (const route of routeSets) {
-  const durations = await Promise.all(route.routes.map((item) => routeDuration(item.origin, route.clearance)));
-  if (durations.some((value) => value == null)) throw new Error(`${route.label}: incomplete Google Routes response`);
-  const oursRange = [Math.min(...durations), Math.max(...durations)];
+  const cached = cachedRouteRows.get(route.label);
+  let oursRange;
+  let routeDataCapturedAt = routeSnapshotCapturedAt;
+  if (hasFreshRouteSnapshot && Number.isFinite(Number(cached?.oursLow)) && Number.isFinite(Number(cached?.oursHigh))) {
+    oursRange = [Number(cached.oursLow), Number(cached.oursHigh)];
+  } else {
+    try {
+      const durations = await Promise.all(route.routes.map((item) => routeDuration(item.origin, route.clearance)));
+      if (durations.some((value) => value == null)) throw new Error(`${route.label}: incomplete Google Routes response`);
+      oursRange = [Math.min(...durations), Math.max(...durations)];
+      routeDataCapturedAt = capturedAt;
+      refreshedRouteSnapshot = true;
+    } catch (error) {
+      if (!cached || !Number.isFinite(Number(cached.oursLow)) || !Number.isFinite(Number(cached.oursHigh))) throw error;
+      oursRange = [Number(cached.oursLow), Number(cached.oursHigh)];
+    }
+  }
   const checkpointRange = checkpoint.normalizedReadings?.woodlands?.[route.directionKey] ?? null;
   rows.push({
     capturedAt,
     label: route.label,
     directionKey: route.directionKey,
     routeCount: route.routes.length,
+    routeDataCapturedAt,
     oursLow: oursRange[0],
     oursHigh: oursRange[1],
     oursMid: midpoint(oursRange),
@@ -222,6 +254,12 @@ for (const route of routeSets) {
     checkpointHigh: checkpointRange?.[1] ?? null,
     checkpointMid: midpoint(checkpointRange),
   });
+}
+if (refreshedRouteSnapshot || !storedRouteSnapshot) {
+  const snapshotCapturedAt = refreshedRouteSnapshot
+    ? capturedAt
+    : rows.find((row) => row.routeDataCapturedAt)?.routeDataCapturedAt ?? capturedAt;
+  await writeFile(routeSnapshotPath, `${JSON.stringify({ capturedAt: snapshotCapturedAt, rows }, null, 2)}\n`);
 }
 const history = await readCsv(historyPath);
 const historyLines = rows.map((row) => [row.capturedAt, row.label, row.oursLow, row.oursHigh, row.oursMid, row.checkpointLow ?? "", row.checkpointHigh ?? "", row.checkpointMid ?? ""].join(","));
@@ -244,5 +282,7 @@ for (const route of rows) {
   const status = percent == null ? "No Checkpoint reading" : percent <= 10 ? "GREEN" : percent <= 30 ? "AMBER" : "RED";
   const assessment = assessVariance(route, points);
   const png = await sharp(Buffer.from(chartSvg(route, points))).png().toBuffer();
-  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder V3 A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\nCheckpoint.sg: ${formatRange(route.checkpointLow == null ? null : [route.checkpointLow, route.checkpointHigh])}\nVariance: ${signedMinutes(delta)} (${percent ?? "n/a"}%) ${status}\n\n${assessment}`);
+  const snapshotAgeMinutes = route.routeDataCapturedAt ? Math.max(0, Math.round((Date.now() - new Date(route.routeDataCapturedAt).getTime()) / 60_000)) : null;
+  const snapshotNote = snapshotAgeMinutes == null ? "Google route snapshot unavailable" : snapshotAgeMinutes < 60 ? "Google route snapshot live now" : `Google route snapshot ${Math.round(snapshotAgeMinutes / 60)}h old`;
+  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder V3 A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\nCheckpoint.sg: ${formatRange(route.checkpointLow == null ? null : [route.checkpointLow, route.checkpointHigh])}\nVariance: ${signedMinutes(delta)} (${percent ?? "n/a"}%) ${status}\n${snapshotNote}\n\n${assessment}`);
 }

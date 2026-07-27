@@ -1223,10 +1223,10 @@ function V3WoodlandsApproach({
         .reduce((current, route) => (includePreApproach ? route.totalMinutes < current.totalMinutes : route.crossingMinutes < current.crossingMinutes) ? route : current);
       setSelectedApproach(recommended.id);
       setLocationState("ready");
-    }).catch(() => {
+    }).catch((error) => {
       setRouteOptions({});
       setLocationState("error");
-      setLocationMessage("Location found, but live route times could not load. Reopen the app to retry.");
+      setLocationMessage(error instanceof Error ? error.message : "Live route times could not load. Reopen the app to retry.");
     });
   }
 
@@ -1871,8 +1871,9 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...coordinate, direction, includePreApproach }),
     });
-    if (!response.ok) throw new Error(`Approach options returned ${response.status}`);
-    return response.json() as Promise<ApproachOptionsResponse>;
+    const payload = await response.json() as ApproachOptionsResponse & { message?: string };
+    if (!response.ok) throw new Error(payload.message ?? `Approach options returned ${response.status}`);
+    return payload;
   }, [authFetch]);
 
   const loadTraffic = useCallback(async () => {

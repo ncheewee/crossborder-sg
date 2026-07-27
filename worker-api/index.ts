@@ -906,7 +906,13 @@ async function computeApproachRoute(
     }),
   });
 
-  if (!response.ok) throw new Error(`Google Routes returned ${response.status}`);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null) as { error?: { status?: string; message?: string } } | null;
+    if (response.status === 429 || errorBody?.error?.status === "RESOURCE_EXHAUSTED") {
+      throw new Error("Google route capacity is temporarily exhausted. It resets daily.");
+    }
+    throw new Error(errorBody?.error?.message ?? `Google Routes returned ${response.status}`);
+  }
   const route = (await response.json() as {
     routes?: Array<{ duration?: string; legs?: Array<{ duration?: string }> }>;
   }).routes?.[0];
@@ -954,10 +960,10 @@ async function handleApproachOptions(request: Request, env: Env, user: AuthUser 
     approachRouteCache.set(key, { expiresAt: Date.now() + 90_000, routes });
     if (user) await recordAuthEvent(neon(env.DATABASE_URL), user, "approach-options", request);
     return json(env, { generatedAt: new Date().toISOString(), cached: false, crossingOnly: !includePreApproach, routes });
-  } catch {
+  } catch (error) {
     return json(env, {
-      error: "approach_options_unavailable",
-      message: "Live total journey times are unavailable right now.",
+      error: error instanceof Error && error.message.includes("capacity") ? "google_routes_quota_exhausted" : "approach_options_unavailable",
+      message: error instanceof Error ? error.message : "Live total journey times are unavailable right now.",
     }, { status: 503 });
   }
 }
