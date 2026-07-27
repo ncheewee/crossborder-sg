@@ -1176,6 +1176,7 @@ function V3WoodlandsApproach({
   const [travelDirection, setTravelDirection] = useState<Direction>("sg-my");
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
   const [locationState, setLocationState] = useState<"idle" | "locating" | "loading" | "ready" | "error">("idle");
+  const [locationMessage, setLocationMessage] = useState("");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
   const [crossingOnly, setCrossingOnly] = useState(false);
@@ -1209,6 +1210,7 @@ function V3WoodlandsApproach({
 
   function loadRoutes(coordinate: Coordinate, direction: Direction) {
     setLocationState("loading");
+    setLocationMessage("");
     const includePreApproach = isOnDepartureSide(coordinate, direction);
     void loadApproachOptions(coordinate, direction, includePreApproach).then((payload) => {
       const options = Object.fromEntries((payload.routes ?? []).map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
@@ -1224,27 +1226,50 @@ function V3WoodlandsApproach({
     }).catch(() => {
       setRouteOptions({});
       setLocationState("error");
+      setLocationMessage("Location found, but live route times could not load. Reopen the app to retry.");
     });
   }
 
   function useCurrentLocation() {
     if (!("geolocation" in navigator)) {
       setLocationState("error");
+      setLocationMessage("This browser does not support location access.");
       return;
     }
-    setLocationState("locating");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coordinate = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        };
-        setCurrentLocation(coordinate);
-        loadRoutes(coordinate, travelDirection);
-      },
-      () => setLocationState("error"),
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
-    );
+    const requestPosition = () => {
+      setLocationState("locating");
+      setLocationMessage("");
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const coordinate = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          };
+          setCurrentLocation(coordinate);
+          loadRoutes(coordinate, travelDirection);
+        },
+        (error) => {
+          setLocationState("error");
+          setLocationMessage(error.code === error.PERMISSION_DENIED
+            ? "Location is blocked for CrossBorder.sg. Allow it in the app or browser settings, then reopen."
+            : "Your location could not be found. Check device location services, then reopen the app.");
+        },
+        { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
+      );
+    };
+
+    if ("permissions" in navigator) {
+      void navigator.permissions.query({ name: "geolocation" }).then((permission) => {
+        if (permission.state === "denied") {
+          setLocationState("error");
+          setLocationMessage("Location is blocked for CrossBorder.sg. Allow it in the app or browser settings, then reopen.");
+          return;
+        }
+        requestPosition();
+      }).catch(requestPosition);
+      return;
+    }
+    requestPosition();
   }
 
   function switchDirection(direction: Direction) {
@@ -1271,7 +1296,7 @@ function V3WoodlandsApproach({
       </div>
       <article className={`v3-approach-card ${travelDirection === "my-sg" ? "returning" : ""}`}>
         {(locationState === "locating" || locationState === "loading") && <p className="v3-location-status">{locationState === "locating" ? "Finding your location…" : "Checking live route times…"}</p>}
-        {locationState === "error" && <p className="v3-location-status error">Location access is needed for live route times.</p>}
+        {locationState === "error" && <p className="v3-location-status error">{locationMessage}</p>}
         {!hasLiveTimes && locationState === "idle" && (
           <div className="v3-location-gate" aria-live="polite">Location is required for live route times.</div>
         )}
