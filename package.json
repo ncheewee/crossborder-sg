@@ -14,6 +14,7 @@
     "capture:competitors": "node scripts/capture-competitor-apps.mjs",
     "install:competitor-cron": "node scripts/install-local-competitor-launchd.mjs",
     "report:competitors": "node scripts/report-competitor-comparison.mjs",
+    "install:v3-checkpoint-variance": "node scripts/install-v3-checkpoint-variance-launchd.mjs",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",

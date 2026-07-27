@@ -690,6 +690,10 @@ button { font: inherit; }
   box-shadow: 0 10px 28px rgba(17, 24, 39, 0.08);
 }
 
+.v3-approach-card.returning {
+  --v3-route-media-size: min(72vw, calc(var(--landing-visible-height) - 536px), 280px);
+}
+
 .v3-location-action {
   min-height: 36px;
   border: 1px solid #0f766e;

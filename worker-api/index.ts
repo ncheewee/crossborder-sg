@@ -28,7 +28,8 @@ type ApproachId =
   | "woodlands-road-left"
   | "woodlands-jln-lingkaran-dalam"
   | "woodlands-ah2"
-  | "woodlands-bukit-chagar";
+  | "woodlands-bukit-chagar"
+  | "woodlands-jb-city-square";
 type ApproachRouteOption = {
   id: ApproachId;
   preApproachMinutes: number;
@@ -104,6 +105,7 @@ const woodlandsRoutePlans: Record<Direction, { clearance: Coordinate; approaches
       { id: "woodlands-jln-lingkaran-dalam", latitude: 1.472085, longitude: 103.7651 },
       { id: "woodlands-ah2", latitude: 1.482406, longitude: 103.7832 },
       { id: "woodlands-bukit-chagar", latitude: 1.46734, longitude: 103.7658 },
+      { id: "woodlands-jb-city-square", latitude: 1.465356, longitude: 103.7702 },
     ],
   },
 };

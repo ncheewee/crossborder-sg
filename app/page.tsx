@@ -116,7 +116,8 @@ type ApproachId =
   | "woodlands-road-left"
   | "woodlands-jln-lingkaran-dalam"
   | "woodlands-ah2"
-  | "woodlands-bukit-chagar";
+  | "woodlands-bukit-chagar"
+  | "woodlands-jb-city-square";
 type ApproachRouteOption = {
   id: ApproachId;
   preApproachMinutes: number;
@@ -1252,7 +1253,7 @@ function V3WoodlandsApproach({
         <button type="button" role="tab" aria-selected="true">Woodlands</button>
         <button type="button" role="tab" aria-selected="false" disabled>Tuas</button>
       </div>
-      <article className="v3-approach-card">
+      <article className={`v3-approach-card ${travelDirection === "my-sg" ? "returning" : ""}`}>
         <button
           className="v3-location-action"
           type="button"
@@ -1687,6 +1688,12 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
       instruction: "Central Johor approach",
       waypoint: { latitude: 1.46734, longitude: 103.7658 },
     },
+    {
+      id: "woodlands-jb-city-square",
+      label: "D · JB City Square",
+      instruction: "City Square approach",
+      waypoint: { latitude: 1.465356, longitude: 103.7702 },
+    },
   ],
 };
 
@@ -1697,6 +1704,7 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-jln-lingkaran-dalam": "woodlands.jpg",
   "woodlands-ah2": "woodlands.jpg",
   "woodlands-bukit-chagar": "woodlands.jpg",
+  "woodlands-jb-city-square": "woodlands.jpg",
 };
 
 function staticAssetUrl(asset: string) {
