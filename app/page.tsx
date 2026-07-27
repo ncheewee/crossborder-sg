@@ -120,12 +120,13 @@ type ApproachId =
   | "woodlands-jb-city-square";
 type ApproachRouteOption = {
   id: ApproachId;
-  preApproachMinutes: number;
+  preApproachMinutes: number | null;
   crossingMinutes: number;
   totalMinutes: number;
 };
 type ApproachOptionsResponse = {
   generatedAt?: string;
+  crossingOnly?: boolean;
   routes?: ApproachRouteOption[];
 };
 
@@ -1170,13 +1171,15 @@ function V2CameraStrip({
 function V3WoodlandsApproach({
   loadApproachOptions,
 }: {
-  loadApproachOptions: (coordinate: Coordinate, direction: Direction) => Promise<ApproachOptionsResponse>;
+  loadApproachOptions: (coordinate: Coordinate, direction: Direction, includePreApproach: boolean) => Promise<ApproachOptionsResponse>;
 }) {
   const [travelDirection, setTravelDirection] = useState<Direction>("sg-my");
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
   const [locationState, setLocationState] = useState<"idle" | "locating" | "loading" | "ready" | "error">("idle");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
+  const [crossingOnly, setCrossingOnly] = useState(false);
+  const requestedLocation = useRef(false);
   const definitions = woodlandsApproachDefinitions[travelDirection];
 
   const routes = useMemo(() => {
@@ -1191,8 +1194,8 @@ function V3WoodlandsApproach({
     });
   }, [definitions, routeOptions]);
 
-  const readyRoutes = routes.filter((route): route is typeof route & { durationMinutes: number; preApproachMinutes: number; crossingMinutes: number } => (
-    route.durationMinutes != null && route.preApproachMinutes != null && route.crossingMinutes != null
+  const readyRoutes = routes.filter((route): route is typeof route & { durationMinutes: number; crossingMinutes: number } => (
+    route.durationMinutes != null && route.crossingMinutes != null
   ));
   const best = readyRoutes.reduce<typeof readyRoutes[number] | null>((current, route) => (
     !current || route.durationMinutes < current.durationMinutes ? route : current
@@ -1200,16 +1203,22 @@ function V3WoodlandsApproach({
   const selected = readyRoutes.find((route) => route.id === selectedApproach) ?? best;
   const hasLiveTimes = readyRoutes.length === definitions.length;
 
+  function isOnDepartureSide(coordinate: Coordinate, direction: Direction) {
+    return direction === "sg-my" ? coordinate.latitude < 1.455 : coordinate.latitude > 1.455;
+  }
+
   function loadRoutes(coordinate: Coordinate, direction: Direction) {
     setLocationState("loading");
-    void loadApproachOptions(coordinate, direction).then((payload) => {
+    const includePreApproach = isOnDepartureSide(coordinate, direction);
+    void loadApproachOptions(coordinate, direction, includePreApproach).then((payload) => {
       const options = Object.fromEntries((payload.routes ?? []).map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
       const nextDefinitions = woodlandsApproachDefinitions[direction];
       if (!nextDefinitions.every((definition) => options[definition.id])) throw new Error("Incomplete route options");
       setRouteOptions(options);
+      setCrossingOnly(payload.crossingOnly ?? !includePreApproach);
       const recommended = nextDefinitions
         .map((definition) => options[definition.id]!)
-        .reduce((current, route) => route.totalMinutes < current.totalMinutes ? route : current);
+        .reduce((current, route) => (includePreApproach ? route.totalMinutes < current.totalMinutes : route.crossingMinutes < current.crossingMinutes) ? route : current);
       setSelectedApproach(recommended.id);
       setLocationState("ready");
     }).catch(() => {
@@ -1242,10 +1251,17 @@ function V3WoodlandsApproach({
     if (direction === travelDirection) return;
     setTravelDirection(direction);
     setRouteOptions({});
+    setCrossingOnly(false);
     setSelectedApproach(woodlandsApproachDefinitions[direction][0].id);
     if (currentLocation) loadRoutes(currentLocation, direction);
     else setLocationState("idle");
   }
+
+  useEffect(() => {
+    if (requestedLocation.current) return;
+    requestedLocation.current = true;
+    useCurrentLocation();
+  }, []);
 
   return (
     <section className="v3-landing" id="top" aria-label="Woodlands approach recommendation">
@@ -1254,22 +1270,16 @@ function V3WoodlandsApproach({
         <button type="button" role="tab" aria-selected="false" disabled>Tuas</button>
       </div>
       <article className={`v3-approach-card ${travelDirection === "my-sg" ? "returning" : ""}`}>
-        <button
-          className="v3-location-action"
-          type="button"
-          onClick={useCurrentLocation}
-          disabled={locationState === "locating" || locationState === "loading"}
-        >
-          {locationState === "locating" ? "Finding your location…" : locationState === "loading" ? "Checking full journey times…" : "Use my location"}
-        </button>
-        {locationState === "error" && <p className="v3-location-status error">Could not load live total times. Try again.</p>}
-        {!hasLiveTimes && locationState !== "error" && (
+        {(locationState === "locating" || locationState === "loading") && <p className="v3-location-status">{locationState === "locating" ? "Finding your location…" : "Checking live route times…"}</p>}
+        {locationState === "error" && <p className="v3-location-status error">Location access is needed for live route times.</p>}
+        {!hasLiveTimes && locationState === "idle" && (
           <div className="v3-location-gate" aria-live="polite">Location is required for live route times.</div>
         )}
         {hasLiveTimes && selected && <>
+          {crossingOnly && <p className="v3-crossing-only">Crossing times only from your current side of the border.</p>}
           <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
           {readyRoutes.map((route) => {
-            const isRecommended = route.id === best.id;
+            const isRecommended = route.id === best?.id;
             const isSelected = route.id === selected.id;
             return (
               <button
@@ -1286,18 +1296,18 @@ function V3WoodlandsApproach({
                     <span>{route.label.slice(4)}</span>
                     {isRecommended && <span className="v3-fastest-chip">FASTEST</span>}
                   </strong>
-                  {route.preApproachMinutes != null && <small>{route.preApproachMinutes} min to approach · {route.crossingMinutes} min crossing</small>}
+                  <small>{crossingOnly ? `${route.crossingMinutes} min crossing` : `${route.preApproachMinutes} min to approach · ${route.crossingMinutes} min crossing`}</small>
                 </span>
-                <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
+                <span className={`v3-route-time ${durationTone(crossingOnly ? route.crossingMinutes : route.durationMinutes)}`}>{crossingOnly ? route.crossingMinutes : route.durationMinutes} min</span>
               </button>
             );
           })}
           </div>
-          <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
+          {!crossingOnly && <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
           <span className="v3-road-chip">{selected.label.slice(4)}</span>
-          </div>
-          <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>
+          </div>}
+          {!crossingOnly && <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>}
         </>}
       </article>
       <nav className="v3-bottom-nav" aria-label="Travel direction">
@@ -1799,8 +1809,8 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credential }),
       });
-      if (!response.ok) throw new Error(`Google auth returned ${response.status}`);
-      const payload = await response.json() as { user?: AuthUser; session?: { token?: string; expiresAt?: string } };
+      const payload = await response.json() as { user?: AuthUser; session?: { token?: string; expiresAt?: string }; message?: string };
+      if (!response.ok) throw new Error(payload.message ?? `Google auth returned ${response.status}`);
       if (!payload.user || !payload.session?.token || !payload.session.expiresAt) {
         throw new Error("Google auth response missing session");
       }
@@ -1810,11 +1820,11 @@ export default function Home() {
         user: payload.user,
       }));
       setAuth({ status: "ready", sessionToken: payload.session.token, user: payload.user });
-    } catch {
+    } catch (error) {
       window.localStorage.removeItem(authStorageKey);
       setAuth({
         status: "error",
-        message: "Google sign-in could not be verified. Try again.",
+        message: error instanceof Error ? error.message : "Google sign-in could not be verified. Try again.",
       });
     }
   }, []);
@@ -1830,11 +1840,11 @@ export default function Home() {
     return response;
   }, [auth, expireAuth, isAuthConfigured]);
 
-  const loadApproachOptions = useCallback(async (coordinate: Coordinate, direction: Direction) => {
+  const loadApproachOptions = useCallback(async (coordinate: Coordinate, direction: Direction, includePreApproach: boolean) => {
     const response = await authFetch(`${apiBase()}/api/approach-options`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...coordinate, direction }),
+      body: JSON.stringify({ ...coordinate, direction, includePreApproach }),
     });
     if (!response.ok) throw new Error(`Approach options returned ${response.status}`);
     return response.json() as Promise<ApproachOptionsResponse>;
@@ -1890,8 +1900,8 @@ export default function Home() {
       button.replaceChildren();
       window.google.accounts.id.initialize({
         client_id: clientId,
-        auto_select: true,
-        use_fedcm_for_prompt: true,
+        auto_select: false,
+        use_fedcm_for_prompt: false,
         callback: (response) => {
           if (response.credential) void completeGoogleSignIn(response.credential);
         },
@@ -1903,7 +1913,6 @@ export default function Home() {
         text: "continue_with",
         width: 292,
       });
-      window.google.accounts.id.prompt();
     };
 
     if (window.google) {

@@ -48,6 +48,49 @@ function formatRange(range) {
   return range ? `${range[0]}-${range[1]}m` : "unavailable";
 }
 
+function signedMinutes(value) {
+  return `${value >= 0 ? "+" : ""}${value}m`;
+}
+
+function assessVariance(route, points) {
+  const current = points.at(-1);
+  if (!current) return "No comparable Checkpoint.sg reading was captured.";
+
+  const recent = points.slice(-4);
+  const deltas = recent.map((point) => point.oursMid - point.checkpointMid);
+  const average = Math.round(deltas.reduce((sum, value) => sum + value, 0) / deltas.length);
+  const sameDirection = deltas.length >= 3 && deltas.every((value) => value <= -10) ? "lower"
+    : deltas.length >= 3 && deltas.every((value) => value >= 10) ? "higher"
+      : null;
+  const currentGap = current.oursMid - current.checkpointMid;
+  const separated = current.oursHigh < current.checkpointLow
+    ? "Our full route range sits below Checkpoint's band"
+    : current.oursLow > current.checkpointHigh
+      ? "Our full route range sits above Checkpoint's band"
+      : "The two published ranges overlap";
+
+  if (recent.length === 1) {
+    return `${separated} by ${Math.abs(currentGap)}m at this check. This is the first same-day observation, so it is a discrepancy to investigate, not a calibration signal yet.`;
+  }
+
+  const previous = recent.at(-2);
+  const oursMovement = current.oursMid - previous.oursMid;
+  const checkpointMovement = current.checkpointMid - previous.checkpointMid;
+  const movement = Math.abs(oursMovement) <= 5 && Math.abs(checkpointMovement) <= 5
+    ? "Both sources are broadly steady hour-on-hour"
+    : Math.sign(oursMovement) === Math.sign(checkpointMovement)
+      ? `Both sources moved in the same direction (${signedMinutes(oursMovement)} ours, ${signedMinutes(checkpointMovement)} Checkpoint)`
+      : `The sources moved differently (${signedMinutes(oursMovement)} ours, ${signedMinutes(checkpointMovement)} Checkpoint)`;
+
+  if (sameDirection === "lower") {
+    return `${separated}; CrossBorder has stayed ${Math.abs(average)}m below Checkpoint on average across ${recent.length} hourly checks. ${movement}. Treat this as a likely measurement-boundary or model bias: validate against completed trips before lifting estimates wholesale.`;
+  }
+  if (sameDirection === "higher") {
+    return `${separated}; CrossBorder has stayed ${average}m above Checkpoint on average across ${recent.length} hourly checks. ${movement}. Check whether our chosen route starts earlier than Checkpoint's queue boundary before tuning down.`;
+  }
+  return `${separated}. The gap is not yet directionally stable over ${recent.length} checks (average ${signedMinutes(average)}). ${movement}. Keep collecting: the right lesson may be time-of-day sensitivity rather than a single offset.`;
+}
+
 async function routeDuration(origin, destination) {
   const response = await fetch(routesUrl, {
     method: "POST",
@@ -199,6 +242,7 @@ for (const route of rows) {
   const delta = route.oursMid - route.checkpointMid;
   const percent = route.checkpointMid ? Math.round(Math.abs(delta) / route.checkpointMid * 100) : null;
   const status = percent == null ? "No Checkpoint reading" : percent <= 10 ? "GREEN" : percent <= 30 ? "AMBER" : "RED";
+  const assessment = assessVariance(route, points);
   const png = await sharp(Buffer.from(chartSvg(route, points))).png().toBuffer();
-  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder V3 A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\nCheckpoint.sg: ${formatRange(route.checkpointLow == null ? null : [route.checkpointLow, route.checkpointHigh])}\nVariance: ${delta >= 0 ? "+" : ""}${delta}m (${percent ?? "n/a"}%) ${status}`);
+  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder V3 A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\nCheckpoint.sg: ${formatRange(route.checkpointLow == null ? null : [route.checkpointLow, route.checkpointHigh])}\nVariance: ${signedMinutes(delta)} (${percent ?? "n/a"}%) ${status}\n\n${assessment}`);
 }

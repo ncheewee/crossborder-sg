@@ -716,6 +716,15 @@ button { font: inherit; }
 
 .v3-location-status.error { color: #a3391f; }
 
+.v3-crossing-only {
+  margin: 0 2px;
+  color: #52606d;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+}
+
 .v3-location-gate {
   min-height: 332px;
   display: grid;

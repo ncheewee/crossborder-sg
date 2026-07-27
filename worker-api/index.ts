@@ -32,7 +32,7 @@ type ApproachId =
   | "woodlands-jb-city-square";
 type ApproachRouteOption = {
   id: ApproachId;
-  preApproachMinutes: number;
+  preApproachMinutes: number | null;
   crossingMinutes: number;
   totalMinutes: number;
 };
@@ -888,6 +888,7 @@ async function computeApproachRoute(
   approach: ApproachAnchor,
   clearance: Coordinate,
   apiKey: string,
+  includePreApproach: boolean,
 ): Promise<ApproachRouteOption> {
   const response = await fetch(GOOGLE_ROUTES_URL, {
     method: "POST",
@@ -897,8 +898,8 @@ async function computeApproachRoute(
       "X-Goog-FieldMask": "routes.duration,routes.legs.duration",
     },
     body: JSON.stringify({
-      origin: { location: { latLng: origin } },
-      intermediates: [{ location: { latLng: { latitude: approach.latitude, longitude: approach.longitude } } }],
+      origin: { location: { latLng: includePreApproach ? origin : { latitude: approach.latitude, longitude: approach.longitude } } },
+      ...(includePreApproach ? { intermediates: [{ location: { latLng: { latitude: approach.latitude, longitude: approach.longitude } } }] } : {}),
       destination: { location: { latLng: clearance } },
       travelMode: "DRIVE",
       routingPreference: "TRAFFIC_AWARE",
@@ -910,10 +911,10 @@ async function computeApproachRoute(
     routes?: Array<{ duration?: string; legs?: Array<{ duration?: string }> }>;
   }).routes?.[0];
   const totalMinutes = parseRouteDuration(route?.duration);
-  const preApproachMinutes = parseRouteDuration(route?.legs?.[0]?.duration);
-  const crossingMinutes = parseRouteDuration(route?.legs?.[1]?.duration);
-  if (totalMinutes == null || preApproachMinutes == null || crossingMinutes == null) {
-    throw new Error("Google Routes response did not include both journey legs");
+  const preApproachMinutes = includePreApproach ? parseRouteDuration(route?.legs?.[0]?.duration) : null;
+  const crossingMinutes = includePreApproach ? parseRouteDuration(route?.legs?.[1]?.duration) : totalMinutes;
+  if (totalMinutes == null || crossingMinutes == null || (includePreApproach && preApproachMinutes == null)) {
+    throw new Error("Google Routes response did not include the required route duration");
   }
 
   return { id: approach.id, preApproachMinutes, crossingMinutes, totalMinutes };
@@ -928,10 +929,11 @@ async function handleApproachOptions(request: Request, env: Env, user: AuthUser 
   }
 
   try {
-    const body = await request.json() as { latitude?: unknown; longitude?: unknown; direction?: unknown };
+    const body = await request.json() as { latitude?: unknown; longitude?: unknown; direction?: unknown; includePreApproach?: unknown };
     const latitude = parseCoordinate(body.latitude);
     const longitude = parseCoordinate(body.longitude);
     const direction = parseReportDirection(body.direction);
+    const includePreApproach = body.includePreApproach !== false;
     if (latitude == null || longitude == null || latitude > 2 || longitude < 100 || !direction) {
       return json(env, {
         error: "invalid_location",
@@ -939,19 +941,19 @@ async function handleApproachOptions(request: Request, env: Env, user: AuthUser 
       }, { status: 400 });
     }
 
-    const key = routeCacheKey(latitude, longitude, direction);
+    const key = `${routeCacheKey(latitude, longitude, direction)}:${includePreApproach ? "journey" : "crossing"}`;
     const cached = approachRouteCache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
-      return json(env, { generatedAt: new Date().toISOString(), cached: true, routes: cached.routes });
+      return json(env, { generatedAt: new Date().toISOString(), cached: true, crossingOnly: !includePreApproach, routes: cached.routes });
     }
 
     const plan = woodlandsRoutePlans[direction];
     const routes = await Promise.all(plan.approaches.map((approach) => (
-      computeApproachRoute({ latitude, longitude }, approach, plan.clearance, env.GOOGLE_ROUTES_API_KEY!)
+      computeApproachRoute({ latitude, longitude }, approach, plan.clearance, env.GOOGLE_ROUTES_API_KEY!, includePreApproach)
     )));
     approachRouteCache.set(key, { expiresAt: Date.now() + 90_000, routes });
     if (user) await recordAuthEvent(neon(env.DATABASE_URL), user, "approach-options", request);
-    return json(env, { generatedAt: new Date().toISOString(), cached: false, routes });
+    return json(env, { generatedAt: new Date().toISOString(), cached: false, crossingOnly: !includePreApproach, routes });
   } catch {
     return json(env, {
       error: "approach_options_unavailable",
