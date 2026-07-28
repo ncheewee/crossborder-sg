@@ -33,7 +33,9 @@ done
 mkdir -p "$COMPETITOR_CAPTURE_DIR/logs"
 {
   echo "===== $(date -u +"%Y-%m-%dT%H:%M:%SZ") V3 Checkpoint variance ====="
-  CAPTURE_GOOGLE_MAPS=false /opt/homebrew/bin/npm run capture:competitors
+  if ! CAPTURE_GOOGLE_MAPS=false /opt/homebrew/bin/npm run capture:competitors; then
+    echo "Checkpoint.sg capture failed; continuing with the shared timing benchmark."
+  fi
   /opt/homebrew/bin/node scripts/report-v3-checkpoint-variance.mjs
   echo
 } >> "$COMPETITOR_CAPTURE_DIR/logs/v3-checkpoint-variance.log" 2>&1
