@@ -11,7 +11,7 @@ const googleKey = process.env.GOOGLE_ROUTES_API_KEY;
 const routesUrl = "https://routes.googleapis.com/directions/v2:computeRoutes";
 const historyPath = join(captureRoot, "v3-checkpoint-history.csv");
 const routeSnapshotPath = join(captureRoot, "v3-google-routes-cache.json");
-const routeSnapshotMaxAgeMs = 6 * 60 * 60 * 1000;
+const routeSnapshotMaxAgeMs = 55 * 60 * 1000;
 
 const routeSets = [
   {
