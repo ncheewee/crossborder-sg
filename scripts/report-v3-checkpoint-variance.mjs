@@ -11,6 +11,7 @@ const sharedTimingsUrl = process.env.SHARED_TIMINGS_SHEET_URL
   || "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv";
 const historyPath = join(captureRoot, "v3-crossborder-sheet-history.csv");
 const sharedTimingsSnapshotPath = join(captureRoot, "v3-shared-timings-cache.json");
+const checkpointMaxAgeMs = 90 * 60 * 1000;
 
 const routeSets = [
   {
@@ -255,7 +256,12 @@ function chartSvg(route, rows) {
 
 await mkdir(captureRoot, { recursive: true });
 const records = await readJson(join(captureRoot, "latest-summary.json")) ?? [];
-const checkpoint = records.find((record) => record.app === "Checkpoint.sg" && record.captureStatus !== "failed") ?? null;
+const checkpoint = records.find((record) => (
+  record.app === "Checkpoint.sg"
+  && record.captureStatus !== "failed"
+  && Number.isFinite(new Date(record.capturedAt).getTime())
+  && Date.now() - new Date(record.capturedAt).getTime() <= checkpointMaxAgeMs
+)) ?? null;
 let sharedTimings = null;
 try {
   sharedTimings = await loadSharedTimings();
