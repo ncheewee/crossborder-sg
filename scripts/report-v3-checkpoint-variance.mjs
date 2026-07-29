@@ -164,8 +164,19 @@ async function loadSharedTimings() {
 
 function sharedRange(route, sharedTimings) {
   if (!sharedTimings) return null;
-  const values = route.routes.map((item) => sharedTimings.readings[item.sourceColumn]).filter(Number.isFinite);
+  const values = route.routes.map((item) => sharedTimings.readings[item.sourceColumn]).filter((value) => Number.isFinite(value) && value > 0);
   return values.length === route.routes.length ? [Math.min(...values), Math.max(...values)] : null;
+}
+
+async function lastValidCrossBorderRows() {
+  const history = await readCsv(historyPath);
+  const latestByLabel = new Map();
+  for (const row of history) {
+    const low = Number(row.oursLow);
+    const high = Number(row.oursHigh);
+    if (Number.isFinite(low) && low > 0 && Number.isFinite(high) && high > 0) latestByLabel.set(row.label, row);
+  }
+  return latestByLabel;
 }
 
 async function sendPhoto(buffer, filename, caption) {
@@ -272,17 +283,23 @@ try {
   console.warn(`Shared timings refresh failed; using cached reading: ${error.message}`);
 }
 const capturedAt = new Date().toISOString();
+const lastValidRows = await lastValidCrossBorderRows();
 const rows = [];
 for (const route of routeSets) {
-  const oursRange = sharedRange(route, sharedTimings);
-  if (!oursRange) throw new Error(`CrossBorder timing sheet is missing a complete ${route.label} reading`);
+  const lastValid = lastValidRows.get(route.label);
+  const oursRange = sharedRange(route, sharedTimings) ?? (
+    Number(lastValid?.oursLow) > 0 && Number(lastValid?.oursHigh) > 0
+      ? [Number(lastValid.oursLow), Number(lastValid.oursHigh)]
+      : null
+  );
+  if (!oursRange) throw new Error(`CrossBorder timing sheet is missing a complete positive ${route.label} reading`);
   const checkpointRange = checkpoint?.normalizedReadings?.woodlands?.[route.directionKey] ?? null;
   rows.push({
     capturedAt,
     label: route.label,
     directionKey: route.directionKey,
     routeCount: route.routes.length,
-    routeDataCapturedAt: sharedTimings.capturedAt,
+    routeDataCapturedAt: sharedRange(route, sharedTimings) ? sharedTimings.capturedAt : lastValid.capturedAt,
     oursLow: oursRange[0],
     oursHigh: oursRange[1],
     oursMid: midpoint(oursRange),
