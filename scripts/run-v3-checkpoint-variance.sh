@@ -20,6 +20,7 @@ if ! "$adb" get-state >/dev/null 2>&1; then
     -netdelay none \
     -netspeed full \
     -dns-server 8.8.8.8,1.1.1.1 \
+    -no-audio \
     -no-snapshot-save \
     >/tmp/crossborder-v3-emulator.log 2>&1 &
   "$adb" wait-for-device
