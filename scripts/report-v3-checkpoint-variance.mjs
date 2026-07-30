@@ -45,6 +45,12 @@ function formatRange(range) {
   return range ? `${range[0]}-${range[1]}m` : "unavailable";
 }
 
+function plausibleRange(range) {
+  if (!Array.isArray(range) || range.length !== 2) return null;
+  const [low, high] = range.map(Number);
+  return Number.isFinite(low) && Number.isFinite(high) && low > 0 && high >= low && high <= 240 ? [low, high] : null;
+}
+
 function signedMinutes(value) {
   return `${value >= 0 ? "+" : ""}${value}m`;
 }
@@ -293,7 +299,7 @@ for (const route of routeSets) {
       : null
   );
   if (!oursRange) throw new Error(`CrossBorder timing sheet is missing a complete positive ${route.label} reading`);
-  const checkpointRange = checkpoint?.normalizedReadings?.woodlands?.[route.directionKey] ?? null;
+  const checkpointRange = plausibleRange(checkpoint?.normalizedReadings?.woodlands?.[route.directionKey]);
   rows.push({
     capturedAt,
     label: route.label,
