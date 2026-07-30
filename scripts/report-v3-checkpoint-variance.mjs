@@ -29,6 +29,7 @@ const timingSources = [
   },
 ];
 const historyPath = join(captureRoot, "v3-four-source-history.csv");
+const legacyHistoryPath = join(captureRoot, "v3-crossborder-sheet-history.csv");
 const sharedTimingsSnapshotPath = join(captureRoot, "v3-gmaps-timings-cache.json");
 const checkpointMaxAgeMs = 90 * 60 * 1000;
 
@@ -181,15 +182,16 @@ async function loadTimingSource(source) {
   const timestampIndex = header.indexOf("Timestamp (SGT)");
   if (timestampIndex === -1 || data.length === 0) throw new Error(`${source.label} sheet has no timestamped readings`);
   const requiredColumns = routeSets.flatMap((route) => route.routes.map((item) => `${item.sourceColumn}${source.suffix}`));
-  const latest = data.slice().reverse().find((row) => requiredColumns.every((column) => {
-    const index = header.indexOf(column);
-    return index !== -1 && Number.isFinite(Number(row[index])) && Number(row[index]) > 0;
-  }));
+  const records = data.map((row) => {
+    const capturedAt = parseSingaporeTimestamp(row[timestampIndex]);
+    const readings = Object.fromEntries(header.map((key, index) => [key, Number(row[index])]));
+    return { capturedAt, readings };
+  }).filter((record) => record.capturedAt && requiredColumns.every((column) => (
+    Number.isFinite(record.readings[column]) && record.readings[column] > 0
+  )));
+  const latest = records.at(-1);
   if (!latest) throw new Error(`${source.label} sheet has no complete positive route reading`);
-  const capturedAt = parseSingaporeTimestamp(latest[timestampIndex]);
-  if (!capturedAt) throw new Error(`${source.label} sheet timestamp is invalid`);
-  const readings = Object.fromEntries(header.map((key, index) => [key, Number(latest[index])]));
-  return { ...source, capturedAt, readings };
+  return { ...source, ...latest, records };
 }
 
 function sourceRange(route, source) {
@@ -198,6 +200,29 @@ function sourceRange(route, source) {
     .map((item) => source.readings[`${item.sourceColumn}${source.suffix}`])
     .filter((value) => Number.isFinite(value) && value > 0);
   return values.length === route.routes.length ? [Math.min(...values), Math.max(...values)] : null;
+}
+
+function sourcePoint(route, source, record) {
+  if (!record?.readings || !record.capturedAt) return null;
+  const range = sourceRange(route, { ...source, ...record });
+  if (!range) return null;
+  const point = { capturedAt: record.capturedAt, label: route.label };
+  if (source.id === "ours") {
+    point.oursLow = range[0];
+    point.oursHigh = range[1];
+    point.oursMid = midpoint(range);
+  } else {
+    point[`${source.id}Low`] = range[0];
+    point[`${source.id}High`] = range[1];
+    point[`${source.id}Mid`] = midpoint(range);
+  }
+  return point;
+}
+
+function inSingaporeDate(timestamp, date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(timestamp)) === date;
 }
 
 async function lastValidCrossBorderRows() {
@@ -268,7 +293,6 @@ function chartSvg(route, rows) {
     let previousWasPoint = false;
     return rows.map((row) => {
       if (!Number.isFinite(row[key])) {
-        previousWasPoint = false;
         return "";
       }
       const command = previousWasPoint ? "L" : "M";
@@ -276,7 +300,8 @@ function chartSvg(route, rows) {
       return `${command}${x(row).toFixed(1)},${y(row[key]).toFixed(1)}`;
     }).filter(Boolean).join(" ");
   };
-  const area = rows.length < 2 ? "" : `${line("oursLow")} ${rows.slice().reverse().map((row) => `L${x(row).toFixed(1)},${y(row.oursHigh).toFixed(1)}`).join(" ")} Z`;
+  const oursPoints = rows.filter((row) => Number.isFinite(row.oursLow) && Number.isFinite(row.oursHigh));
+  const area = oursPoints.length < 2 ? "" : `${line("oursLow")} ${oursPoints.slice().reverse().map((row) => `L${x(row).toFixed(1)},${y(row.oursHigh).toFixed(1)}`).join(" ")} Z`;
   const grids = Array.from({ length: (high - low) / 15 + 1 }, (_, index) => low + index * 15)
     .filter((value) => value <= high)
     .map((value) => `<line x1="${margin.left}" x2="${width - margin.right}" y1="${y(value)}" y2="${y(value)}" stroke="#d7dde2"/><text x="${margin.left - 14}" y="${y(value) + 5}" text-anchor="end" fill="#56616d" font-size="20">${value}m</text>`)
@@ -363,6 +388,7 @@ for (const route of routeSets) {
   });
 }
 const history = await readCsv(historyPath);
+const legacyHistory = await readCsv(legacyHistoryPath);
 const historyLines = rows.map((row) => [
   row.capturedAt, row.label, row.oursLow, row.oursHigh, row.oursMid,
   row.checkpointLow ?? "", row.checkpointHigh ?? "", row.checkpointMid ?? "",
@@ -373,12 +399,25 @@ try { await access(historyPath); } catch { await writeFile(historyPath, "capture
 await appendFile(historyPath, `${historyLines.join("\n")}\n`);
 await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON.stringify({ capturedAt, rows }, null, 2)}\n`);
 for (const route of rows) {
+  const routeDefinition = routeSets.find((item) => item.label === route.label);
+  if (!routeDefinition) throw new Error(`Missing route definition for ${route.label}`);
   const reportDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(route.capturedAt));
-  const points = [...history, ...rows].filter((row) => row.label === route.label && new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(row.capturedAt)) === reportDate).map((row) => {
+  const sheetPoints = timingSources.flatMap((source) => (sources[source.id]?.records ?? [])
+    .filter((record) => inSingaporeDate(record.capturedAt, reportDate))
+    .map((record) => sourcePoint(routeDefinition, source, record))
+    .filter(Boolean));
+  const checkpointHistoryPoints = legacyHistory.filter((row) => (
+    row.label === route.label && inSingaporeDate(row.capturedAt, reportDate)
+  )).map((row) => ({
+    capturedAt: row.capturedAt,
+    label: row.label,
+    checkpointLow: row.checkpointLow,
+    checkpointHigh: row.checkpointHigh,
+  }));
+  const points = [...sheetPoints, ...checkpointHistoryPoints, ...history, ...rows]
+    .filter((row) => row.label === route.label && inSingaporeDate(row.capturedAt, reportDate)).map((row) => {
     const checkpointRange = plausibleRange([row.checkpointLow, row.checkpointHigh]);
     const tomtomRange = plausibleRange([row.tomtomLow, row.tomtomHigh]);
     const mapboxRange = plausibleRange([row.mapboxLow, row.mapboxHigh]);
@@ -395,7 +434,12 @@ for (const route of rows) {
       mapboxHigh: mapboxRange?.[1] ?? null,
       mapboxMid: midpoint(mapboxRange),
     };
-  }).filter((row) => Number.isFinite(row.oursMid));
+  }).filter((row) => (
+    Number.isFinite(row.oursMid)
+    || Number.isFinite(row.checkpointMid)
+    || Number.isFinite(row.tomtomMid)
+    || Number.isFinite(row.mapboxMid)
+  )).sort((a, b) => new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime());
   const checkpointPoints = points.filter((point) => Number.isFinite(point.checkpointMid));
   const assessment = checkpointPoints.length
     ? assessVariance(route, checkpointPoints, "checkpointMid", "Checkpoint.sg")
