@@ -7,10 +7,29 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const captureRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
-const sharedTimingsUrl = process.env.SHARED_TIMINGS_SHEET_URL
-  || "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv";
-const historyPath = join(captureRoot, "v3-crossborder-sheet-history.csv");
-const sharedTimingsSnapshotPath = join(captureRoot, "v3-shared-timings-cache.json");
+const sheetId = "1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo";
+const timingSources = [
+  {
+    id: "ours",
+    label: "CrossBorder (Google Maps)",
+    url: process.env.SHARED_TIMINGS_SHEET_URL || `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`,
+    suffix: "",
+  },
+  {
+    id: "tomtom",
+    label: "TomTom",
+    url: `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=281973384`,
+    suffix: " (live)",
+  },
+  {
+    id: "mapbox",
+    label: "Mapbox",
+    url: `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=14569418`,
+    suffix: " (live)",
+  },
+];
+const historyPath = join(captureRoot, "v3-four-source-history.csv");
+const sharedTimingsSnapshotPath = join(captureRoot, "v3-gmaps-timings-cache.json");
 const checkpointMaxAgeMs = 90 * 60 * 1000;
 
 const routeSets = [
@@ -155,22 +174,29 @@ function parseSingaporeTimestamp(value) {
   return new Date(`${year}-${month}-${day}T${hour.padStart(2, "0")}:${minute}:00+08:00`).toISOString();
 }
 
-async function loadSharedTimings() {
-  const response = await fetch(sharedTimingsUrl, { headers: { Accept: "text/csv" } });
-  if (!response.ok) throw new Error(`Shared timings sheet returned ${response.status}`);
+async function loadTimingSource(source) {
+  const response = await fetch(source.url, { headers: { Accept: "text/csv" } });
+  if (!response.ok) throw new Error(`${source.label} sheet returned ${response.status}`);
   const [header = [], ...data] = parseCsv(await response.text());
   const timestampIndex = header.indexOf("Timestamp (SGT)");
-  if (timestampIndex === -1 || data.length === 0) throw new Error("Shared timings sheet has no timestamped readings");
-  const latest = data.at(-1);
+  if (timestampIndex === -1 || data.length === 0) throw new Error(`${source.label} sheet has no timestamped readings`);
+  const requiredColumns = routeSets.flatMap((route) => route.routes.map((item) => `${item.sourceColumn}${source.suffix}`));
+  const latest = data.slice().reverse().find((row) => requiredColumns.every((column) => {
+    const index = header.indexOf(column);
+    return index !== -1 && Number.isFinite(Number(row[index])) && Number(row[index]) > 0;
+  }));
+  if (!latest) throw new Error(`${source.label} sheet has no complete positive route reading`);
   const capturedAt = parseSingaporeTimestamp(latest[timestampIndex]);
-  if (!capturedAt) throw new Error("Shared timings sheet timestamp is invalid");
+  if (!capturedAt) throw new Error(`${source.label} sheet timestamp is invalid`);
   const readings = Object.fromEntries(header.map((key, index) => [key, Number(latest[index])]));
-  return { capturedAt, readings };
+  return { ...source, capturedAt, readings };
 }
 
-function sharedRange(route, sharedTimings) {
-  if (!sharedTimings) return null;
-  const values = route.routes.map((item) => sharedTimings.readings[item.sourceColumn]).filter((value) => Number.isFinite(value) && value > 0);
+function sourceRange(route, source) {
+  if (!source) return null;
+  const values = route.routes
+    .map((item) => source.readings[`${item.sourceColumn}${source.suffix}`])
+    .filter((value) => Number.isFinite(value) && value > 0);
   return values.length === route.routes.length ? [Math.min(...values), Math.max(...values)] : null;
 }
 
@@ -212,7 +238,15 @@ function chartSvg(route, rows) {
   const palette = route.directionKey === "towardsJb"
     ? { main: "#15803d", fill: "#15803d", label: "Singapore to JB" }
     : { main: "#2563eb", fill: "#2563eb", label: "JB to Singapore" };
-  const values = rows.flatMap((row) => [row.oursLow, row.oursHigh, row.checkpointLow, row.checkpointHigh]).filter(Number.isFinite);
+  const comparisonSeries = [
+    { key: "checkpoint", label: "Checkpoint.sg", color: "#64748b", dash: "12 10" },
+    { key: "tomtom", label: "TomTom", color: "#d97706", dash: "10 7" },
+    { key: "mapbox", label: "Mapbox", color: "#9333ea", dash: "3 9" },
+  ];
+  const values = rows.flatMap((row) => [
+    row.oursLow, row.oursHigh,
+    ...comparisonSeries.flatMap((series) => [row[`${series.key}Low`], row[`${series.key}High`]]),
+  ]).filter(Number.isFinite);
   const low = Math.max(0, Math.floor((Math.min(...values, 20) - 10) / 10) * 10);
   const high = Math.ceil((Math.max(...values, 90) + 10) / 10) * 10;
   const dayStart = new Date(rows.at(-1)?.capturedAt ?? Date.now());
@@ -254,20 +288,24 @@ function chartSvg(route, rows) {
   }).join("");
   const dots = rows.map((row) => `
     <circle cx="${x(row)}" cy="${y(row.oursMid)}" r="7" fill="#ffffff" stroke="${palette.main}" stroke-width="5"/>
-    ${Number.isFinite(row.checkpointMid) ? `<circle cx="${x(row)}" cy="${y(row.checkpointMid)}" r="6" fill="#ffffff" stroke="${palette.main}" stroke-width="4" stroke-dasharray="3 2"/>` : ""}
+    ${comparisonSeries.map((series) => Number.isFinite(row[`${series.key}Mid`])
+      ? `<circle cx="${x(row)}" cy="${y(row[`${series.key}Mid`])}" r="5" fill="#ffffff" stroke="${series.color}" stroke-width="4"/>`
+      : "").join("")}
   `).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     <text x="${margin.left}" y="42" fill="#111827" font-size="34" font-family="Arial, sans-serif" font-weight="700">${route.label}</text>
-    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Hourly CrossBorder route-time range vs Checkpoint.sg · ${singaporeDate}</text>
+    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Hourly Google Maps route-time range vs three comparisons · ${singaporeDate}</text>
     ${grids}
     ${hourTicks}
     <path d="${area}" fill="${palette.fill}" fill-opacity="0.14"/>
     <path d="${line("oursMid")}" fill="none" stroke="${palette.main}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="${line("checkpointMid")}" fill="none" stroke="${palette.main}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="12 10"/>
+    ${comparisonSeries.map((series) => `<path d="${line(`${series.key}Mid`)}" fill="none" stroke="${series.color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${series.dash}"/>`).join("")}
     ${dots}
-    <rect x="${width - 390}" y="24" width="16" height="16" rx="4" fill="${palette.main}"/><text x="${width - 366}" y="39" fill="#23303b" font-size="18">CrossBorder range</text>
-    <line x1="${width - 175}" x2="${width - 159}" y1="32" y2="32" stroke="${palette.main}" stroke-width="5" stroke-dasharray="8 6"/><text x="${width - 151}" y="39" fill="#23303b" font-size="18">Checkpoint.sg</text>
+    <rect x="${width - 610}" y="24" width="16" height="16" rx="4" fill="${palette.main}"/><text x="${width - 586}" y="39" fill="#23303b" font-size="18">CrossBorder</text>
+    <line x1="${width - 445}" x2="${width - 429}" y1="32" y2="32" stroke="#64748b" stroke-width="5" stroke-dasharray="8 6"/><text x="${width - 421}" y="39" fill="#23303b" font-size="18">Checkpoint</text>
+    <line x1="${width - 275}" x2="${width - 259}" y1="32" y2="32" stroke="#d97706" stroke-width="5" stroke-dasharray="8 6"/><text x="${width - 251}" y="39" fill="#23303b" font-size="18">TomTom</text>
+    <line x1="${width - 125}" x2="${width - 109}" y1="32" y2="32" stroke="#9333ea" stroke-width="5" stroke-dasharray="3 8"/><text x="${width - 101}" y="39" fill="#23303b" font-size="18">Mapbox</text>
   </svg>`;
 }
 
@@ -279,47 +317,59 @@ const checkpoint = records.find((record) => (
   && Number.isFinite(new Date(record.capturedAt).getTime())
   && Date.now() - new Date(record.capturedAt).getTime() <= checkpointMaxAgeMs
 )) ?? null;
-let sharedTimings = null;
-try {
-  sharedTimings = await loadSharedTimings();
-  await writeFile(sharedTimingsSnapshotPath, `${JSON.stringify(sharedTimings, null, 2)}\n`);
-} catch (error) {
-  sharedTimings = await readJson(sharedTimingsSnapshotPath);
-  if (!sharedTimings) throw error;
-  console.warn(`Shared timings refresh failed; using cached reading: ${error.message}`);
+const sources = {};
+for (const source of timingSources) {
+  try {
+    sources[source.id] = await loadTimingSource(source);
+    if (source.id === "ours") await writeFile(sharedTimingsSnapshotPath, `${JSON.stringify(sources.ours, null, 2)}\n`);
+  } catch (error) {
+    sources[source.id] = source.id === "ours" ? await readJson(sharedTimingsSnapshotPath) : null;
+    if (source.id === "ours" && !sources.ours) throw error;
+    console.warn(`${source.label} refresh failed${sources[source.id] ? "; using cached reading" : "; omitting this comparison"}: ${error.message}`);
+  }
 }
 const capturedAt = new Date().toISOString();
 const lastValidRows = await lastValidCrossBorderRows();
 const rows = [];
 for (const route of routeSets) {
   const lastValid = lastValidRows.get(route.label);
-  const oursRange = sharedRange(route, sharedTimings) ?? (
+  const oursRange = sourceRange(route, sources.ours) ?? (
     Number(lastValid?.oursLow) > 0 && Number(lastValid?.oursHigh) > 0
       ? [Number(lastValid.oursLow), Number(lastValid.oursHigh)]
       : null
   );
   if (!oursRange) throw new Error(`CrossBorder timing sheet is missing a complete positive ${route.label} reading`);
   const checkpointRange = plausibleRange(checkpoint?.normalizedReadings?.woodlands?.[route.directionKey]);
+  const tomtomRange = sourceRange(route, sources.tomtom);
+  const mapboxRange = sourceRange(route, sources.mapbox);
   rows.push({
     capturedAt,
     label: route.label,
     directionKey: route.directionKey,
     routeCount: route.routes.length,
-    routeDataCapturedAt: sharedRange(route, sharedTimings) ? sharedTimings.capturedAt : lastValid.capturedAt,
+    routeDataCapturedAt: sourceRange(route, sources.ours) ? sources.ours.capturedAt : lastValid.capturedAt,
     oursLow: oursRange[0],
     oursHigh: oursRange[1],
     oursMid: midpoint(oursRange),
     checkpointLow: checkpointRange?.[0] ?? null,
     checkpointHigh: checkpointRange?.[1] ?? null,
     checkpointMid: midpoint(checkpointRange),
+    tomtomLow: tomtomRange?.[0] ?? null,
+    tomtomHigh: tomtomRange?.[1] ?? null,
+    tomtomMid: midpoint(tomtomRange),
+    mapboxLow: mapboxRange?.[0] ?? null,
+    mapboxHigh: mapboxRange?.[1] ?? null,
+    mapboxMid: midpoint(mapboxRange),
   });
 }
 const history = await readCsv(historyPath);
 const historyLines = rows.map((row) => [
   row.capturedAt, row.label, row.oursLow, row.oursHigh, row.oursMid,
   row.checkpointLow ?? "", row.checkpointHigh ?? "", row.checkpointMid ?? "",
+  row.tomtomLow ?? "", row.tomtomHigh ?? "", row.tomtomMid ?? "",
+  row.mapboxLow ?? "", row.mapboxHigh ?? "", row.mapboxMid ?? "",
 ].join(","));
-try { await access(historyPath); } catch { await writeFile(historyPath, "capturedAt,label,oursLow,oursHigh,oursMid,checkpointLow,checkpointHigh,checkpointMid\n"); }
+try { await access(historyPath); } catch { await writeFile(historyPath, "capturedAt,label,oursLow,oursHigh,oursMid,checkpointLow,checkpointHigh,checkpointMid,tomtomLow,tomtomHigh,tomtomMid,mapboxLow,mapboxHigh,mapboxMid\n"); }
 await appendFile(historyPath, `${historyLines.join("\n")}\n`);
 await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON.stringify({ capturedAt, rows }, null, 2)}\n`);
 for (const route of rows) {
@@ -330,23 +380,40 @@ for (const route of rows) {
     timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(row.capturedAt)) === reportDate).map((row) => {
     const checkpointRange = plausibleRange([row.checkpointLow, row.checkpointHigh]);
+    const tomtomRange = plausibleRange([row.tomtomLow, row.tomtomHigh]);
+    const mapboxRange = plausibleRange([row.mapboxLow, row.mapboxHigh]);
     return {
       ...row,
       oursLow: Number(row.oursLow), oursHigh: Number(row.oursHigh), oursMid: Number(row.oursMid),
       checkpointLow: checkpointRange?.[0] ?? null,
       checkpointHigh: checkpointRange?.[1] ?? null,
       checkpointMid: midpoint(checkpointRange),
+      tomtomLow: tomtomRange?.[0] ?? null,
+      tomtomHigh: tomtomRange?.[1] ?? null,
+      tomtomMid: midpoint(tomtomRange),
+      mapboxLow: mapboxRange?.[0] ?? null,
+      mapboxHigh: mapboxRange?.[1] ?? null,
+      mapboxMid: midpoint(mapboxRange),
     };
   }).filter((row) => Number.isFinite(row.oursMid));
   const checkpointPoints = points.filter((point) => Number.isFinite(point.checkpointMid));
-  const checkpointDelta = route.checkpointMid == null ? null : route.oursMid - route.checkpointMid;
-  const checkpointPercent = route.checkpointMid ? Math.round(Math.abs(checkpointDelta) / route.checkpointMid * 100) : null;
-  const status = checkpointPercent == null ? "No Checkpoint reading" : checkpointPercent <= 10 ? "GREEN" : checkpointPercent <= 30 ? "AMBER" : "RED";
   const assessment = checkpointPoints.length
     ? assessVariance(route, checkpointPoints, "checkpointMid", "Checkpoint.sg")
     : "Checkpoint.sg was unavailable for this hourly capture.";
+  const comparisons = [
+    { label: "Checkpoint.sg", range: [route.checkpointLow, route.checkpointHigh], mid: route.checkpointMid },
+    { label: "TomTom", range: [route.tomtomLow, route.tomtomHigh], mid: route.tomtomMid },
+    { label: "Mapbox", range: [route.mapboxLow, route.mapboxHigh], mid: route.mapboxMid },
+  ].map((source) => {
+    const range = plausibleRange(source.range);
+    if (!range || !Number.isFinite(source.mid)) return `${source.label}: unavailable`;
+    const delta = route.oursMid - source.mid;
+    const percent = Math.round(Math.abs(delta) / source.mid * 100);
+    const status = percent <= 10 ? "GREEN" : percent <= 30 ? "AMBER" : "RED";
+    return `${source.label}: ${formatRange(range)} · ${signedMinutes(delta)} (${percent}%) ${status}`;
+  });
   const png = await sharp(Buffer.from(chartSvg(route, points))).png().toBuffer();
   const sourceAgeMinutes = Math.max(0, Math.round((Date.now() - new Date(route.routeDataCapturedAt).getTime()) / 60_000));
   const sourceNote = sourceAgeMinutes < 60 ? "CrossBorder timing sheet live now" : `CrossBorder timing sheet ${Math.round(sourceAgeMinutes / 60)}h old`;
-  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\nCheckpoint.sg: ${formatRange(route.checkpointLow == null ? null : [route.checkpointLow, route.checkpointHigh])}${checkpointDelta == null ? "" : ` · ${signedMinutes(checkpointDelta)} (${checkpointPercent}%)`}\nVariance: ${checkpointDelta == null ? "unavailable" : `${signedMinutes(checkpointDelta)} (${checkpointPercent}%) ${status}`}\n${sourceNote}\n\n${assessment}`);
+  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder Google Maps A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\n${comparisons.join("\n")}\n${sourceNote}\n\n${assessment}`);
 }
