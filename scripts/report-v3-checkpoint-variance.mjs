@@ -328,11 +328,16 @@ for (const route of rows) {
   }).format(new Date(route.capturedAt));
   const points = [...history, ...rows].filter((row) => row.label === route.label && new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(row.capturedAt)) === reportDate).map((row) => ({
-    ...row,
-    oursLow: Number(row.oursLow), oursHigh: Number(row.oursHigh), oursMid: Number(row.oursMid),
-    checkpointLow: Number(row.checkpointLow), checkpointHigh: Number(row.checkpointHigh), checkpointMid: Number(row.checkpointMid),
-  })).filter((row) => Number.isFinite(row.oursMid));
+  }).format(new Date(row.capturedAt)) === reportDate).map((row) => {
+    const checkpointRange = plausibleRange([row.checkpointLow, row.checkpointHigh]);
+    return {
+      ...row,
+      oursLow: Number(row.oursLow), oursHigh: Number(row.oursHigh), oursMid: Number(row.oursMid),
+      checkpointLow: checkpointRange?.[0] ?? null,
+      checkpointHigh: checkpointRange?.[1] ?? null,
+      checkpointMid: midpoint(checkpointRange),
+    };
+  }).filter((row) => Number.isFinite(row.oursMid));
   const checkpointPoints = points.filter((point) => Number.isFinite(point.checkpointMid));
   const checkpointDelta = route.checkpointMid == null ? null : route.oursMid - route.checkpointMid;
   const checkpointPercent = route.checkpointMid ? Math.round(Math.abs(checkpointDelta) / route.checkpointMid * 100) : null;
