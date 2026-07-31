@@ -791,16 +791,6 @@ button { font: inherit; }
   filter: none;
 }
 
-.v3-approach-card.returning .v3-route-visual {
-  height: auto;
-  aspect-ratio: 16 / 9;
-  border: 1px solid rgba(17, 24, 39, 0.14);
-}
-
-.v3-approach-card.returning .v3-route-visual img {
-  object-fit: contain;
-}
-
 .v3-road-chip {
   position: absolute;
   top: 22px;
