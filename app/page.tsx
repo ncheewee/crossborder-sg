@@ -129,6 +129,28 @@ type ApproachOptionsResponse = {
   crossingOnly?: boolean;
   routes?: ApproachRouteOption[];
 };
+type ApproachTripReport = {
+  direction: Direction;
+  checkpoint: "Woodlands";
+  approachId: ApproachId;
+  startedAt: string;
+  clearedAt: string;
+  estimatedMinutes: number;
+  actualWaitMinutes: number;
+  joinLatitude: number;
+  joinLongitude: number;
+  clearLatitude: number;
+  clearLongitude: number;
+  locationAccuracyMeters: number | null;
+};
+type CapturedLocation = Coordinate & { accuracy: number | null };
+type QueueCapture = {
+  direction: Direction;
+  approachId: ApproachId;
+  estimatedMinutes: number;
+  startedAt: string;
+  location: CapturedLocation;
+};
 
 declare global {
   interface Window {
@@ -1170,8 +1192,10 @@ function V2CameraStrip({
 
 function V3WoodlandsApproach({
   loadApproachOptions,
+  submitApproachReport,
 }: {
   loadApproachOptions: (coordinate: Coordinate, direction: Direction, includePreApproach: boolean) => Promise<ApproachOptionsResponse>;
+  submitApproachReport: (report: ApproachTripReport) => Promise<void>;
 }) {
   const [travelDirection, setTravelDirection] = useState<Direction>("sg-my");
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
@@ -1180,6 +1204,9 @@ function V3WoodlandsApproach({
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
   const [crossingOnly, setCrossingOnly] = useState(false);
+  const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
+  const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
+  const [queueMessage, setQueueMessage] = useState("");
   const requestedLocation = useRef(false);
   const definitions = woodlandsApproachDefinitions[travelDirection];
 
@@ -1278,6 +1305,9 @@ function V3WoodlandsApproach({
     setRouteOptions({});
     setCrossingOnly(false);
     setSelectedApproach(woodlandsApproachDefinitions[direction][0].id);
+    setQueueCapture(null);
+    setQueueState("idle");
+    setQueueMessage("");
     if (currentLocation) loadRoutes(currentLocation, direction);
     else setLocationState("idle");
   }
@@ -1287,6 +1317,80 @@ function V3WoodlandsApproach({
     requestedLocation.current = true;
     useCurrentLocation();
   }, []);
+
+  function captureCurrentLocation() {
+    return new Promise<CapturedLocation>((resolve, reject) => {
+      if (!("geolocation" in navigator)) {
+        reject(new Error("This browser does not support location access."));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null,
+        }),
+        () => reject(new Error("Could not capture your location. Check location services and try again.")),
+        { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 },
+      );
+    });
+  }
+
+  async function recordQueueJoin() {
+    if (!selected) return;
+    const startedAt = new Date().toISOString();
+    const selectedAtJoin = selected;
+    const directionAtJoin = travelDirection;
+    setQueueState("locating-join");
+    setQueueMessage("");
+    try {
+      const location = await captureCurrentLocation();
+      setQueueCapture({
+        direction: directionAtJoin,
+        approachId: selectedAtJoin.id,
+        estimatedMinutes: selectedAtJoin.crossingMinutes,
+        startedAt,
+        location,
+      });
+      setQueueState("queued");
+      setQueueMessage("Queue start recorded.");
+    } catch (error) {
+      setQueueState("error");
+      setQueueMessage(error instanceof Error ? error.message : "Could not record the queue start.");
+    }
+  }
+
+  async function recordCustomsClearance() {
+    if (!queueCapture) return;
+    const clearedAt = new Date().toISOString();
+    setQueueState("locating-clear");
+    setQueueMessage("");
+    try {
+      const location = await captureCurrentLocation();
+      const actualWaitMinutes = Math.max(1, Math.round((new Date(clearedAt).getTime() - new Date(queueCapture.startedAt).getTime()) / 60_000));
+      setQueueState("saving");
+      await submitApproachReport({
+        direction: queueCapture.direction,
+        checkpoint: "Woodlands",
+        approachId: queueCapture.approachId,
+        startedAt: queueCapture.startedAt,
+        clearedAt,
+        estimatedMinutes: queueCapture.estimatedMinutes,
+        actualWaitMinutes,
+        joinLatitude: queueCapture.location.latitude,
+        joinLongitude: queueCapture.location.longitude,
+        clearLatitude: location.latitude,
+        clearLongitude: location.longitude,
+        locationAccuracyMeters: Math.max(queueCapture.location.accuracy ?? 0, location.accuracy ?? 0) || null,
+      });
+      setQueueCapture(null);
+      setQueueState("saved");
+      setQueueMessage(`Recorded ${actualWaitMinutes} min for calibration.`);
+    } catch (error) {
+      setQueueState("error");
+      setQueueMessage(error instanceof Error ? error.message : "Could not record customs clearance.");
+    }
+  }
 
   return (
     <section className="v3-landing" id="top" aria-label="Woodlands approach recommendation">
@@ -1335,6 +1439,19 @@ function V3WoodlandsApproach({
           {!crossingOnly && <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>}
         </>}
       </article>
+      {hasLiveTimes && selected && (
+        <div className={`v3-queue-tester ${queueState}`} aria-live="polite">
+          <button
+            type="button"
+            className="v3-queue-tester-button"
+            disabled={queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
+            onClick={() => queueCapture ? void recordCustomsClearance() : void recordQueueJoin()}
+          >
+            {queueState === "locating-join" || queueState === "locating-clear" ? "LOCATING..." : queueState === "saving" ? "SAVING..." : queueCapture ? "CLEARED CUSTOMS" : "JOINED QUEUE"}
+          </button>
+          {queueMessage && <span>{queueMessage}</span>}
+        </div>
+      )}
       <nav className="v3-bottom-nav" aria-label="Travel direction">
         <button type="button" className={travelDirection === "sg-my" ? "active" : ""} aria-current={travelDirection === "sg-my" ? "page" : undefined} onClick={() => switchDirection("sg-my")}>
           <span aria-hidden="true">↗</span>
@@ -1876,6 +1993,16 @@ export default function Home() {
     return payload;
   }, [authFetch]);
 
+  const submitApproachReport = useCallback(async (report: ApproachTripReport) => {
+    const response = await authFetch(`${apiBase()}/api/approach-reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(report),
+    });
+    const payload = await response.json() as { message?: string };
+    if (!response.ok) throw new Error(payload.message ?? `Calibration report returned ${response.status}`);
+  }, [authFetch]);
+
   const loadTraffic = useCallback(async () => {
     if (isAuthConfigured && auth.status !== "ready") {
       setRefreshing(false);
@@ -2299,7 +2426,7 @@ export default function Home() {
         )}
       </header>
 
-      <V3WoodlandsApproach loadApproachOptions={loadApproachOptions} />
+      <V3WoodlandsApproach loadApproachOptions={loadApproachOptions} submitApproachReport={submitApproachReport} />
 
     </main>
   );

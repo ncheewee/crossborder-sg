@@ -167,6 +167,14 @@ function parseMinutes(value: unknown) {
   return rounded;
 }
 
+function parseTripMinutes(value: unknown) {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes)) return null;
+  const rounded = Math.round(minutes);
+  if (rounded < 1 || rounded > 480) return null;
+  return rounded;
+}
+
 function parseCoordinate(value: unknown) {
   const coordinate = Number(value);
   if (!Number.isFinite(coordinate)) return null;
@@ -976,28 +984,30 @@ async function handleApproachReport(request: Request, env: Env, user: AuthUser |
     const approachId = parseApproachId(body.approachId);
     const startedAt = parseTimestamp(body.startedAt);
     const clearedAt = parseTimestamp(body.clearedAt);
-    const estimatedMinutes = parseMinutes(body.estimatedMinutes);
-    const actualWaitMinutes = parseMinutes(body.actualWaitMinutes);
+    const estimatedMinutes = parseTripMinutes(body.estimatedMinutes);
+    const actualWaitMinutes = parseTripMinutes(body.actualWaitMinutes);
     const joinLatitude = parseCoordinate(body.joinLatitude);
     const joinLongitude = parseCoordinate(body.joinLongitude);
     const clearLatitude = body.clearLatitude == null ? null : parseCoordinate(body.clearLatitude);
     const clearLongitude = body.clearLongitude == null ? null : parseCoordinate(body.clearLongitude);
     const accuracyMeters = body.locationAccuracyMeters == null ? null : Math.round(Number(body.locationAccuracyMeters));
     const durationMinutes = startedAt && clearedAt
-      ? Math.round((clearedAt.getTime() - startedAt.getTime()) / 60_000)
+      ? Math.max(1, Math.round((clearedAt.getTime() - startedAt.getTime()) / 60_000))
       : null;
+    const hasValidApproach = direction != null
+      && approachId != null
+      && woodlandsRoutePlans[direction].approaches.some((approach) => approach.id === approachId);
 
     if (
-      direction !== "sg-my"
+      !hasValidApproach
       || checkpoint !== "Woodlands"
-      || !approachId
       || !startedAt
       || !clearedAt
       || estimatedMinutes == null
       || actualWaitMinutes == null
       || durationMinutes == null
-      || durationMinutes < 5
-      || durationMinutes > 240
+      || durationMinutes < 1
+      || durationMinutes > 480
       || Math.abs(durationMinutes - actualWaitMinutes) > 1
       || joinLatitude == null
       || joinLongitude == null
@@ -1007,7 +1017,7 @@ async function handleApproachReport(request: Request, env: Env, user: AuthUser |
     ) {
       return json(env, {
         error: "invalid_approach_report",
-        message: "Record a 5–240 minute Woodlands crossing with a valid approach and start point.",
+        message: "Record a 1–480 minute Woodlands crossing with a valid approach and start point.",
       }, { status: 400 });
     }
 
