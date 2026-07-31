@@ -1736,10 +1736,10 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-bke-right": "woodlands-approach-a.gif?v=2",
   "woodlands-bke-left": "woodlands-approach-b.gif?v=2",
   "woodlands-road-left": "woodlands-approach-c.gif?v=2",
-  "woodlands-jln-lingkaran-dalam": "woodlands.jpg",
+  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=1",
   "woodlands-ah2": "woodlands-approach-ah2.gif?v=1",
-  "woodlands-bukit-chagar": "woodlands.jpg",
-  "woodlands-jb-city-square": "woodlands.jpg",
+  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.gif?v=1",
+  "woodlands-jb-city-square": "woodlands-approach-jld-north.gif?v=1",
 };
 
 function staticAssetUrl(asset: string) {
