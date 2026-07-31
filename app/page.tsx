@@ -1328,10 +1328,10 @@ function V3WoodlandsApproach({
             );
           })}
           </div>
-          {!crossingOnly && <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
+          <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
           <span className="v3-road-chip">{selected.label.slice(4)}</span>
-          </div>}
+          </div>
           {!crossingOnly && <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>}
         </>}
       </article>
