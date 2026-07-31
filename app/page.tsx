@@ -1737,7 +1737,7 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-bke-left": "woodlands-approach-b.gif?v=2",
   "woodlands-road-left": "woodlands-approach-c.gif?v=2",
   "woodlands-jln-lingkaran-dalam": "woodlands.jpg",
-  "woodlands-ah2": "woodlands.jpg",
+  "woodlands-ah2": "woodlands-approach-ah2.gif?v=1",
   "woodlands-bukit-chagar": "woodlands.jpg",
   "woodlands-jb-city-square": "woodlands.jpg",
 };
