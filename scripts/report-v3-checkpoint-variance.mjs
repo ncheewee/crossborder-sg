@@ -311,12 +311,17 @@ function chartSvg(route, rows) {
     const label = hour === 0 ? "12am" : hour === 12 ? "12pm" : `${hour % 12} ${hour < 12 ? "am" : "pm"}`;
     return `<line x1="${tickX}" x2="${tickX}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="#e4e8ec"/><text x="${tickX}" y="${height - 24}" text-anchor="middle" fill="#56616d" font-size="18">${label}</text>`;
   }).join("");
-  const dots = rows.map((row) => `
-    <circle cx="${x(row)}" cy="${y(row.oursMid)}" r="7" fill="#ffffff" stroke="${palette.main}" stroke-width="5"/>
-    ${comparisonSeries.map((series) => Number.isFinite(row[`${series.key}Mid`])
-      ? `<circle cx="${x(row)}" cy="${y(row[`${series.key}Mid`])}" r="5" fill="#ffffff" stroke="${series.color}" stroke-width="4"/>`
-      : "").join("")}
-  `).join("");
+  const pointMarker = (key, color, radius) => {
+    const latest = rows.slice().reverse().find((row) => Number.isFinite(row[key]));
+    if (!latest) return "";
+    const markerY = y(latest[key]);
+    if (markerY < margin.top || markerY > height - margin.bottom) return "";
+    return `<circle cx="${x(latest)}" cy="${markerY}" r="${radius}" fill="#ffffff" stroke="${color}" stroke-width="4"/>`;
+  };
+  const dots = [
+    pointMarker("oursMid", palette.main, 6),
+    ...comparisonSeries.map((series) => pointMarker(`${series.key}Mid`, series.color, 4)),
+  ].join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     <text x="${margin.left}" y="42" fill="#111827" font-size="34" font-family="Arial, sans-serif" font-weight="700">${route.label}</text>
