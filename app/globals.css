@@ -815,10 +815,6 @@ button { font: inherit; }
   gap: 8px;
 }
 
-.v3-route-actions.queue-only {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .v3-navigate {
   min-height: 48px;
   display: grid;
@@ -830,6 +826,14 @@ button { font: inherit; }
   font-size: 15px;
   font-weight: 750;
   text-decoration: none;
+}
+
+.v3-route-actions.inactive .v3-navigate,
+.v3-route-actions.inactive .v3-queue-tester-button {
+  background: #d1d5db;
+  box-shadow: none;
+  color: #6b7280;
+  cursor: not-allowed;
 }
 
 .v3-answer-row {

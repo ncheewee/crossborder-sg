@@ -1436,13 +1436,23 @@ function V3WoodlandsApproach({
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
           <span className="v3-road-chip">{selected.label.slice(4)}</span>
           </div>
-          <div className={`v3-route-actions ${crossingOnly ? "queue-only" : ""}`}>
-            {!crossingOnly && <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>}
+          <div className={`v3-route-actions ${crossingOnly ? "inactive" : ""}`}>
+            <a
+              className="v3-navigate"
+              href={crossingOnly ? undefined : googleMapsNavigationUrl(travelDirection, selected.id)}
+              target={crossingOnly ? undefined : "_blank"}
+              rel={crossingOnly ? undefined : "noreferrer"}
+              aria-disabled={crossingOnly}
+              tabIndex={crossingOnly ? -1 : undefined}
+              onClick={crossingOnly ? (event) => event.preventDefault() : undefined}
+            >
+              NAVIGATE
+            </a>
             <div className={`v3-queue-tester ${queueState}`} aria-live="polite">
               <button
                 type="button"
                 className="v3-queue-tester-button"
-                disabled={queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
+                disabled={crossingOnly || queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
                 onClick={() => queueCapture ? void recordCustomsClearance() : void recordQueueJoin()}
               >
                 {queueState === "locating-join" || queueState === "locating-clear" ? "LOCATING..." : queueState === "saving" ? "SAVING..." : queueCapture ? "CLEARED CUSTOMS" : "JOINED QUEUE"}
