@@ -20,6 +20,13 @@ type Env = {
   ALLOWED_EMAILS?: string;
   ALLOWED_DOMAINS?: string;
   GOOGLE_ROUTES_API_KEY?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
+};
+
+type CheckpointCaptureReadings = {
+  woodlands: { towardsJb: [number, number] | null; towardsSg: [number, number] | null };
+  tuas: { towardsJb: [number, number] | null; towardsSg: [number, number] | null };
 };
 
 type ApproachId =
@@ -114,6 +121,7 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 let googleKeysCache: { expiresAt: number; keys: JsonWebKey[] } | null = null;
 let authTablesReady: Promise<void> | null = null;
 let approachTripTableReady: Promise<void> | null = null;
+let checkpointCaptureTableReady: Promise<void> | null = null;
 const approachRouteCache = new Map<string, { expiresAt: number; routes: ApproachRouteOption[] }>();
 
 function corsHeaders(env: Env) {
@@ -399,6 +407,96 @@ async function ensureApproachTripTable(sql: ReturnType<typeof neon>) {
     })();
   }
   return approachTripTableReady;
+}
+
+async function ensureCheckpointCaptureTable(sql: ReturnType<typeof neon>) {
+  if (!checkpointCaptureTableReady) {
+    checkpointCaptureTableReady = (async () => {
+      await sql`
+        create table if not exists checkpoint_app_captures (
+          id bigserial primary key,
+          captured_at timestamptz not null,
+          source text not null,
+          readings jsonb not null,
+          raw_ocr text,
+          created_at timestamptz not null default now()
+        )
+      `;
+      await sql`
+        create index if not exists checkpoint_app_captures_captured_idx
+          on checkpoint_app_captures (captured_at desc)
+      `;
+    })();
+  }
+  return checkpointCaptureTableReady;
+}
+
+function isMonitorRequest(request: Request, env: Env) {
+  const key = request.headers.get("X-Monitor-Key");
+  return Boolean(env.MONITOR_API_KEY && key && key === env.MONITOR_API_KEY);
+}
+
+function normalizeCaptureRange(value: unknown): [number, number] | null {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const [low, high] = value.map(Number);
+  return Number.isFinite(low) && Number.isFinite(high) && low > 0 && high >= low && high <= 240
+    ? [Math.round(low), Math.round(high)]
+    : null;
+}
+
+function normalizeCheckpointCaptureReadings(value: unknown): CheckpointCaptureReadings {
+  const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const checkpoint = (name: "woodlands" | "tuas") => {
+    const directions = source[name] && typeof source[name] === "object"
+      ? source[name] as Record<string, unknown>
+      : {};
+    return {
+      towardsJb: normalizeCaptureRange(directions.towardsJb),
+      towardsSg: normalizeCaptureRange(directions.towardsSg),
+    };
+  };
+  return { woodlands: checkpoint("woodlands"), tuas: checkpoint("tuas") };
+}
+
+function hasCheckpointCaptureReading(readings: CheckpointCaptureReadings) {
+  return Object.values(readings).some((directions) => Object.values(directions).some(Boolean));
+}
+
+async function handleCheckpointCapture(request: Request, env: Env) {
+  if (!isMonitorRequest(request, env)) return unauthorized(env);
+  try {
+    const body = await request.json() as { capturedAt?: unknown; readings?: unknown; rawOcr?: unknown };
+    const capturedAt = typeof body.capturedAt === "string" ? new Date(body.capturedAt) : new Date();
+    const readings = normalizeCheckpointCaptureReadings(body.readings);
+    if (Number.isNaN(capturedAt.getTime()) || !hasCheckpointCaptureReading(readings)) {
+      return json(env, { error: "invalid_checkpoint_capture" }, { status: 400 });
+    }
+    const rawOcr = typeof body.rawOcr === "string" ? body.rawOcr.slice(0, 12000) : null;
+    const sql = neon(env.DATABASE_URL);
+    await ensureCheckpointCaptureTable(sql);
+    await sql`
+      insert into checkpoint_app_captures (captured_at, source, readings, raw_ocr)
+      values (${capturedAt.toISOString()}, ${"mi6-macrodroid"}, ${JSON.stringify(readings)}::jsonb, ${rawOcr})
+    `;
+    return json(env, { ok: true, capturedAt: capturedAt.toISOString(), readings });
+  } catch {
+    return json(env, { error: "checkpoint_capture_unavailable" }, { status: 503 });
+  }
+}
+
+async function handleCheckpointCaptures(request: Request, env: Env) {
+  if (!isMonitorRequest(request, env)) return unauthorized(env);
+  const hours = Math.min(48, Math.max(1, Number(new URL(request.url).searchParams.get("hours") ?? 24)));
+  const sql = neon(env.DATABASE_URL);
+  await ensureCheckpointCaptureTable(sql);
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const rows = await sql`
+    select captured_at, source, readings
+    from checkpoint_app_captures
+    where captured_at >= ${since}
+    order by captured_at asc
+  `;
+  return json(env, { captures: rows });
 }
 
 async function recordAuthEvent(
@@ -1057,9 +1155,19 @@ async function handleApproachReport(request: Request, env: Env, user: AuthUser |
       )
     `;
 
+    const alert = await sendApproachTripTelegram(env, {
+      direction,
+      approachId,
+      startedAt,
+      clearedAt,
+      estimatedMinutes,
+      actualWaitMinutes,
+    });
+
     return json(env, {
       ok: true,
       message: "Crossing recorded for approach calibration.",
+      telegramSent: alert,
     });
   } catch {
     return json(env, {
@@ -1067,6 +1175,67 @@ async function handleApproachReport(request: Request, env: Env, user: AuthUser |
       message: "Unable to save this approach report right now.",
     }, { status: 503 });
   }
+}
+
+const approachLabels: Record<ApproachId, string> = {
+  "woodlands-bke-right": "BKE (right) -> Flyover",
+  "woodlands-bke-left": "BKE (left) -> Junction",
+  "woodlands-road-left": "Woodlands Road",
+  "woodlands-jln-lingkaran-dalam": "Jln Lingkaran Dalam (South)",
+  "woodlands-ah2": "AH2",
+  "woodlands-bukit-chagar": "Bukit Chagar",
+  "woodlands-jb-city-square": "Jln Lingkaran Dalam (North)",
+};
+
+function singaporeTime(timestamp: Date) {
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).format(timestamp);
+}
+
+async function sendApproachTripTelegram(
+  env: Env,
+  report: { direction: Direction; approachId: ApproachId; startedAt: Date; clearedAt: Date; estimatedMinutes: number; actualWaitMinutes: number },
+) {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return false;
+  const direction = report.direction === "sg-my" ? "Singapore -> JB" : "JB -> Singapore";
+  const variance = report.actualWaitMinutes - report.estimatedMinutes;
+  const varianceText = `${variance >= 0 ? "+" : ""}${variance} min vs estimate`;
+  const text = [
+    "Crossing test recorded",
+    `Woodlands | ${direction}`,
+    approachLabels[report.approachId],
+    `Actual ${report.actualWaitMinutes} min | Estimated ${report.estimatedMinutes} min (${varianceText})`,
+    `Joined ${singaporeTime(report.startedAt)} | Cleared ${singaporeTime(report.clearedAt)} SGT`,
+  ].join("\n");
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, disable_web_page_preview: true }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function handleApproachTripReports(request: Request, env: Env) {
+  if (!isMonitorRequest(request, env)) return unauthorized(env);
+  const limit = Math.min(20, Math.max(1, Number(new URL(request.url).searchParams.get("limit") ?? 5)));
+  const sql = neon(env.DATABASE_URL);
+  await ensureApproachTripTable(sql);
+  const reports = await sql`
+    select reported_at, direction, checkpoint, approach_id, started_at, cleared_at, estimated_minutes, actual_wait_minutes, location_accuracy_meters
+    from approach_trip_reports
+    order by reported_at desc
+    limit ${limit}
+  `;
+  return json(env, { reports });
 }
 
 async function handleGoogleAuth(request: Request, env: Env) {
@@ -1138,6 +1307,18 @@ export default {
       const user = await authenticateRequest(request, env);
       if (user instanceof Response) return user;
       return handleApproachReport(request, env, user);
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/approach-reports") {
+      return handleApproachTripReports(request, env);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/monitor/checkpoint") {
+      return handleCheckpointCapture(request, env);
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/monitor/checkpoint") {
+      return handleCheckpointCaptures(request, env);
     }
 
     return json(env, { error: "not_found" }, { status: 404 });
