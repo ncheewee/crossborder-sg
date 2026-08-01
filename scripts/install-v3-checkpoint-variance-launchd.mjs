@@ -19,7 +19,6 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
   <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key><array><string>/bin/zsh</string><string>${runnerPath}</string></array>
   <key>StartInterval</key><integer>3600</integer>
-  <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>${support}/logs/v3-checkpoint-variance.out.log</string>
   <key>StandardErrorPath</key><string>${support}/logs/v3-checkpoint-variance.err.log</string>
 </dict></plist>\n`;

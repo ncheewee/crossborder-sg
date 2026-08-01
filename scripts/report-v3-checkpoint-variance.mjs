@@ -32,6 +32,8 @@ const historyPath = join(captureRoot, "v3-four-source-history.csv");
 const legacyHistoryPath = join(captureRoot, "v3-crossborder-sheet-history.csv");
 const sharedTimingsSnapshotPath = join(captureRoot, "v3-gmaps-timings-cache.json");
 const checkpointMaxAgeMs = 90 * 60 * 1000;
+const apiBase = (process.env.CROSSBORDER_API_BASE || "https://crossborder-sg-api.ncheewee.workers.dev").replace(/\/$/, "");
+const monitorKey = process.env.MONITOR_API_KEY;
 
 const routeSets = [
   {
@@ -134,6 +136,29 @@ async function readJson(path) {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
+}
+
+function checkpointRecordFromWorker(capture) {
+  if (!capture || typeof capture !== "object") return null;
+  const capturedAt = capture.captured_at ?? capture.capturedAt;
+  if (!capturedAt || Number.isNaN(new Date(capturedAt).getTime())) return null;
+  return {
+    app: "Checkpoint.sg",
+    captureStatus: "completed",
+    capturedAt: new Date(capturedAt).toISOString(),
+    normalizedReadings: capture.readings,
+  };
+}
+
+async function loadWorkerCheckpointCaptures() {
+  if (!monitorKey) throw new Error("MONITOR_API_KEY is not configured");
+  const response = await fetch(`${apiBase}/api/monitor/checkpoint?hours=36`, {
+    headers: { "X-Monitor-Key": monitorKey },
+  });
+  if (!response.ok) throw new Error(`Checkpoint capture API returned ${response.status}`);
+  const payload = await response.json();
+  if (!Array.isArray(payload?.captures)) throw new Error("Checkpoint capture API returned an invalid payload");
+  return payload.captures.map(checkpointRecordFromWorker).filter(Boolean);
 }
 
 function parseCsv(text) {
@@ -346,8 +371,15 @@ function chartSvg(route, rows) {
 }
 
 await mkdir(captureRoot, { recursive: true });
-const records = await readJson(join(captureRoot, "latest-summary.json")) ?? [];
-const checkpoint = records.find((record) => (
+let records = [];
+try {
+  records = await loadWorkerCheckpointCaptures();
+  console.log(`Loaded ${records.length} Checkpoint.sg capture(s) from the Mi6 Worker feed.`);
+} catch (error) {
+  records = await readJson(join(captureRoot, "latest-summary.json")) ?? [];
+  console.warn(`Mi6 Worker capture refresh failed; using local capture cache: ${error.message}`);
+}
+const checkpoint = records.slice().reverse().find((record) => (
   record.app === "Checkpoint.sg"
   && record.captureStatus !== "failed"
   && Number.isFinite(new Date(record.capturedAt).getTime())
@@ -427,7 +459,17 @@ for (const route of rows) {
     checkpointLow: row.checkpointLow,
     checkpointHigh: row.checkpointHigh,
   }));
-  const points = [...sheetPoints, ...checkpointHistoryPoints, ...history, ...rows]
+  const mi6CheckpointPoints = records.map((record) => {
+    const range = plausibleRange(record.normalizedReadings?.woodlands?.[routeDefinition.directionKey]);
+    if (!range || !inSingaporeDate(record.capturedAt, reportDate)) return null;
+    return {
+      capturedAt: record.capturedAt,
+      label: route.label,
+      checkpointLow: range[0],
+      checkpointHigh: range[1],
+    };
+  }).filter(Boolean);
+  const points = [...sheetPoints, ...checkpointHistoryPoints, ...mi6CheckpointPoints, ...history, ...rows]
     .filter((row) => row.label === route.label && inSingaporeDate(row.capturedAt, reportDate)).map((row) => {
     const checkpointRange = plausibleRange([row.checkpointLow, row.checkpointHigh]);
     const tomtomRange = plausibleRange([row.tomtomLow, row.tomtomHigh]);
