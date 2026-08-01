@@ -1436,22 +1436,22 @@ function V3WoodlandsApproach({
           <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
           <span className="v3-road-chip">{selected.label.slice(4)}</span>
           </div>
-          {!crossingOnly && <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>}
+          <div className={`v3-route-actions ${crossingOnly ? "queue-only" : ""}`}>
+            {!crossingOnly && <a className="v3-navigate" href={googleMapsNavigationUrl(travelDirection, selected.id)} target="_blank" rel="noreferrer">NAVIGATE</a>}
+            <div className={`v3-queue-tester ${queueState}`} aria-live="polite">
+              <button
+                type="button"
+                className="v3-queue-tester-button"
+                disabled={queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
+                onClick={() => queueCapture ? void recordCustomsClearance() : void recordQueueJoin()}
+              >
+                {queueState === "locating-join" || queueState === "locating-clear" ? "LOCATING..." : queueState === "saving" ? "SAVING..." : queueCapture ? "CLEARED CUSTOMS" : "JOINED QUEUE"}
+              </button>
+              {queueMessage && <span>{queueMessage}</span>}
+            </div>
+          </div>
         </>}
       </article>
-      {hasLiveTimes && selected && (
-        <div className={`v3-queue-tester ${queueState}`} aria-live="polite">
-          <button
-            type="button"
-            className="v3-queue-tester-button"
-            disabled={queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
-            onClick={() => queueCapture ? void recordCustomsClearance() : void recordQueueJoin()}
-          >
-            {queueState === "locating-join" || queueState === "locating-clear" ? "LOCATING..." : queueState === "saving" ? "SAVING..." : queueCapture ? "CLEARED CUSTOMS" : "JOINED QUEUE"}
-          </button>
-          {queueMessage && <span>{queueMessage}</span>}
-        </div>
-      )}
       <nav className="v3-bottom-nav" aria-label="Travel direction">
         <button type="button" className={travelDirection === "sg-my" ? "active" : ""} aria-current={travelDirection === "sg-my" ? "page" : undefined} onClick={() => switchDirection("sg-my")}>
           <span aria-hidden="true">↗</span>
