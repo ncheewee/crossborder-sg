@@ -322,6 +322,11 @@ function chartSvg(route, rows) {
     pointMarker("oursMid", palette.main, 6),
     ...comparisonSeries.map((series) => pointMarker(`${series.key}Mid`, series.color, 4)),
   ].join("");
+  const legendX = margin.left + 18;
+  const legendY = margin.top + 18;
+  const legendItem = (x, y, label, color, dash = "") => `
+    <line x1="${x}" x2="${x + 22}" y1="${y}" y2="${y}" stroke="${color}" stroke-width="5" stroke-linecap="round"${dash ? ` stroke-dasharray="${dash}"` : ""}/>
+    <text x="${x + 32}" y="${y + 6}" fill="#23303b" font-size="18">${label}</text>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     <text x="${margin.left}" y="42" fill="#111827" font-size="34" font-family="Arial, sans-serif" font-weight="700">${route.label}</text>
@@ -332,10 +337,11 @@ function chartSvg(route, rows) {
     <path d="${line("oursMid")}" fill="none" stroke="${palette.main}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     ${comparisonSeries.map((series) => `<path d="${line(`${series.key}Mid`)}" fill="none" stroke="${series.color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${series.dash}"/>`).join("")}
     ${dots}
-    <rect x="${width - 610}" y="24" width="16" height="16" rx="4" fill="${palette.main}"/><text x="${width - 586}" y="39" fill="#23303b" font-size="18">CrossBorder</text>
-    <line x1="${width - 445}" x2="${width - 429}" y1="32" y2="32" stroke="#64748b" stroke-width="5" stroke-dasharray="8 6"/><text x="${width - 421}" y="39" fill="#23303b" font-size="18">Checkpoint</text>
-    <line x1="${width - 275}" x2="${width - 259}" y1="32" y2="32" stroke="#d97706" stroke-width="5" stroke-dasharray="8 6"/><text x="${width - 251}" y="39" fill="#23303b" font-size="18">TomTom</text>
-    <line x1="${width - 125}" x2="${width - 109}" y1="32" y2="32" stroke="#9333ea" stroke-width="5" stroke-dasharray="3 8"/><text x="${width - 101}" y="39" fill="#23303b" font-size="18">Mapbox</text>
+    <rect x="${legendX - 12}" y="${legendY - 18}" width="446" height="60" rx="10" fill="#ffffff" fill-opacity="0.88"/>
+    ${legendItem(legendX, legendY, "CrossBorder", palette.main)}
+    ${legendItem(legendX + 202, legendY, "Checkpoint", "#64748b", "8 6")}
+    ${legendItem(legendX, legendY + 28, "TomTom", "#d97706", "8 6")}
+    ${legendItem(legendX + 202, legendY + 28, "Mapbox", "#9333ea", "3 8")}
   </svg>`;
 }
 
