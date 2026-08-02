@@ -1,0 +1,32 @@
+name: Hourly checkpoint variance charts
+
+on:
+  schedule:
+    # The Mi6 capture runs on the hour. Leave time for it to reach the Worker.
+    - cron: "12 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hourly-checkpoint-variance-charts
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Send Mi6-backed hourly variance charts
+        env:
+          CROSSBORDER_API_BASE: https://crossborder-sg-api.ncheewee.workers.dev
+          MONITOR_API_KEY: ${{ secrets.MONITOR_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node scripts/report-v3-checkpoint-variance.mjs
