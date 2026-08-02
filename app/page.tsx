@@ -1209,6 +1209,7 @@ function V3WoodlandsApproach({
   const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
   const [queueMessage, setQueueMessage] = useState("");
   const requestedLocation = useRef(false);
+  const routeListRef = useRef<HTMLDivElement>(null);
   const definitions = woodlandsApproachDefinitions[travelDirection];
 
   const routes = useMemo(() => {
@@ -1322,6 +1323,11 @@ function V3WoodlandsApproach({
     useCurrentLocation();
   }, []);
 
+  useEffect(() => {
+    if (travelDirection !== "my-sg" || !hasLiveTimes) return;
+    routeListRef.current?.querySelector<HTMLButtonElement>('button[aria-checked="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [hasLiveTimes, selectedApproach, travelDirection]);
+
   function selectApproach(approachId: ApproachId) {
     if (approachId === selectedApproach) return;
     setVisualLoadingApproach(approachId);
@@ -1416,7 +1422,7 @@ function V3WoodlandsApproach({
         )}
         {hasLiveTimes && selected && <>
           {crossingOnly && <p className="v3-crossing-only">Crossing times only from your current side of the border.</p>}
-          <div className="v3-route-list" role="radiogroup" aria-label="Woodlands approach options">
+          <div ref={routeListRef} className={`v3-route-list ${travelDirection === "my-sg" ? "returning" : ""}`} role="radiogroup" aria-label="Woodlands approach options">
           {readyRoutes.map((route) => {
             const isRecommended = route.id === best?.id;
             const isSelected = route.id === selected.id;
@@ -1441,6 +1447,7 @@ function V3WoodlandsApproach({
               </button>
             );
           })}
+          {travelDirection === "my-sg" && <span className="v3-route-scroll-indicator" aria-hidden="true"><span /></span>}
           </div>
           <div className={`v3-route-visual ${visualLoadingApproach === selected.id ? "loading" : ""}`} role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`} aria-busy={visualLoadingApproach === selected.id}>
           {visualLoadingApproach === selected.id && <span className="v3-route-visual-loading" role="status">Loading route</span>}
@@ -1878,13 +1885,13 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
 };
 
 const woodlandsApproachVisualImages: Record<ApproachId, string> = {
-  "woodlands-bke-right": "woodlands-approach-a.gif?v=3",
-  "woodlands-bke-left": "woodlands-approach-b.gif?v=3",
-  "woodlands-road-left": "woodlands-approach-c.gif?v=3",
-  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=2",
-  "woodlands-ah2": "woodlands-approach-ah2.gif?v=2",
-  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.gif?v=2",
-  "woodlands-jb-city-square": "woodlands-approach-jld-north.gif?v=2",
+  "woodlands-bke-right": "woodlands-approach-a.gif?v=4",
+  "woodlands-bke-left": "woodlands-approach-b.gif?v=4",
+  "woodlands-road-left": "woodlands-approach-c.gif?v=4",
+  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=3",
+  "woodlands-ah2": "woodlands-approach-ah2.gif?v=3",
+  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.gif?v=3",
+  "woodlands-jb-city-square": "woodlands-approach-jld-north.gif?v=3",
 };
 
 function staticAssetUrl(asset: string) {
