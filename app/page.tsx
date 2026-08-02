@@ -1199,6 +1199,7 @@ function V3WoodlandsApproach({
 }) {
   const [travelDirection, setTravelDirection] = useState<Direction>("sg-my");
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
+  const [visualLoadingApproach, setVisualLoadingApproach] = useState<ApproachId | null>("woodlands-bke-left");
   const [locationState, setLocationState] = useState<"idle" | "locating" | "loading" | "ready" | "error">("idle");
   const [locationMessage, setLocationMessage] = useState("");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
@@ -1248,6 +1249,7 @@ function V3WoodlandsApproach({
       const recommended = nextDefinitions
         .map((definition) => options[definition.id]!)
         .reduce((current, route) => (includePreApproach ? route.totalMinutes < current.totalMinutes : route.crossingMinutes < current.crossingMinutes) ? route : current);
+      setVisualLoadingApproach(recommended.id);
       setSelectedApproach(recommended.id);
       setLocationState("ready");
     }).catch((error) => {
@@ -1304,7 +1306,9 @@ function V3WoodlandsApproach({
     setTravelDirection(direction);
     setRouteOptions({});
     setCrossingOnly(false);
-    setSelectedApproach(woodlandsApproachDefinitions[direction][0].id);
+    const nextApproach = woodlandsApproachDefinitions[direction][0].id;
+    setVisualLoadingApproach(nextApproach);
+    setSelectedApproach(nextApproach);
     setQueueCapture(null);
     setQueueState("idle");
     setQueueMessage("");
@@ -1317,6 +1321,12 @@ function V3WoodlandsApproach({
     requestedLocation.current = true;
     useCurrentLocation();
   }, []);
+
+  function selectApproach(approachId: ApproachId) {
+    if (approachId === selectedApproach) return;
+    setVisualLoadingApproach(approachId);
+    setSelectedApproach(approachId);
+  }
 
   function captureCurrentLocation() {
     return new Promise<CapturedLocation>((resolve, reject) => {
@@ -1417,7 +1427,7 @@ function V3WoodlandsApproach({
                 className={`${isSelected ? "selected " : ""}${isRecommended ? "recommended" : ""}`}
                 role="radio"
                 aria-checked={isSelected}
-                onClick={() => setSelectedApproach(route.id)}
+                onClick={() => selectApproach(route.id)}
               >
                 <span className="v3-route-letter">{route.label.slice(0, 1)}</span>
                 <span className="v3-route-copy">
@@ -1432,9 +1442,17 @@ function V3WoodlandsApproach({
             );
           })}
           </div>
-          <div className="v3-route-visual" role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`}>
-          <img src={woodlandsApproachVisualImages[selected.id]} alt="" />
-          <span className="v3-road-chip">{selected.label.slice(4)}</span>
+          <div className={`v3-route-visual ${visualLoadingApproach === selected.id ? "loading" : ""}`} role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`} aria-busy={visualLoadingApproach === selected.id}>
+          {visualLoadingApproach === selected.id && <span className="v3-route-visual-loading" role="status">Loading route</span>}
+          <img
+            key={selected.id}
+            className={visualLoadingApproach === selected.id ? "is-loading" : ""}
+            src={woodlandsApproachVisualImages[selected.id]}
+            alt=""
+            onLoad={() => setVisualLoadingApproach((current) => current === selected.id ? null : current)}
+            onError={() => setVisualLoadingApproach((current) => current === selected.id ? null : current)}
+          />
+          {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
           </div>
           <div className={`v3-route-actions ${crossingOnly ? "inactive" : ""}`}>
             <a
@@ -1863,10 +1881,10 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-bke-right": "woodlands-approach-a.gif?v=3",
   "woodlands-bke-left": "woodlands-approach-b.gif?v=3",
   "woodlands-road-left": "woodlands-approach-c.gif?v=3",
-  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=1",
-  "woodlands-ah2": "woodlands-approach-ah2.gif?v=1",
-  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.gif?v=1",
-  "woodlands-jb-city-square": "woodlands-approach-jld-north.gif?v=1",
+  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=2",
+  "woodlands-ah2": "woodlands-approach-ah2.gif?v=2",
+  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.gif?v=2",
+  "woodlands-jb-city-square": "woodlands-approach-jld-north.gif?v=2",
 };
 
 function staticAssetUrl(asset: string) {

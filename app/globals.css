@@ -791,6 +791,39 @@ button { font: inherit; }
   filter: none;
 }
 
+.v3-route-visual.loading {
+  background: #eef2f3;
+}
+
+.v3-route-visual img.is-loading {
+  opacity: 0;
+}
+
+.v3-route-visual-loading {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.v3-route-visual-loading::before {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #9ca3af;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  content: "";
+  animation: v3-route-loader 700ms linear infinite;
+}
+
+@keyframes v3-route-loader {
+  to { transform: rotate(360deg); }
+}
+
 .v3-road-chip {
   position: absolute;
   top: 22px;
