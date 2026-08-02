@@ -1210,6 +1210,7 @@ function V3WoodlandsApproach({
   const [queueMessage, setQueueMessage] = useState("");
   const requestedLocation = useRef(false);
   const routeListRef = useRef<HTMLDivElement>(null);
+  const preloadedRouteImages = useRef<HTMLImageElement[]>([]);
   const definitions = woodlandsApproachDefinitions[travelDirection];
 
   const routes = useMemo(() => {
@@ -1321,6 +1322,18 @@ function V3WoodlandsApproach({
     if (requestedLocation.current) return;
     requestedLocation.current = true;
     useCurrentLocation();
+  }, []);
+
+  useEffect(() => {
+    const preloadTimer = window.setTimeout(() => {
+      preloadedRouteImages.current = Object.values(woodlandsApproachVisualImages).map((asset) => {
+        const image = new Image();
+        image.decoding = "async";
+        image.src = staticAssetUrl(asset);
+        return image;
+      });
+    }, 800);
+    return () => window.clearTimeout(preloadTimer);
   }, []);
 
   useEffect(() => {
@@ -1456,6 +1469,9 @@ function V3WoodlandsApproach({
             className={visualLoadingApproach === selected.id ? "is-loading" : ""}
             src={woodlandsApproachVisualImages[selected.id]}
             alt=""
+            decoding="async"
+            loading="eager"
+            fetchPriority="high"
             onLoad={() => setVisualLoadingApproach((current) => current === selected.id ? null : current)}
             onError={() => setVisualLoadingApproach((current) => current === selected.id ? null : current)}
           />
@@ -1885,13 +1901,13 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
 };
 
 const woodlandsApproachVisualImages: Record<ApproachId, string> = {
-  "woodlands-bke-right": "woodlands-approach-a.gif?v=4",
-  "woodlands-bke-left": "woodlands-approach-b.gif?v=4",
-  "woodlands-road-left": "woodlands-approach-c.gif?v=4",
-  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=3",
-  "woodlands-ah2": "woodlands-approach-ah2.gif?v=3",
-  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.gif?v=3",
-  "woodlands-jb-city-square": "woodlands-approach-jld-north.gif?v=3",
+  "woodlands-bke-right": "woodlands-approach-a.webp?v=1",
+  "woodlands-bke-left": "woodlands-approach-b.webp?v=1",
+  "woodlands-road-left": "woodlands-approach-c.webp?v=1",
+  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.webp?v=1",
+  "woodlands-ah2": "woodlands-approach-ah2.webp?v=1",
+  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.webp?v=1",
+  "woodlands-jb-city-square": "woodlands-approach-jld-north.webp?v=1",
 };
 
 function staticAssetUrl(asset: string) {
