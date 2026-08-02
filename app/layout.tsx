@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const imageUrl = `${protocol}://${host}/og-v3.png`;
 
   return {
-    title: "CrossBorder.sg — Go now or wait?",
+    title: "CrossBorder.sg",
     description:
       "A live Singapore–Johor checkpoint recommendation based on official traffic signals.",
     manifest: "/manifest.webmanifest",
@@ -39,13 +39,13 @@ export async function generateMetadata(): Promise<Metadata> {
       apple: "/apple-touch-icon.png",
     },
     openGraph: {
-      title: "CrossBorder.sg — Go now or wait?",
+      title: "CrossBorder.sg",
       description: "Know when to leave and which land checkpoint to use.",
       images: [{ url: imageUrl, width: 1200, height: 632, alt: "Go now via Tuas — 54 to 69 minutes" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "CrossBorder.sg — Go now or wait?",
+      title: "CrossBorder.sg",
       description: "Know when to leave and which land checkpoint to use.",
       images: [imageUrl],
     },
