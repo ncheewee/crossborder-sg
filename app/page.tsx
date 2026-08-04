@@ -129,6 +129,12 @@ type ApproachOptionsResponse = {
   crossingOnly?: boolean;
   routes?: ApproachRouteOption[];
 };
+type ApproachHistoryPoint = { hour: number; minutes: number };
+type ApproachHistorySeries = {
+  today: ApproachHistoryPoint[];
+  comparison: ApproachHistoryPoint[];
+  comparisonLabel: string;
+};
 type ApproachTripReport = {
   direction: Direction;
   checkpoint: "Woodlands";
@@ -1190,6 +1196,144 @@ function V2CameraStrip({
   );
 }
 
+const approachHistorySheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=0";
+const approachHistoryColumns: Record<ApproachId, string> = {
+  "woodlands-bke-right": "SG-JB A | BKE Flyover",
+  "woodlands-bke-left": "SG-JB B | BKE Junction",
+  "woodlands-road-left": "SG-JB C | Woodlands Rd",
+  "woodlands-jln-lingkaran-dalam": "JB-SG A | Lingkaran Dalam S",
+  "woodlands-ah2": "JB-SG B | AH2",
+  "woodlands-bukit-chagar": "JB-SG C | Bukit Chagar",
+  "woodlands-jb-city-square": "JB-SG D | Lingkaran Dalam N",
+};
+
+function parseCsvRows(csv: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < csv.length; index += 1) {
+    const character = csv[index];
+    if (character === '"') {
+      if (quoted && csv[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === "," && !quoted) {
+      row.push(value);
+      value = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && csv[index + 1] === "\n") index += 1;
+      row.push(value);
+      if (row.some((cell) => cell.trim())) rows.push(row);
+      row = [];
+      value = "";
+    } else {
+      value += character;
+    }
+  }
+  row.push(value);
+  if (row.some((cell) => cell.trim())) rows.push(row);
+  return rows;
+}
+
+function singaporeDateKey(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function parseApproachHistory(csv: string): Partial<Record<ApproachId, ApproachHistorySeries>> {
+  const [header = [], ...rows] = parseCsvRows(csv);
+  const timestampIndex = header.indexOf("Timestamp (SGT)");
+  if (timestampIndex === -1) return {};
+  const now = new Date();
+  const comparisonDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const todayKey = singaporeDateKey(now);
+  const comparisonKey = singaporeDateKey(comparisonDate);
+  const comparisonLabel = `Last ${new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Singapore",
+    weekday: "short",
+  }).format(comparisonDate)}`;
+
+  return Object.fromEntries(Object.entries(approachHistoryColumns).map(([approachId, column]) => {
+    const valueIndex = header.indexOf(column);
+    const today = new Map<number, ApproachHistoryPoint>();
+    const comparison = new Map<number, ApproachHistoryPoint>();
+    if (valueIndex !== -1) {
+      for (const row of rows) {
+        const match = row[timestampIndex]?.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})$/);
+        const minutes = Number(row[valueIndex]);
+        if (!match || !Number.isFinite(minutes) || minutes <= 0) continue;
+        const hour = Number(match[2]) + Number(match[3]) / 60;
+        const point = { hour, minutes };
+        if (match[1] === todayKey) today.set(hour, point);
+        if (match[1] === comparisonKey) comparison.set(hour, point);
+      }
+    }
+    return [approachId, {
+      today: [...today.values()].sort((a, b) => a.hour - b.hour),
+      comparison: [...comparison.values()].sort((a, b) => a.hour - b.hour),
+      comparisonLabel,
+    }];
+  })) as Partial<Record<ApproachId, ApproachHistorySeries>>;
+}
+
+function ApproachHistoryOverlay({ series }: { series: ApproachHistorySeries }) {
+  const chart = useMemo(() => {
+    const all = [...series.today, ...series.comparison];
+    if (!all.length) return null;
+    const low = Math.max(0, Math.floor((Math.min(...all.map((point) => point.minutes)) - 5) / 5) * 5);
+    const high = Math.max(low + 20, Math.ceil((Math.max(...all.map((point) => point.minutes)) + 5) / 5) * 5);
+    const x = (hour: number) => 8 + Math.max(0, Math.min(24, hour)) / 24 * 284;
+    const y = (minutes: number) => 62 - (minutes - low) / (high - low) * 40;
+    const path = (points: ApproachHistoryPoint[]) => {
+      if (!points.length) return "";
+      if (points.length === 1) return `M ${x(points[0].hour).toFixed(1)} ${y(points[0].minutes).toFixed(1)}`;
+      const plotted = points.map((point) => ({ x: x(point.hour), y: y(point.minutes) }));
+      const commands = [`M ${plotted[0].x.toFixed(1)} ${plotted[0].y.toFixed(1)}`];
+      for (let index = 0; index < plotted.length - 1; index += 1) {
+        const p0 = plotted[Math.max(0, index - 1)];
+        const p1 = plotted[index];
+        const p2 = plotted[index + 1];
+        const p3 = plotted[Math.min(plotted.length - 1, index + 2)];
+        commands.push(`C ${(p1.x + (p2.x - p0.x) / 6).toFixed(1)} ${(p1.y + (p2.y - p0.y) / 6).toFixed(1)}, ${(p2.x - (p3.x - p1.x) / 6).toFixed(1)} ${(p2.y - (p3.y - p1.y) / 6).toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
+      }
+      return commands.join(" ");
+    };
+    const todayPoint = series.today.length === 1
+      ? { x: x(series.today[0].hour), y: y(series.today[0].minutes) }
+      : null;
+    return {
+      today: path(series.today),
+      comparison: path(series.comparison),
+      middleY: y((low + high) / 2),
+      todayPoint,
+    };
+  }, [series]);
+
+  if (!chart) return null;
+  return (
+    <div className="v3-route-history" aria-label={`Route crossing time today compared with ${series.comparisonLabel}`}>
+      <div className="v3-route-history-legend" aria-hidden="true">
+        <span className="today">Today</span>
+        <span className="comparison">{series.comparisonLabel}</span>
+      </div>
+      <svg viewBox="0 0 300 70" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="8" x2="292" y1={chart.middleY} y2={chart.middleY} className="grid" />
+        {chart.comparison && <path d={chart.comparison} className="comparison" />}
+        {chart.today && <path d={chart.today} className="today" />}
+        {chart.todayPoint && <circle cx={chart.todayPoint.x} cy={chart.todayPoint.y} r="3" className="today-point" />}
+      </svg>
+    </div>
+  );
+}
+
 function V3WoodlandsApproach({
   loadApproachOptions,
   submitApproachReport,
@@ -1203,6 +1347,7 @@ function V3WoodlandsApproach({
   const [locationState, setLocationState] = useState<"idle" | "locating" | "loading" | "ready" | "error">("idle");
   const [locationMessage, setLocationMessage] = useState("");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
+  const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
   const [crossingOnly, setCrossingOnly] = useState(false);
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
@@ -1337,6 +1482,21 @@ function V3WoodlandsApproach({
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    void fetch(approachHistorySheetUrl, { signal: controller.signal, cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Route history returned ${response.status}`);
+        return response.text();
+      })
+      .then((csv) => setRouteHistory(parseApproachHistory(csv)))
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setRouteHistory({});
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     if (travelDirection !== "my-sg" || !hasLiveTimes) return;
     routeListRef.current?.querySelector<HTMLButtonElement>('button[aria-checked="true"]')?.scrollIntoView({ block: "nearest" });
   }, [hasLiveTimes, selectedApproach, travelDirection]);
@@ -1456,7 +1616,7 @@ function V3WoodlandsApproach({
                   </strong>
                   <small>{crossingOnly ? `${route.crossingMinutes} min crossing` : `${route.preApproachMinutes} min to approach · ${route.crossingMinutes} min crossing`}</small>
                 </span>
-                <span className={`v3-route-time ${durationTone(crossingOnly ? route.crossingMinutes : route.durationMinutes)}`}>{crossingOnly ? route.crossingMinutes : route.durationMinutes} min</span>
+                <span className={`v3-route-time ${durationTone(route.crossingMinutes)}`}>{crossingOnly ? route.crossingMinutes : route.durationMinutes} min</span>
               </button>
             );
           })}
@@ -1476,6 +1636,9 @@ function V3WoodlandsApproach({
             onError={() => setVisualLoadingApproach((current) => current === selected.id ? null : current)}
           />
           {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
+          {visualLoadingApproach !== selected.id && routeHistory[selected.id] && (
+            <ApproachHistoryOverlay series={routeHistory[selected.id]!} />
+          )}
           </div>
           <div className={`v3-route-actions ${crossingOnly ? "inactive" : ""}`}>
             <a

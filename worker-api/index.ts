@@ -465,18 +465,19 @@ function hasCheckpointCaptureReading(readings: CheckpointCaptureReadings) {
 async function handleCheckpointCapture(request: Request, env: Env) {
   if (!isMonitorRequest(request, env)) return unauthorized(env);
   try {
-    const body = await request.json() as { capturedAt?: unknown; readings?: unknown; rawOcr?: unknown };
+    const body = await request.json() as { capturedAt?: unknown; source?: unknown; readings?: unknown; rawOcr?: unknown };
     const capturedAt = typeof body.capturedAt === "string" ? new Date(body.capturedAt) : new Date();
     const readings = normalizeCheckpointCaptureReadings(body.readings);
     if (Number.isNaN(capturedAt.getTime()) || !hasCheckpointCaptureReading(readings)) {
       return json(env, { error: "invalid_checkpoint_capture" }, { status: 400 });
     }
     const rawOcr = typeof body.rawOcr === "string" ? body.rawOcr.slice(0, 12000) : null;
+    const source = body.source === "android-emulator" ? body.source : "mi6-macrodroid";
     const sql = neon(env.DATABASE_URL);
     await ensureCheckpointCaptureTable(sql);
     await sql`
       insert into checkpoint_app_captures (captured_at, source, readings, raw_ocr)
-      values (${capturedAt.toISOString()}, ${"mi6-macrodroid"}, ${JSON.stringify(readings)}::jsonb, ${rawOcr})
+      values (${capturedAt.toISOString()}, ${source}, ${JSON.stringify(readings)}::jsonb, ${rawOcr})
     `;
     return json(env, { ok: true, capturedAt: capturedAt.toISOString(), readings });
   } catch {

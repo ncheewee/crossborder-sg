@@ -146,6 +146,7 @@ function checkpointRecordFromWorker(capture) {
     app: "Checkpoint.sg",
     captureStatus: "completed",
     capturedAt: new Date(capturedAt).toISOString(),
+    source: capture.source || "mi6-macrodroid",
     normalizedReadings: capture.readings,
   };
 }
@@ -374,7 +375,7 @@ await mkdir(captureRoot, { recursive: true });
 let records = [];
 try {
   records = await loadWorkerCheckpointCaptures();
-  console.log(`Loaded ${records.length} Checkpoint.sg capture(s) from the Mi6 Worker feed.`);
+  console.log(`Loaded ${records.length} Checkpoint.sg capture(s) from the Worker feed.`);
 } catch (error) {
   records = await readJson(join(captureRoot, "latest-summary.json")) ?? [];
   console.warn(`Mi6 Worker capture refresh failed; using local capture cache: ${error.message}`);
@@ -384,6 +385,8 @@ const checkpoint = records.slice().reverse().find((record) => (
   && record.captureStatus !== "failed"
   && Number.isFinite(new Date(record.capturedAt).getTime())
   && Date.now() - new Date(record.capturedAt).getTime() <= checkpointMaxAgeMs
+  && plausibleRange(record.normalizedReadings?.woodlands?.towardsJb)
+  && plausibleRange(record.normalizedReadings?.woodlands?.towardsSg)
 )) ?? null;
 const sources = {};
 for (const source of timingSources) {

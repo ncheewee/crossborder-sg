@@ -23,7 +23,7 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - name: Send Mi6-backed hourly variance charts
+      - name: Send hourly variance charts from freshest device capture
         env:
           CROSSBORDER_API_BASE: https://crossborder-sg-api.ncheewee.workers.dev
           MONITOR_API_KEY: ${{ secrets.MONITOR_API_KEY }}
