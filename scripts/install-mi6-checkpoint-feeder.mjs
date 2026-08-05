@@ -97,7 +97,7 @@ ocr="Woodlands JB:\n$ocr_jb_main\nTuas JB:\n$ocr_jb_tuas\nWoodlands SG:\n$ocr_sg
 
 ranges_from_ocr() {
   printf '%s\\n' "$1" \
-    | sed 's/§/5/g; s/[–—]/-/g' \
+    | sed 's/§/5/g; s/[–—]/-/g; s/\\([0-9]\\)\\.\\([0-9]\\)/\\1-\\2/g' \
     | grep -Eo '[0-9]{1,3}[[:space:]]*-[[:space:]]*[0-9]{1,3}' \
     | tr -d ' ' \
     | awk -F- '$1 > 0 && $2 >= $1 && $2 <= 240 { print "[" $1 "," $2 "]" }'

@@ -135,6 +135,7 @@ type ApproachHistorySeries = {
   comparison: ApproachHistoryPoint[];
   comparisonLabel: string;
 };
+type ApproachHistoryScale = { low: number; high: number };
 type ApproachTripReport = {
   direction: Direction;
   checkpoint: "Woodlands";
@@ -1284,12 +1285,17 @@ function parseApproachHistory(csv: string): Partial<Record<ApproachId, ApproachH
   })) as Partial<Record<ApproachId, ApproachHistorySeries>>;
 }
 
-function ApproachHistoryOverlay({ series }: { series: ApproachHistorySeries }) {
+function ApproachHistoryOverlay({
+  series,
+  scale,
+}: {
+  series: ApproachHistorySeries;
+  scale: ApproachHistoryScale;
+}) {
   const chart = useMemo(() => {
     const all = [...series.today, ...series.comparison];
     if (!all.length) return null;
-    const low = Math.max(0, Math.floor((Math.min(...all.map((point) => point.minutes)) - 5) / 5) * 5);
-    const high = Math.max(low + 20, Math.ceil((Math.max(...all.map((point) => point.minutes)) + 5) / 5) * 5);
+    const { low, high } = scale;
     const x = (hour: number) => 8 + Math.max(0, Math.min(24, hour)) / 24 * 284;
     const y = (minutes: number) => 62 - (minutes - low) / (high - low) * 40;
     const path = (points: ApproachHistoryPoint[]) => {
@@ -1315,7 +1321,7 @@ function ApproachHistoryOverlay({ series }: { series: ApproachHistorySeries }) {
       middleY: y((low + high) / 2),
       todayPoint,
     };
-  }, [series]);
+  }, [scale, series]);
 
   if (!chart) return null;
   return (
@@ -1369,6 +1375,17 @@ function V3WoodlandsApproach({
       };
     });
   }, [definitions, routeOptions]);
+
+  const routeHistoryScale = useMemo<ApproachHistoryScale>(() => {
+    const values = definitions.flatMap((definition) => {
+      const series = routeHistory[definition.id];
+      return series ? [...series.today, ...series.comparison].map((point) => point.minutes) : [];
+    });
+    if (!values.length) return { low: 0, high: 90 };
+    const low = Math.max(0, Math.floor((Math.min(...values) - 5) / 5) * 5);
+    const high = Math.max(low + 20, Math.ceil((Math.max(...values) + 5) / 5) * 5);
+    return { low, high };
+  }, [definitions, routeHistory]);
 
   const readyRoutes = routes.filter((route): route is typeof route & { durationMinutes: number; crossingMinutes: number } => (
     route.durationMinutes != null && route.crossingMinutes != null
@@ -1637,7 +1654,7 @@ function V3WoodlandsApproach({
           />
           {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
           {visualLoadingApproach !== selected.id && routeHistory[selected.id] && (
-            <ApproachHistoryOverlay series={routeHistory[selected.id]!} />
+            <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
           )}
           </div>
           <div className={`v3-route-actions ${crossingOnly ? "inactive" : ""}`}>

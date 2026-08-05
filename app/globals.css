@@ -845,8 +845,8 @@ button { font: inherit; }
   position: absolute;
   z-index: 2;
   left: 50%;
-  bottom: 10px;
-  width: calc(100% - 20px);
+  bottom: 14px;
+  width: calc(100% - 28px);
   height: 22%;
   min-height: 58px;
   max-height: 72px;
