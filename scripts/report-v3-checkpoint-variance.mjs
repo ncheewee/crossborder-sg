@@ -245,6 +245,96 @@ function sourcePoint(route, source, record) {
   return point;
 }
 
+function sourceAverage(route, source, record) {
+  if (!record?.readings) return null;
+  const values = route.routes
+    .map((item) => record.readings[`${item.sourceColumn}${source.suffix}`])
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return values.length === route.routes.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+function hourBucket(timestamp) {
+  const time = new Date(timestamp).getTime();
+  return Number.isFinite(time) ? Math.round(time / 3_600_000) * 3_600_000 : null;
+}
+
+function roundToFive(value) {
+  return Math.max(5, Math.round(value / 5) * 5);
+}
+
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function buildShadowPoints(route, googleSource, checkpointRecords) {
+  if (!googleSource?.records?.length) return [];
+  const googleByHour = new Map();
+  const checkpointByHour = new Map();
+
+  const keepClosestToHour = (map, bucket, candidate) => {
+    const existing = map.get(bucket);
+    const distance = Math.abs(new Date(candidate.capturedAt).getTime() - bucket);
+    const existingDistance = existing
+      ? Math.abs(new Date(existing.capturedAt).getTime() - bucket)
+      : Number.POSITIVE_INFINITY;
+    if (distance < existingDistance) map.set(bucket, candidate);
+  };
+
+  for (const record of googleSource.records) {
+    const bucket = hourBucket(record.capturedAt);
+    const googleMid = sourceAverage(route, googleSource, record);
+    if (bucket === null || !Number.isFinite(googleMid)) continue;
+    keepClosestToHour(googleByHour, bucket, { capturedAt: record.capturedAt, googleMid });
+  }
+  for (const record of checkpointRecords) {
+    const bucket = hourBucket(record.capturedAt);
+    const range = plausibleRange(record.normalizedReadings?.woodlands?.[route.directionKey]);
+    if (bucket === null || !range) continue;
+    keepClosestToHour(checkpointByHour, bucket, {
+      capturedAt: record.capturedAt,
+      checkpointMid: midpoint(range),
+    });
+  }
+
+  const settings = route.directionKey === "towardsJb"
+    ? { intercept: 10, slope: 1.9, alpha: 0.25 }
+    : { intercept: 5, slope: 1.7, alpha: 0.65 };
+  let learnedBias = 0;
+  let lastCheckpointHour = null;
+
+  return [...googleByHour.entries()].sort(([left], [right]) => left - right).map(([bucket, google]) => {
+    const checkpoint = checkpointByHour.get(bucket);
+    const hoursSinceCheckpoint = lastCheckpointHour === null
+      ? Number.POSITIVE_INFINITY
+      : (bucket - lastCheckpointHour) / 3_600_000;
+    const decay = hoursSinceCheckpoint <= 3
+      ? 1
+      : 0.5 ** ((hoursSinceCheckpoint - 3) / 3);
+    const effectiveBias = lastCheckpointHour === null ? 0 : learnedBias * decay;
+    const base = settings.intercept + settings.slope * google.googleMid;
+    const shadowMid = Math.round(Math.max(5, Math.min(180, base + effectiveBias)));
+
+    // Update after emitting this hour so the shadow line never learns from its target point.
+    if (checkpoint) {
+      const residual = checkpoint.checkpointMid - base;
+      learnedBias = settings.alpha * residual + (1 - settings.alpha) * effectiveBias;
+      lastCheckpointHour = bucket;
+    }
+
+    return {
+      capturedAt: google.capturedAt,
+      label: route.label,
+      shadowLow: roundToFive(shadowMid * 0.8),
+      shadowHigh: roundToFive(shadowMid * 1.2),
+      shadowMid,
+    };
+  });
+}
+
 function inSingaporeDate(timestamp, date) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
@@ -295,7 +385,7 @@ function chartSvg(route, rows) {
     { key: "mapbox", label: "Mapbox", color: "#9333ea", dash: "3 9" },
   ];
   const values = rows.flatMap((row) => [
-    row.oursLow, row.oursHigh,
+    row.oursLow, row.oursHigh, row.shadowMid,
     ...comparisonSeries.flatMap((series) => [row[`${series.key}Low`], row[`${series.key}High`]]),
   ]).filter(Number.isFinite);
   const low = Math.max(0, Math.floor((Math.min(...values, 20) - 10) / 10) * 10);
@@ -334,7 +424,7 @@ function chartSvg(route, rows) {
     .join("");
   const hourTicks = Array.from({ length: 7 }, (_, index) => index * 4).map((hour) => {
     const tickX = margin.left + hour / 24 * plotWidth;
-    const label = hour === 0 ? "12am" : hour === 12 ? "12pm" : `${hour % 12} ${hour < 12 ? "am" : "pm"}`;
+    const label = hour === 0 || hour === 24 ? "12am" : hour === 12 ? "12pm" : `${hour % 12} ${hour < 12 ? "am" : "pm"}`;
     return `<line x1="${tickX}" x2="${tickX}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="#e4e8ec"/><text x="${tickX}" y="${height - 24}" text-anchor="middle" fill="#56616d" font-size="18">${label}</text>`;
   }).join("");
   const pointMarker = (key, color, radius) => {
@@ -346,6 +436,7 @@ function chartSvg(route, rows) {
   };
   const dots = [
     pointMarker("oursMid", palette.main, 6),
+    pointMarker("shadowMid", "#d0008f", 6),
     ...comparisonSeries.map((series) => pointMarker(`${series.key}Mid`, series.color, 4)),
   ].join("");
   const legendX = margin.left + 18;
@@ -356,18 +447,20 @@ function chartSvg(route, rows) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     <text x="${margin.left}" y="42" fill="#111827" font-size="34" font-family="Arial, sans-serif" font-weight="700">${route.label}</text>
-    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Hourly Google Maps route-time range vs three comparisons · ${singaporeDate}</text>
+    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Hourly route-time range, shadow calibration and comparisons · ${singaporeDate}</text>
     ${grids}
     ${hourTicks}
     <path d="${area}" fill="${palette.fill}" fill-opacity="0.14"/>
     <path d="${line("oursMid")}" fill="none" stroke="${palette.main}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     ${comparisonSeries.map((series) => `<path d="${line(`${series.key}Mid`)}" fill="none" stroke="${series.color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${series.dash}"/>`).join("")}
+    <path d="${line("shadowMid")}" fill="none" stroke="#d0008f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     ${dots}
-    <rect x="${legendX - 12}" y="${legendY - 18}" width="446" height="60" rx="10" fill="#ffffff" fill-opacity="0.88"/>
+    <rect x="${legendX - 12}" y="${legendY - 18}" width="446" height="88" rx="10" fill="#ffffff" fill-opacity="0.9"/>
     ${legendItem(legendX, legendY, "CrossBorder", palette.main)}
-    ${legendItem(legendX + 202, legendY, "Checkpoint", "#64748b", "8 6")}
-    ${legendItem(legendX, legendY + 28, "TomTom", "#d97706", "8 6")}
-    ${legendItem(legendX + 202, legendY + 28, "Mapbox", "#9333ea", "3 8")}
+    ${legendItem(legendX + 202, legendY, "Shadow fit", "#d0008f")}
+    ${legendItem(legendX, legendY + 28, "Checkpoint", "#64748b", "8 6")}
+    ${legendItem(legendX + 202, legendY + 28, "TomTom", "#d97706", "8 6")}
+    ${legendItem(legendX, legendY + 56, "Mapbox", "#9333ea", "3 8")}
   </svg>`;
 }
 
@@ -454,6 +547,8 @@ for (const route of rows) {
     .filter((record) => inSingaporeDate(record.capturedAt, reportDate))
     .map((record) => sourcePoint(routeDefinition, source, record))
     .filter(Boolean));
+  const shadowPoints = buildShadowPoints(routeDefinition, sources.ours, records)
+    .filter((point) => inSingaporeDate(point.capturedAt, reportDate));
   const checkpointHistoryPoints = legacyHistory.filter((row) => (
     row.label === route.label && inSingaporeDate(row.capturedAt, reportDate)
   )).map((row) => ({
@@ -472,7 +567,7 @@ for (const route of rows) {
       checkpointHigh: range[1],
     };
   }).filter(Boolean);
-  const points = [...sheetPoints, ...checkpointHistoryPoints, ...mi6CheckpointPoints, ...history, ...rows]
+  const points = [...sheetPoints, ...shadowPoints, ...checkpointHistoryPoints, ...mi6CheckpointPoints, ...history, ...rows]
     .filter((row) => row.label === route.label && inSingaporeDate(row.capturedAt, reportDate)).map((row) => {
     const checkpointRange = plausibleRange([row.checkpointLow, row.checkpointHigh]);
     const tomtomRange = plausibleRange([row.tomtomLow, row.tomtomHigh]);
@@ -480,6 +575,9 @@ for (const route of rows) {
     return {
       ...row,
       oursLow: Number(row.oursLow), oursHigh: Number(row.oursHigh), oursMid: Number(row.oursMid),
+      shadowLow: optionalNumber(row.shadowLow),
+      shadowHigh: optionalNumber(row.shadowHigh),
+      shadowMid: optionalNumber(row.shadowMid),
       checkpointLow: checkpointRange?.[0] ?? null,
       checkpointHigh: checkpointRange?.[1] ?? null,
       checkpointMid: midpoint(checkpointRange),
@@ -492,6 +590,7 @@ for (const route of rows) {
     };
   }).filter((row) => (
     Number.isFinite(row.oursMid)
+    || Number.isFinite(row.shadowMid)
     || Number.isFinite(row.checkpointMid)
     || Number.isFinite(row.tomtomMid)
     || Number.isFinite(row.mapboxMid)
@@ -513,7 +612,9 @@ for (const route of rows) {
     return `${source.label}: ${formatRange(range)} · ${signedMinutes(delta)} (${percent}%) ${status}`;
   });
   const png = await sharp(Buffer.from(chartSvg(route, points))).png().toBuffer();
+  await writeFile(join(captureRoot, `latest-${route.directionKey}-hourly-chart.png`), png);
+  const latestShadow = points.filter((point) => Number.isFinite(point.shadowMid)).at(-1);
   const sourceAgeMinutes = Math.max(0, Math.round((Date.now() - new Date(route.routeDataCapturedAt).getTime()) / 60_000));
   const sourceNote = sourceAgeMinutes < 60 ? "CrossBorder timing sheet live now" : `CrossBorder timing sheet ${Math.round(sourceAgeMinutes / 60)}h old`;
-  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder Google Maps A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\n${comparisons.join("\n")}\n${sourceNote}\n\n${assessment}`);
+  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder Google Maps A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\nShadow fit: ${formatRange(latestShadow ? [latestShadow.shadowLow, latestShadow.shadowHigh] : null)}\n${comparisons.join("\n")}\n${sourceNote}\n\n${assessment}`);
 }
