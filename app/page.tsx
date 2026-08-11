@@ -2081,9 +2081,9 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
 };
 
 const woodlandsApproachVisualImages: Record<ApproachId, string> = {
-  "woodlands-bke-right": "woodlands-approach-a.webp?v=1",
-  "woodlands-bke-left": "woodlands-approach-b.webp?v=1",
-  "woodlands-road-left": "woodlands-approach-c.webp?v=1",
+  "woodlands-bke-right": "woodlands-approach-a.webp?v=2",
+  "woodlands-bke-left": "woodlands-approach-b.webp?v=2",
+  "woodlands-road-left": "woodlands-approach-c.webp?v=2",
   "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.webp?v=1",
   "woodlands-ah2": "woodlands-approach-ah2.webp?v=1",
   "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.webp?v=1",
