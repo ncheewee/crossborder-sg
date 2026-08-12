@@ -1296,8 +1296,12 @@ function ApproachHistoryOverlay({
     const all = [...series.today, ...series.comparison];
     if (!all.length) return null;
     const { low, high } = scale;
-    const x = (hour: number) => 8 + Math.max(0, Math.min(24, hour)) / 24 * 284;
-    const y = (minutes: number) => 62 - (minutes - low) / (high - low) * 40;
+    const plotLeft = 30;
+    const plotRight = 292;
+    const plotTop = 18;
+    const plotBottom = 64;
+    const x = (hour: number) => plotLeft + Math.max(0, Math.min(24, hour)) / 24 * (plotRight - plotLeft);
+    const y = (minutes: number) => plotBottom - (minutes - low) / (high - low) * (plotBottom - plotTop);
     const path = (points: ApproachHistoryPoint[]) => {
       if (!points.length) return "";
       if (points.length === 1) return `M ${x(points[0].hour).toFixed(1)} ${y(points[0].minutes).toFixed(1)}`;
@@ -1318,7 +1322,7 @@ function ApproachHistoryOverlay({
     return {
       today: path(series.today),
       comparison: path(series.comparison),
-      middleY: y((low + high) / 2),
+      yTicks: [high, Math.round((low + high) / 10) * 5, low].map((minutes) => ({ minutes, y: y(minutes) })),
       todayPoint,
     };
   }, [scale, series]);
@@ -1331,7 +1335,12 @@ function ApproachHistoryOverlay({
         <span className="comparison">{series.comparisonLabel}</span>
       </div>
       <svg viewBox="0 0 300 70" preserveAspectRatio="none" aria-hidden="true">
-        <line x1="8" x2="292" y1={chart.middleY} y2={chart.middleY} className="grid" />
+        {chart.yTicks.map((tick) => (
+          <g key={tick.minutes}>
+            <text x="24" y={tick.y} className="axis-label">{tick.minutes}m</text>
+            <line x1="30" x2="292" y1={tick.y} y2={tick.y} className="grid" />
+          </g>
+        ))}
         {chart.comparison && <path d={chart.comparison} className="comparison" />}
         {chart.today && <path d={chart.today} className="today" />}
         {chart.todayPoint && <circle cx={chart.todayPoint.x} cy={chart.todayPoint.y} r="3" className="today-point" />}
@@ -1359,7 +1368,6 @@ function V3WoodlandsApproach({
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
   const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
   const [queueMessage, setQueueMessage] = useState("");
-  const requestedLocation = useRef(false);
   const routeListRef = useRef<HTMLDivElement>(null);
   const preloadedRouteImages = useRef<HTMLImageElement[]>([]);
   const definitions = woodlandsApproachDefinitions[travelDirection];
@@ -1400,10 +1408,9 @@ function V3WoodlandsApproach({
     return direction === "sg-my" ? coordinate.latitude < 1.455 : coordinate.latitude > 1.455;
   }
 
-  function loadRoutes(coordinate: Coordinate, direction: Direction) {
+  function loadRoutes(coordinate: Coordinate, direction: Direction, includePreApproach = isOnDepartureSide(coordinate, direction)) {
     setLocationState("loading");
     setLocationMessage("");
-    const includePreApproach = isOnDepartureSide(coordinate, direction);
     void loadApproachOptions(coordinate, direction, includePreApproach).then((payload) => {
       const options = Object.fromEntries((payload.routes ?? []).map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
       const nextDefinitions = woodlandsApproachDefinitions[direction];
@@ -1421,6 +1428,11 @@ function V3WoodlandsApproach({
       setLocationState("error");
       setLocationMessage(error instanceof Error ? error.message : "Live route times could not load. Reopen the app to retry.");
     });
+  }
+
+  function loadCrossingRoutes(direction: Direction) {
+    const fallbackCoordinate = woodlandsApproachDefinitions[direction][0].waypoint;
+    loadRoutes(fallbackCoordinate, direction, false);
   }
 
   function useCurrentLocation() {
@@ -1444,8 +1456,8 @@ function V3WoodlandsApproach({
         (error) => {
           setLocationState("error");
           setLocationMessage(error.code === error.PERMISSION_DENIED
-            ? "Location is blocked for CrossBorder.sg. Allow it in the app or browser settings, then reopen."
-            : "Your location could not be found. Check device location services, then reopen the app.");
+            ? "Location is blocked. Crossing times still work; allow location in browser settings to add your drive time."
+            : "Location was not available. Crossing times still work; tap Use my location to retry.");
         },
         { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
       );
@@ -1455,7 +1467,7 @@ function V3WoodlandsApproach({
       void navigator.permissions.query({ name: "geolocation" }).then((permission) => {
         if (permission.state === "denied") {
           setLocationState("error");
-          setLocationMessage("Location is blocked for CrossBorder.sg. Allow it in the app or browser settings, then reopen.");
+          setLocationMessage("Location is blocked. Crossing times still work; allow location in browser settings to add your drive time.");
           return;
         }
         requestPosition();
@@ -1477,13 +1489,11 @@ function V3WoodlandsApproach({
     setQueueState("idle");
     setQueueMessage("");
     if (currentLocation) loadRoutes(currentLocation, direction);
-    else setLocationState("idle");
+    else loadCrossingRoutes(direction);
   }
 
   useEffect(() => {
-    if (requestedLocation.current) return;
-    requestedLocation.current = true;
-    useCurrentLocation();
+    loadCrossingRoutes("sg-my");
   }, []);
 
   useEffect(() => {
@@ -1607,11 +1617,21 @@ function V3WoodlandsApproach({
       <article className={`v3-approach-card ${travelDirection === "my-sg" ? "returning" : ""}`}>
         {(locationState === "locating" || locationState === "loading") && <p className="v3-location-status">{locationState === "locating" ? "Finding your location…" : "Checking live route times…"}</p>}
         {locationState === "error" && <p className="v3-location-status error">{locationMessage}</p>}
-        {!hasLiveTimes && locationState === "idle" && (
-          <div className="v3-location-gate" aria-live="polite">Location is required for live route times.</div>
+        {!hasLiveTimes && locationState !== "locating" && locationState !== "loading" && (
+          <div className="v3-location-gate" aria-live="polite">
+            <span>Route times could not load.</span>
+            <button type="button" className="v3-location-action" onClick={() => loadCrossingRoutes(travelDirection)}>RETRY</button>
+          </div>
         )}
         {hasLiveTimes && selected && <>
-          {crossingOnly && <p className="v3-crossing-only">Crossing times only from your current side of the border.</p>}
+          {crossingOnly && (
+            <div className="v3-crossing-only">
+              <span>Crossing times shown</span>
+              <button type="button" className="v3-location-action" disabled={locationState === "locating" || locationState === "loading"} onClick={useCurrentLocation}>
+                {locationState === "locating" ? "LOCATING…" : "USE MY LOCATION"}
+              </button>
+            </div>
+          )}
           <div ref={routeListRef} className={`v3-route-list ${travelDirection === "my-sg" ? "returning" : ""}`} role="radiogroup" aria-label="Woodlands approach options">
           {readyRoutes.map((route) => {
             const isRecommended = route.id === best?.id;
@@ -1653,19 +1673,16 @@ function V3WoodlandsApproach({
             onError={() => setVisualLoadingApproach((current) => current === selected.id ? null : current)}
           />
           {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
-          {visualLoadingApproach !== selected.id && routeHistory[selected.id] && (
+          </div>
+          {routeHistory[selected.id] && (
             <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
           )}
-          </div>
-          <div className={`v3-route-actions ${crossingOnly ? "inactive" : ""}`}>
+          <div className="v3-route-actions">
             <a
               className="v3-navigate"
-              href={crossingOnly ? undefined : googleMapsNavigationUrl(travelDirection, selected.id)}
-              target={crossingOnly ? undefined : "_blank"}
-              rel={crossingOnly ? undefined : "noreferrer"}
-              aria-disabled={crossingOnly}
-              tabIndex={crossingOnly ? -1 : undefined}
-              onClick={crossingOnly ? (event) => event.preventDefault() : undefined}
+              href={googleMapsNavigationUrl(travelDirection, selected.id)}
+              target="_blank"
+              rel="noreferrer"
             >
               NAVIGATE
             </a>
@@ -1673,7 +1690,7 @@ function V3WoodlandsApproach({
               <button
                 type="button"
                 className="v3-queue-tester-button"
-                disabled={crossingOnly || queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
+                disabled={queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
                 onClick={() => queueCapture ? void recordCustomsClearance() : void recordQueueJoin()}
               >
                 {queueState === "locating-join" || queueState === "locating-clear" ? "LOCATING..." : queueState === "saving" ? "SAVING..." : queueCapture ? "CLEARED CUSTOMS" : "JOINED QUEUE"}
@@ -2634,6 +2651,7 @@ export default function Home() {
             <h1 id="login-title">Sign in to continue</h1>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
+          <p className="login-note">Codex V3 · 0.9</p>
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
@@ -2646,6 +2664,7 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
+          <small>Codex V3 · 0.9</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
