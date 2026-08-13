@@ -780,13 +780,13 @@ button { font: inherit; }
 
 .v3-route-visual {
   position: relative;
-  width: calc(var(--v3-route-media-width) + 20px);
+  width: var(--v3-route-media-width);
   height: auto;
   aspect-ratio: 1.3;
   display: grid;
   place-items: center;
   align-self: center;
-  margin: 0 -10px;
+  margin: 0;
   overflow: hidden;
   border-radius: 12px;
   background: #ffffff;
@@ -848,7 +848,7 @@ button { font: inherit; }
 .v3-road-chip {
   position: absolute;
   z-index: 3;
-  top: 6px;
+  top: 12px;
   left: 50%;
   min-height: 28px;
   padding: 6px 10px;

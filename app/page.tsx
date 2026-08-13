@@ -1316,7 +1316,10 @@ function ApproachHistoryOverlay({
     const plotTop = 18;
     const plotBottom = 64;
     const x = (hour: number) => plotLeft + Math.max(0, Math.min(24, hour)) / 24 * (plotRight - plotLeft);
-    const y = (minutes: number) => plotBottom - (minutes - low) / (high - low) * (plotBottom - plotTop);
+    const y = (minutes: number) => {
+      const clampedMinutes = Math.max(low, Math.min(high, minutes));
+      return plotBottom - (clampedMinutes - low) / (high - low) * (plotBottom - plotTop);
+    };
     const path = (points: ApproachHistoryPoint[]) => {
       if (!points.length) return "";
       if (points.length === 1) return `M ${x(points[0].hour).toFixed(1)} ${y(points[0].minutes).toFixed(1)}`;
@@ -1336,8 +1339,8 @@ function ApproachHistoryOverlay({
       : null;
     const timeZones = [
       { key: "green", low: low, high: Math.min(high, 30) },
-      { key: "yellow", low: Math.max(low, 30), high: Math.min(high, 45) },
-      { key: "red", low: Math.max(low, 45), high },
+      { key: "yellow", low: Math.max(low, 30), high: Math.min(high, 60) },
+      { key: "red", low: Math.max(low, 60), high },
     ].filter((zone) => zone.high > zone.low).map((zone) => ({
       ...zone,
       y: y(zone.high),
@@ -1431,16 +1434,7 @@ function V3WoodlandsApproach({
     }])) as Partial<Record<ApproachId, ApproachHistorySeries>>;
   }, [crossingCalibration, routeHistory]);
 
-  const routeHistoryScale = useMemo<ApproachHistoryScale>(() => {
-    const values = definitions.flatMap((definition) => {
-      const series = calibratedRouteHistory[definition.id];
-      return series ? [...series.today, ...series.comparison].map((point) => point.minutes) : [];
-    });
-    if (!values.length) return { low: 0, high: 90 };
-    const low = Math.max(0, Math.floor((Math.min(...values) - 5) / 5) * 5);
-    const high = Math.max(low + 20, Math.ceil((Math.max(...values) + 5) / 5) * 5);
-    return { low, high };
-  }, [calibratedRouteHistory, definitions]);
+  const routeHistoryScale: ApproachHistoryScale = { low: 0, high: 120 };
 
   const readyRoutes = routes.filter((route): route is typeof route & { durationMinutes: number; crossingMinutes: number } => (
     route.durationMinutes != null && route.crossingMinutes != null
@@ -1467,7 +1461,7 @@ function V3WoodlandsApproach({
       const recommended = nextDefinitions
         .map((definition) => options[definition.id]!)
         .reduce((current, route) => route.crossingMinutes < current.crossingMinutes ? route : current);
-      setVisualLoadingApproach(recommended.id);
+      setVisualLoadingApproach(recommended.id === selectedApproach ? null : recommended.id);
       setSelectedApproach(recommended.id);
       setLocationState("ready");
     }).catch((error) => {
@@ -2168,7 +2162,7 @@ function googleMapsNavigationUrl(direction: Direction, approach: ApproachId) {
 
 function durationTone(minutes: number) {
   if (minutes < 30) return "good";
-  if (minutes <= 45) return "amber";
+  if (minutes <= 60) return "amber";
   return "bad";
 }
 
@@ -2697,7 +2691,7 @@ export default function Home() {
             <h1 id="login-title">Sign in to continue</h1>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
-          <p className="login-note">Codex V3 · 1.0</p>
+          <p className="login-note">Codex V3 · 1.1</p>
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
@@ -2710,7 +2704,7 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
-          <small>Codex V3 · 1.0</small>
+          <small>Codex V3 · 1.1</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
