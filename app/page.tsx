@@ -1338,9 +1338,9 @@ function ApproachHistoryOverlay({
       ? { x: x(series.today[0].hour), y: y(series.today[0].minutes) }
       : null;
     const timeZones = [
-      { key: "green", low: low, high: Math.min(high, 30) },
-      { key: "yellow", low: Math.max(low, 30), high: Math.min(high, 60) },
-      { key: "red", low: Math.max(low, 60), high },
+      { key: "green", low: low, high: Math.min(high, 40) },
+      { key: "yellow", low: Math.max(low, 40), high: Math.min(high, 80) },
+      { key: "red", low: Math.max(low, 80), high },
     ].filter((zone) => zone.high > zone.low).map((zone) => ({
       ...zone,
       y: y(zone.high),
@@ -1359,6 +1359,7 @@ function ApproachHistoryOverlay({
   return (
     <div className="v3-route-history" aria-label={`Route crossing time today compared with ${series.comparisonLabel}`}>
       <div className="v3-route-history-legend" aria-hidden="true">
+        <strong>Crossing times</strong>
         <span className="today">Today</span>
         <span className="comparison">{series.comparisonLabel}</span>
       </div>
@@ -1395,6 +1396,7 @@ function V3WoodlandsApproach({
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
   const [crossingCalibration, setCrossingCalibration] = useState<CrossingCalibration | null>(null);
+  const [crossingOnly, setCrossingOnly] = useState(true);
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
   const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
@@ -1410,7 +1412,7 @@ function V3WoodlandsApproach({
         ...definition,
         crossingMinutes: option?.crossingMinutes ?? null,
         preApproachMinutes: option?.preApproachMinutes ?? null,
-        durationMinutes: option?.crossingMinutes ?? null,
+        durationMinutes: option?.totalMinutes ?? null,
       };
     });
   }, [definitions, routeOptions]);
@@ -1440,7 +1442,7 @@ function V3WoodlandsApproach({
     route.durationMinutes != null && route.crossingMinutes != null
   ));
   const best = readyRoutes.reduce<typeof readyRoutes[number] | null>((current, route) => (
-    !current || route.crossingMinutes < current.crossingMinutes ? route : current
+    !current || route.durationMinutes < current.durationMinutes ? route : current
   ), null);
   const selected = readyRoutes.find((route) => route.id === selectedApproach) ?? best;
   const hasLiveTimes = readyRoutes.length === definitions.length;
@@ -1458,9 +1460,10 @@ function V3WoodlandsApproach({
       if (!nextDefinitions.every((definition) => options[definition.id])) throw new Error("Incomplete route options");
       setRouteOptions(options);
       setCrossingCalibration(payload.calibration ?? null);
+      setCrossingOnly(payload.crossingOnly ?? !includePreApproach);
       const recommended = nextDefinitions
         .map((definition) => options[definition.id]!)
-        .reduce((current, route) => route.crossingMinutes < current.crossingMinutes ? route : current);
+        .reduce((current, route) => route.totalMinutes < current.totalMinutes ? route : current);
       setVisualLoadingApproach(recommended.id === selectedApproach ? null : recommended.id);
       setSelectedApproach(recommended.id);
       setLocationState("ready");
@@ -1524,6 +1527,7 @@ function V3WoodlandsApproach({
     setTravelDirection(direction);
     setRouteOptions({});
     setCrossingCalibration(null);
+    setCrossingOnly(true);
     const nextApproach = woodlandsApproachDefinitions[direction][0].id;
     setVisualLoadingApproach(nextApproach);
     setSelectedApproach(nextApproach);
@@ -1667,7 +1671,7 @@ function V3WoodlandsApproach({
         )}
         {hasLiveTimes && selected && <>
           <div className="v3-crossing-only">
-            <span>Calibrated crossing times</span>
+            <span>{crossingOnly ? "Calibrated crossing times" : "Location-adjusted route times"}</span>
             <button type="button" className="v3-location-action" disabled={locationState === "locating" || locationState === "loading"} onClick={useCurrentLocation}>
               {locationState === "locating" ? "LOCATING…" : currentLocation ? "REFRESH LOCATION" : "USE MY LOCATION"}
             </button>
@@ -1691,9 +1695,11 @@ function V3WoodlandsApproach({
                     <span>{route.label.slice(4)}</span>
                     {isRecommended && <span className="v3-fastest-chip">FASTEST</span>}
                   </strong>
-                  <small>{route.crossingMinutes} min crossing</small>
+                  <small>{crossingOnly
+                    ? `${route.crossingMinutes} min crossing`
+                    : `${route.preApproachMinutes} min approach · ${route.crossingMinutes} min crossing`}</small>
                 </span>
-                <span className={`v3-route-time ${durationTone(route.crossingMinutes)}`}>{route.crossingMinutes} min</span>
+                <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
               </button>
             );
           })}
@@ -2161,8 +2167,8 @@ function googleMapsNavigationUrl(direction: Direction, approach: ApproachId) {
 }
 
 function durationTone(minutes: number) {
-  if (minutes < 30) return "good";
-  if (minutes <= 60) return "amber";
+  if (minutes < 40) return "good";
+  if (minutes <= 80) return "amber";
   return "bad";
 }
 
@@ -2691,7 +2697,7 @@ export default function Home() {
             <h1 id="login-title">Sign in to continue</h1>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
-          <p className="login-note">Codex V3 · 1.1</p>
+          <p className="login-note">Codex V3 · 1.2</p>
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
@@ -2704,7 +2710,7 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
-          <small>Codex V3 · 1.1</small>
+          <small>Codex V3 · 1.2</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>

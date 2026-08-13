@@ -881,11 +881,19 @@ button { font: inherit; }
   left: 8px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   color: #263238;
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
+}
+
+.v3-route-history-legend strong {
+  color: #475569;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .v3-route-history-legend span {
