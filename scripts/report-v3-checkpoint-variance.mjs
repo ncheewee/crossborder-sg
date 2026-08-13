@@ -311,9 +311,11 @@ function buildShadowPoints(route, googleSource, checkpointRecords) {
     const hoursSinceCheckpoint = lastCheckpointHour === null
       ? Number.POSITIVE_INFINITY
       : (bucket - lastCheckpointHour) / 3_600_000;
-    const decay = hoursSinceCheckpoint <= 3
+    const decay = hoursSinceCheckpoint <= calibrationConfig.biasHoldHours
       ? 1
-      : 0.5 ** ((hoursSinceCheckpoint - 3) / 3);
+      : 0.5 ** (
+        (hoursSinceCheckpoint - calibrationConfig.biasHoldHours) / calibrationConfig.biasHalfLifeHours
+      );
     const effectiveBias = lastCheckpointHour === null ? 0 : learnedBias * decay;
     const base = settings.intercept + settings.slope * google.googleMid;
     const shadowMid = Math.round(Math.max(

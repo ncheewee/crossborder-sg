@@ -6,6 +6,8 @@
   "minimumMinutes": 5,
   "maximumMinutes": 180,
   "freshCaptureMinutes": 120,
+  "biasHoldHours": 3,
+  "biasHalfLifeHours": 3,
   "directions": {
     "sg-my": {
       "captureKey": "towardsJb",
