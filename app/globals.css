@@ -678,9 +678,9 @@ button { font: inherit; }
 .v3-checkpoint-tabs button:disabled { opacity: 0.42; }
 
 .v3-approach-card {
-  --v3-route-media-width: min(80vw, 320px);
-  --v3-route-media-height: clamp(210px, calc(var(--landing-visible-height) - 590px), 270px);
+  --v3-route-media-width: 100%;
   min-height: 0;
+  align-self: start;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -780,12 +780,13 @@ button { font: inherit; }
 
 .v3-route-visual {
   position: relative;
-  width: var(--v3-route-media-width);
-  height: var(--v3-route-media-height);
+  width: calc(var(--v3-route-media-width) + 20px);
+  height: auto;
+  aspect-ratio: 1.3;
   display: grid;
   place-items: center;
   align-self: center;
-  margin: 0;
+  margin: 0 -10px;
   overflow: hidden;
   border-radius: 12px;
   background: #ffffff;
@@ -798,6 +799,17 @@ button { font: inherit; }
   object-fit: cover;
   border-radius: 12px;
   filter: none;
+}
+
+.v3-route-visual.towards-jb img {
+  position: absolute;
+  top: -1.9%;
+  left: 50%;
+  width: 184.62%;
+  height: auto;
+  max-width: none;
+  border-radius: 0;
+  transform: translateX(-50%);
 }
 
 .v3-route-visual.loading {
@@ -836,7 +848,7 @@ button { font: inherit; }
 .v3-road-chip {
   position: absolute;
   z-index: 3;
-  top: 22px;
+  top: 6px;
   left: 50%;
   min-height: 28px;
   padding: 6px 10px;
@@ -917,6 +929,10 @@ button { font: inherit; }
   text-anchor: end;
   dominant-baseline: middle;
 }
+
+.v3-route-history .time-zone.green { fill: rgba(21, 128, 61, 0.1); }
+.v3-route-history .time-zone.yellow { fill: rgba(250, 204, 21, 0.16); }
+.v3-route-history .time-zone.red { fill: rgba(180, 35, 24, 0.09); }
 
 .v3-route-history path.today {
   stroke: #0f766e;
@@ -1131,7 +1147,7 @@ button { font: inherit; }
 }
 
 .v3-route-time.good { background: #15803d; }
-.v3-route-time.amber { background: #b45309; }
+.v3-route-time.amber { background: #facc15; color: #3f2d00; }
 .v3-route-time.bad { background: #b42318; }
 
 .v3-bottom-nav {

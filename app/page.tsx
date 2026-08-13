@@ -124,10 +124,25 @@ type ApproachRouteOption = {
   crossingMinutes: number;
   totalMinutes: number;
 };
+type CrossingCalibration = {
+  version: string;
+  source: "fresh-checkpoint" | "fallback-bias";
+  capturedAt: string | null;
+  intercept: number;
+  slope: number;
+  alpha: number;
+  fallbackBiasMinutes: number;
+  observedBiasMinutes: number | null;
+  effectiveBiasMinutes: number;
+  displayOffsetMinutes: number;
+  minimumMinutes: number;
+  maximumMinutes: number;
+};
 type ApproachOptionsResponse = {
   generatedAt?: string;
   crossingOnly?: boolean;
   routes?: ApproachRouteOption[];
+  calibration?: CrossingCalibration;
 };
 type ApproachHistoryPoint = { hour: number; minutes: number };
 type ApproachHistorySeries = {
@@ -1319,11 +1334,21 @@ function ApproachHistoryOverlay({
     const todayPoint = series.today.length === 1
       ? { x: x(series.today[0].hour), y: y(series.today[0].minutes) }
       : null;
+    const timeZones = [
+      { key: "green", low: low, high: Math.min(high, 30) },
+      { key: "yellow", low: Math.max(low, 30), high: Math.min(high, 45) },
+      { key: "red", low: Math.max(low, 45), high },
+    ].filter((zone) => zone.high > zone.low).map((zone) => ({
+      ...zone,
+      y: y(zone.high),
+      height: y(zone.low) - y(zone.high),
+    }));
     return {
       today: path(series.today),
       comparison: path(series.comparison),
       yTicks: [high, Math.round((low + high) / 10) * 5, low].map((minutes) => ({ minutes, y: y(minutes) })),
       todayPoint,
+      timeZones,
     };
   }, [scale, series]);
 
@@ -1335,6 +1360,9 @@ function ApproachHistoryOverlay({
         <span className="comparison">{series.comparisonLabel}</span>
       </div>
       <svg viewBox="0 0 300 70" preserveAspectRatio="none" aria-hidden="true">
+        {chart.timeZones.map((zone) => (
+          <rect key={zone.key} x="30" width="262" y={zone.y} height={zone.height} className={`time-zone ${zone.key}`} />
+        ))}
         {chart.yTicks.map((tick) => (
           <g key={tick.minutes}>
             <text x="24" y={tick.y} className="axis-label">{tick.minutes}m</text>
@@ -1363,8 +1391,8 @@ function V3WoodlandsApproach({
   const [locationMessage, setLocationMessage] = useState("");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
+  const [crossingCalibration, setCrossingCalibration] = useState<CrossingCalibration | null>(null);
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
-  const [crossingOnly, setCrossingOnly] = useState(false);
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
   const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
   const [queueMessage, setQueueMessage] = useState("");
@@ -1379,27 +1407,46 @@ function V3WoodlandsApproach({
         ...definition,
         crossingMinutes: option?.crossingMinutes ?? null,
         preApproachMinutes: option?.preApproachMinutes ?? null,
-        durationMinutes: option?.totalMinutes ?? null,
+        durationMinutes: option?.crossingMinutes ?? null,
       };
     });
   }, [definitions, routeOptions]);
 
+  const calibratedRouteHistory = useMemo<Partial<Record<ApproachId, ApproachHistorySeries>>>(() => {
+    if (!crossingCalibration) return {};
+    const adjust = (minutes: number) => Math.round(Math.max(
+      crossingCalibration.minimumMinutes,
+      Math.min(
+        crossingCalibration.maximumMinutes,
+        crossingCalibration.intercept
+          + crossingCalibration.slope * minutes
+          + crossingCalibration.effectiveBiasMinutes
+          + crossingCalibration.displayOffsetMinutes,
+      ),
+    ));
+    return Object.fromEntries(Object.entries(routeHistory).map(([approachId, series]) => [approachId, {
+      ...series,
+      today: series.today.map((point) => ({ ...point, minutes: adjust(point.minutes) })),
+      comparison: series.comparison.map((point) => ({ ...point, minutes: adjust(point.minutes) })),
+    }])) as Partial<Record<ApproachId, ApproachHistorySeries>>;
+  }, [crossingCalibration, routeHistory]);
+
   const routeHistoryScale = useMemo<ApproachHistoryScale>(() => {
     const values = definitions.flatMap((definition) => {
-      const series = routeHistory[definition.id];
+      const series = calibratedRouteHistory[definition.id];
       return series ? [...series.today, ...series.comparison].map((point) => point.minutes) : [];
     });
     if (!values.length) return { low: 0, high: 90 };
     const low = Math.max(0, Math.floor((Math.min(...values) - 5) / 5) * 5);
     const high = Math.max(low + 20, Math.ceil((Math.max(...values) + 5) / 5) * 5);
     return { low, high };
-  }, [definitions, routeHistory]);
+  }, [calibratedRouteHistory, definitions]);
 
   const readyRoutes = routes.filter((route): route is typeof route & { durationMinutes: number; crossingMinutes: number } => (
     route.durationMinutes != null && route.crossingMinutes != null
   ));
   const best = readyRoutes.reduce<typeof readyRoutes[number] | null>((current, route) => (
-    !current || route.durationMinutes < current.durationMinutes ? route : current
+    !current || route.crossingMinutes < current.crossingMinutes ? route : current
   ), null);
   const selected = readyRoutes.find((route) => route.id === selectedApproach) ?? best;
   const hasLiveTimes = readyRoutes.length === definitions.length;
@@ -1416,15 +1463,16 @@ function V3WoodlandsApproach({
       const nextDefinitions = woodlandsApproachDefinitions[direction];
       if (!nextDefinitions.every((definition) => options[definition.id])) throw new Error("Incomplete route options");
       setRouteOptions(options);
-      setCrossingOnly(payload.crossingOnly ?? !includePreApproach);
+      setCrossingCalibration(payload.calibration ?? null);
       const recommended = nextDefinitions
         .map((definition) => options[definition.id]!)
-        .reduce((current, route) => (includePreApproach ? route.totalMinutes < current.totalMinutes : route.crossingMinutes < current.crossingMinutes) ? route : current);
+        .reduce((current, route) => route.crossingMinutes < current.crossingMinutes ? route : current);
       setVisualLoadingApproach(recommended.id);
       setSelectedApproach(recommended.id);
       setLocationState("ready");
     }).catch((error) => {
       setRouteOptions({});
+      setCrossingCalibration(null);
       setLocationState("error");
       setLocationMessage(error instanceof Error ? error.message : "Live route times could not load. Reopen the app to retry.");
     });
@@ -1456,7 +1504,7 @@ function V3WoodlandsApproach({
         (error) => {
           setLocationState("error");
           setLocationMessage(error.code === error.PERMISSION_DENIED
-            ? "Location is blocked. Crossing times still work; allow location in browser settings to add your drive time."
+            ? "Location is blocked. Calibrated crossing times still work without it."
             : "Location was not available. Crossing times still work; tap Use my location to retry.");
         },
         { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
@@ -1467,7 +1515,7 @@ function V3WoodlandsApproach({
       void navigator.permissions.query({ name: "geolocation" }).then((permission) => {
         if (permission.state === "denied") {
           setLocationState("error");
-          setLocationMessage("Location is blocked. Crossing times still work; allow location in browser settings to add your drive time.");
+          setLocationMessage("Location is blocked. Calibrated crossing times still work without it.");
           return;
         }
         requestPosition();
@@ -1481,7 +1529,7 @@ function V3WoodlandsApproach({
     if (direction === travelDirection) return;
     setTravelDirection(direction);
     setRouteOptions({});
-    setCrossingOnly(false);
+    setCrossingCalibration(null);
     const nextApproach = woodlandsApproachDefinitions[direction][0].id;
     setVisualLoadingApproach(nextApproach);
     setSelectedApproach(nextApproach);
@@ -1624,14 +1672,12 @@ function V3WoodlandsApproach({
           </div>
         )}
         {hasLiveTimes && selected && <>
-          {crossingOnly && (
-            <div className="v3-crossing-only">
-              <span>Crossing times shown</span>
-              <button type="button" className="v3-location-action" disabled={locationState === "locating" || locationState === "loading"} onClick={useCurrentLocation}>
-                {locationState === "locating" ? "LOCATING…" : "USE MY LOCATION"}
-              </button>
-            </div>
-          )}
+          <div className="v3-crossing-only">
+            <span>Calibrated crossing times</span>
+            <button type="button" className="v3-location-action" disabled={locationState === "locating" || locationState === "loading"} onClick={useCurrentLocation}>
+              {locationState === "locating" ? "LOCATING…" : currentLocation ? "REFRESH LOCATION" : "USE MY LOCATION"}
+            </button>
+          </div>
           <div ref={routeListRef} className={`v3-route-list ${travelDirection === "my-sg" ? "returning" : ""}`} role="radiogroup" aria-label="Woodlands approach options">
           {readyRoutes.map((route) => {
             const isRecommended = route.id === best?.id;
@@ -1651,15 +1697,15 @@ function V3WoodlandsApproach({
                     <span>{route.label.slice(4)}</span>
                     {isRecommended && <span className="v3-fastest-chip">FASTEST</span>}
                   </strong>
-                  <small>{crossingOnly ? `${route.crossingMinutes} min crossing` : `${route.preApproachMinutes} min to approach · ${route.crossingMinutes} min crossing`}</small>
+                  <small>{route.crossingMinutes} min crossing</small>
                 </span>
-                <span className={`v3-route-time ${durationTone(route.crossingMinutes)}`}>{crossingOnly ? route.crossingMinutes : route.durationMinutes} min</span>
+                <span className={`v3-route-time ${durationTone(route.crossingMinutes)}`}>{route.crossingMinutes} min</span>
               </button>
             );
           })}
           {travelDirection === "my-sg" && <span className="v3-route-scroll-indicator" aria-hidden="true"><span /></span>}
           </div>
-          <div className={`v3-route-visual ${visualLoadingApproach === selected.id ? "loading" : ""}`} role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`} aria-busy={visualLoadingApproach === selected.id}>
+          <div className={`v3-route-visual ${travelDirection === "sg-my" ? "towards-jb" : ""} ${visualLoadingApproach === selected.id ? "loading" : ""}`} role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`} aria-busy={visualLoadingApproach === selected.id}>
           {visualLoadingApproach === selected.id && <span className="v3-route-visual-loading" role="status">Loading route</span>}
           <img
             key={selected.id}
@@ -1674,8 +1720,8 @@ function V3WoodlandsApproach({
           />
           {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
           </div>
-          {routeHistory[selected.id] && (
-            <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
+          {calibratedRouteHistory[selected.id] && (
+            <ApproachHistoryOverlay series={calibratedRouteHistory[selected.id]!} scale={routeHistoryScale} />
           )}
           <div className="v3-route-actions">
             <a
@@ -2098,9 +2144,9 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
 };
 
 const woodlandsApproachVisualImages: Record<ApproachId, string> = {
-  "woodlands-bke-right": "woodlands-approach-a.webp?v=2",
-  "woodlands-bke-left": "woodlands-approach-b.webp?v=2",
-  "woodlands-road-left": "woodlands-approach-c.webp?v=2",
+  "woodlands-bke-right": "woodlands-approach-a.gif?v=3",
+  "woodlands-bke-left": "woodlands-approach-b.gif?v=3",
+  "woodlands-road-left": "woodlands-approach-c.gif?v=3",
   "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.webp?v=1",
   "woodlands-ah2": "woodlands-approach-ah2.webp?v=1",
   "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.webp?v=1",
@@ -2121,8 +2167,8 @@ function googleMapsNavigationUrl(direction: Direction, approach: ApproachId) {
 }
 
 function durationTone(minutes: number) {
-  if (minutes < 45) return "good";
-  if (minutes < 75) return "amber";
+  if (minutes < 30) return "good";
+  if (minutes <= 45) return "amber";
   return "bad";
 }
 
@@ -2651,7 +2697,7 @@ export default function Home() {
             <h1 id="login-title">Sign in to continue</h1>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
-          <p className="login-note">Codex V3 · 0.9</p>
+          <p className="login-note">Codex V3 · 1.0</p>
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
@@ -2664,7 +2710,7 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
-          <small>Codex V3 · 0.9</small>
+          <small>Codex V3 · 1.0</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>

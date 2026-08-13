@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const calibrationConfig = JSON.parse(await readFile(join(repoRoot, "config", "crossing-calibration.json"), "utf8"));
 const captureRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -261,7 +262,7 @@ function hourBucket(timestamp) {
 }
 
 function roundToFive(value) {
-  return Math.max(5, Math.round(value / 5) * 5);
+  return Math.max(calibrationConfig.minimumMinutes, Math.round(value / 5) * 5);
 }
 
 function optionalNumber(value) {
@@ -300,9 +301,8 @@ function buildShadowPoints(route, googleSource, checkpointRecords) {
     });
   }
 
-  const settings = route.directionKey === "towardsJb"
-    ? { intercept: 10, slope: 1.9, alpha: 0.25 }
-    : { intercept: 5, slope: 1.7, alpha: 0.65 };
+  const direction = route.directionKey === "towardsJb" ? "sg-my" : "my-sg";
+  const settings = calibrationConfig.directions[direction];
   let learnedBias = 0;
   let lastCheckpointHour = null;
 
@@ -316,7 +316,10 @@ function buildShadowPoints(route, googleSource, checkpointRecords) {
       : 0.5 ** ((hoursSinceCheckpoint - 3) / 3);
     const effectiveBias = lastCheckpointHour === null ? 0 : learnedBias * decay;
     const base = settings.intercept + settings.slope * google.googleMid;
-    const shadowMid = Math.round(Math.max(5, Math.min(180, base + effectiveBias)));
+    const shadowMid = Math.round(Math.max(
+      calibrationConfig.minimumMinutes,
+      Math.min(calibrationConfig.maximumMinutes, base + effectiveBias + calibrationConfig.displayOffsetMinutes),
+    ));
 
     // Update after emitting this hour so the shadow line never learns from its target point.
     if (checkpoint) {
@@ -328,8 +331,8 @@ function buildShadowPoints(route, googleSource, checkpointRecords) {
     return {
       capturedAt: google.capturedAt,
       label: route.label,
-      shadowLow: roundToFive(shadowMid * 0.8),
-      shadowHigh: roundToFive(shadowMid * 1.2),
+      shadowLow: roundToFive(shadowMid * calibrationConfig.rangeLowFactor),
+      shadowHigh: roundToFive(shadowMid * calibrationConfig.rangeHighFactor),
       shadowMid,
     };
   });

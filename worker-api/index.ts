@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import crossingCalibration from "../config/crossing-calibration.json";
 import {
   buildForecast,
   cameraFor,
@@ -42,6 +43,20 @@ type ApproachRouteOption = {
   preApproachMinutes: number | null;
   crossingMinutes: number;
   totalMinutes: number;
+};
+type CrossingCalibration = {
+  version: string;
+  source: "fresh-checkpoint" | "fallback-bias";
+  capturedAt: string | null;
+  intercept: number;
+  slope: number;
+  alpha: number;
+  fallbackBiasMinutes: number;
+  observedBiasMinutes: number | null;
+  effectiveBiasMinutes: number;
+  displayOffsetMinutes: number;
+  minimumMinutes: number;
+  maximumMinutes: number;
 };
 
 type CameraPayload = {
@@ -122,7 +137,7 @@ let googleKeysCache: { expiresAt: number; keys: JsonWebKey[] } | null = null;
 let authTablesReady: Promise<void> | null = null;
 let approachTripTableReady: Promise<void> | null = null;
 let checkpointCaptureTableReady: Promise<void> | null = null;
-const approachRouteCache = new Map<string, { expiresAt: number; routes: ApproachRouteOption[] }>();
+const approachRouteCache = new Map<string, { expiresAt: number; routes: ApproachRouteOption[]; calibration: CrossingCalibration }>();
 
 function corsHeaders(env: Env) {
   return {
@@ -498,6 +513,78 @@ async function handleCheckpointCaptures(request: Request, env: Env) {
     order by captured_at asc
   `;
   return json(env, { captures: rows });
+}
+
+async function latestWoodlandsCalibrationRange(
+  sql: ReturnType<typeof neon>,
+  direction: Direction,
+): Promise<{ capturedAt: string; range: [number, number] } | null> {
+  try {
+    await ensureCheckpointCaptureTable(sql);
+    const since = new Date(Date.now() - crossingCalibration.freshCaptureMinutes * 60_000).toISOString();
+    const rows = await sql`
+      select captured_at, readings
+      from checkpoint_app_captures
+      where captured_at >= ${since}
+      order by captured_at desc
+      limit 20
+    `;
+    const captureKey = crossingCalibration.directions[direction].captureKey;
+    for (const row of rows) {
+      const readings = normalizeCheckpointCaptureReadings(row.readings);
+      const range = readings.woodlands[captureKey];
+      if (!range) continue;
+      return { capturedAt: new Date(row.captured_at).toISOString(), range };
+    }
+  } catch {
+    // Keep calibrated route times available with the documented fallback bias.
+  }
+  return null;
+}
+
+async function calibrateApproachRoutes(
+  routes: ApproachRouteOption[],
+  direction: Direction,
+  sql: ReturnType<typeof neon>,
+) {
+  const settings = crossingCalibration.directions[direction];
+  const capture = await latestWoodlandsCalibrationRange(sql, direction);
+  const bases = routes.map((route) => settings.intercept + settings.slope * route.crossingMinutes);
+  const meanBase = bases.reduce((sum, value) => sum + value, 0) / Math.max(1, bases.length);
+  const checkpointMidpoint = capture ? (capture.range[0] + capture.range[1]) / 2 : null;
+  const observedBiasMinutes = checkpointMidpoint == null ? null : checkpointMidpoint - meanBase;
+  const effectiveBiasMinutes = observedBiasMinutes == null
+    ? settings.fallbackBiasMinutes
+    : settings.alpha * observedBiasMinutes + (1 - settings.alpha) * settings.fallbackBiasMinutes;
+  const calibratedRoutes = routes.map((route, index) => {
+    const crossingMinutes = Math.round(Math.max(
+      crossingCalibration.minimumMinutes,
+      Math.min(
+        crossingCalibration.maximumMinutes,
+        bases[index] + effectiveBiasMinutes + crossingCalibration.displayOffsetMinutes,
+      ),
+    ));
+    return {
+      ...route,
+      crossingMinutes,
+      totalMinutes: (route.preApproachMinutes ?? 0) + crossingMinutes,
+    };
+  });
+  const calibration: CrossingCalibration = {
+    version: crossingCalibration.version,
+    source: capture ? "fresh-checkpoint" : "fallback-bias",
+    capturedAt: capture?.capturedAt ?? null,
+    intercept: settings.intercept,
+    slope: settings.slope,
+    alpha: settings.alpha,
+    fallbackBiasMinutes: settings.fallbackBiasMinutes,
+    observedBiasMinutes: observedBiasMinutes == null ? null : Math.round(observedBiasMinutes * 10) / 10,
+    effectiveBiasMinutes: Math.round(effectiveBiasMinutes * 10) / 10,
+    displayOffsetMinutes: crossingCalibration.displayOffsetMinutes,
+    minimumMinutes: crossingCalibration.minimumMinutes,
+    maximumMinutes: crossingCalibration.maximumMinutes,
+  };
+  return { routes: calibratedRoutes, calibration };
 }
 
 async function recordAuthEvent(
@@ -1057,16 +1144,17 @@ async function handleApproachOptions(request: Request, env: Env, user: AuthUser 
     const key = `${routeCacheKey(latitude, longitude, direction)}:${includePreApproach ? "journey" : "crossing"}`;
     const cached = approachRouteCache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
-      return json(env, { generatedAt: new Date().toISOString(), cached: true, crossingOnly: !includePreApproach, routes: cached.routes });
+      return json(env, { generatedAt: new Date().toISOString(), cached: true, crossingOnly: !includePreApproach, routes: cached.routes, calibration: cached.calibration });
     }
 
     const plan = woodlandsRoutePlans[direction];
-    const routes = await Promise.all(plan.approaches.map((approach) => (
+    const rawRoutes = await Promise.all(plan.approaches.map((approach) => (
       computeApproachRoute({ latitude, longitude }, approach, plan.clearance, env.GOOGLE_ROUTES_API_KEY!, includePreApproach)
     )));
-    approachRouteCache.set(key, { expiresAt: Date.now() + 90_000, routes });
+    const { routes, calibration } = await calibrateApproachRoutes(rawRoutes, direction, neon(env.DATABASE_URL));
+    approachRouteCache.set(key, { expiresAt: Date.now() + 90_000, routes, calibration });
     if (user) await recordAuthEvent(neon(env.DATABASE_URL), user, "approach-options", request);
-    return json(env, { generatedAt: new Date().toISOString(), cached: false, crossingOnly: !includePreApproach, routes });
+    return json(env, { generatedAt: new Date().toISOString(), cached: false, crossingOnly: !includePreApproach, routes, calibration });
   } catch (error) {
     return json(env, {
       error: error instanceof Error && error.message.includes("capacity") ? "google_routes_quota_exhausted" : "approach_options_unavailable",

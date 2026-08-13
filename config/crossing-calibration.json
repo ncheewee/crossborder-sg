@@ -1,0 +1,25 @@
+{
+  "version": "2026-08-13",
+  "displayOffsetMinutes": -5,
+  "rangeLowFactor": 0.8,
+  "rangeHighFactor": 1.2,
+  "minimumMinutes": 5,
+  "maximumMinutes": 180,
+  "freshCaptureMinutes": 120,
+  "directions": {
+    "sg-my": {
+      "captureKey": "towardsJb",
+      "intercept": 10,
+      "slope": 1.9,
+      "alpha": 0.25,
+      "fallbackBiasMinutes": -35
+    },
+    "my-sg": {
+      "captureKey": "towardsSg",
+      "intercept": 5,
+      "slope": 1.7,
+      "alpha": 0.65,
+      "fallbackBiasMinutes": -15
+    }
+  }
+}
