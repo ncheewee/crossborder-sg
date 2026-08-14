@@ -789,27 +789,21 @@ button { font: inherit; }
   margin: 0;
   overflow: hidden;
   border-radius: 12px;
+  clip-path: inset(0 round 12px);
   background: #ffffff;
 }
 
 .v3-route-visual img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 12px;
-  filter: none;
-}
-
-.v3-route-visual.towards-jb img {
   position: absolute;
-  top: -1.9%;
+  top: -3.5%;
   left: 50%;
-  width: 184.62%;
+  display: block;
+  width: 188%;
   height: auto;
   max-width: none;
   border-radius: 0;
   transform: translateX(-50%);
+  filter: none;
 }
 
 .v3-route-visual.loading {

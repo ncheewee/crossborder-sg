@@ -2147,10 +2147,10 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
   "woodlands-bke-right": "woodlands-approach-a.gif?v=3",
   "woodlands-bke-left": "woodlands-approach-b.gif?v=3",
   "woodlands-road-left": "woodlands-approach-c.gif?v=3",
-  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.webp?v=1",
-  "woodlands-ah2": "woodlands-approach-ah2.webp?v=1",
-  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.webp?v=1",
-  "woodlands-jb-city-square": "woodlands-approach-jld-north.webp?v=1",
+  "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=2",
+  "woodlands-ah2": "woodlands-approach-ah2.gif?v=2",
+  "woodlands-bukit-chagar": "woodlands-approach-bukit-chagar.gif?v=2",
+  "woodlands-jb-city-square": "woodlands-approach-jld-north.gif?v=2",
 };
 
 function staticAssetUrl(asset: string) {
@@ -2697,7 +2697,7 @@ export default function Home() {
             <h1 id="login-title">Sign in to continue</h1>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
-          <p className="login-note">Codex V3 · 1.2</p>
+          <p className="login-note">Codex V3 · 1.3</p>
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
@@ -2710,7 +2710,7 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
-          <small>Codex V3 · 1.2</small>
+          <small>Codex V3 · 1.3</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
