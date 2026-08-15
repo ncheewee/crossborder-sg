@@ -32,6 +32,7 @@ const timingSources = [
 const historyPath = join(captureRoot, "v3-four-source-history.csv");
 const legacyHistoryPath = join(captureRoot, "v3-crossborder-sheet-history.csv");
 const sharedTimingsSnapshotPath = join(captureRoot, "v3-gmaps-timings-cache.json");
+const mi6StatusPath = join(captureRoot, "checkpoint-mi6-status.json");
 const checkpointMaxAgeMs = 90 * 60 * 1000;
 const apiBase = (process.env.CROSSBORDER_API_BASE || "https://crossborder-sg-api.ncheewee.workers.dev").replace(/\/$/, "");
 const monitorKey = process.env.MONITOR_API_KEY;
@@ -470,6 +471,12 @@ function chartSvg(route, rows) {
 }
 
 await mkdir(captureRoot, { recursive: true });
+const mi6Status = await readJson(mi6StatusPath);
+const mi6StatusIsCurrent = mi6Status?.checkedAt
+  && Date.now() - new Date(mi6Status.checkedAt).getTime() <= 30 * 60 * 1000;
+const mi6Log = mi6StatusIsCurrent
+  ? mi6Status.mi6Log
+  : "Mi6 status was not recorded during this hourly run.";
 let records = [];
 try {
   records = await loadWorkerCheckpointCaptures();
@@ -486,6 +493,11 @@ const checkpoint = records.slice().reverse().find((record) => (
   && plausibleRange(record.normalizedReadings?.woodlands?.towardsJb)
   && plausibleRange(record.normalizedReadings?.woodlands?.towardsSg)
 )) ?? null;
+const capturedAt = new Date().toISOString();
+const checkpointSource = checkpoint?.source
+  ?? (mi6StatusIsCurrent && mi6Status.fallbackRequired ? "android-emulator"
+    : mi6StatusIsCurrent && mi6Status.ok ? "mi6-macrodroid"
+      : "unavailable");
 const sources = {};
 for (const source of timingSources) {
   try {
@@ -497,7 +509,6 @@ for (const source of timingSources) {
     console.warn(`${source.label} refresh failed${sources[source.id] ? "; using cached reading" : "; omitting this comparison"}: ${error.message}`);
   }
 }
-const capturedAt = new Date().toISOString();
 const lastValidRows = await lastValidCrossBorderRows();
 const rows = [];
 for (const route of routeSets) {
@@ -541,7 +552,12 @@ const historyLines = rows.map((row) => [
 ].join(","));
 try { await access(historyPath); } catch { await writeFile(historyPath, "capturedAt,label,oursLow,oursHigh,oursMid,checkpointLow,checkpointHigh,checkpointMid,tomtomLow,tomtomHigh,tomtomMid,mapboxLow,mapboxHigh,mapboxMid\n"); }
 await appendFile(historyPath, `${historyLines.join("\n")}\n`);
-await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON.stringify({ capturedAt, rows }, null, 2)}\n`);
+await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON.stringify({
+  capturedAt,
+  checkpointSource,
+  mi6Log,
+  rows,
+}, null, 2)}\n`);
 for (const route of rows) {
   const routeDefinition = routeSets.find((item) => item.label === route.label);
   if (!routeDefinition) throw new Error(`Missing route definition for ${route.label}`);
