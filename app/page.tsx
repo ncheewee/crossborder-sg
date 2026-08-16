@@ -151,6 +151,12 @@ type ApproachHistorySeries = {
   comparisonLabel: string;
 };
 type ApproachHistoryScale = { low: number; high: number };
+type AdjustedApproachTime = { minutes: number; timestamp: string };
+type AdjustedApproachTimes = Partial<Record<ApproachId, AdjustedApproachTime>>;
+type AdjustedApproachSheet = {
+  history: Partial<Record<ApproachId, ApproachHistorySeries>>;
+  latest: AdjustedApproachTimes;
+};
 type ApproachTripReport = {
   direction: Direction;
   checkpoint: "Woodlands";
@@ -1212,15 +1218,15 @@ function V2CameraStrip({
   );
 }
 
-const approachHistorySheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=0";
+const approachHistorySheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=94841451";
 const approachHistoryColumns: Record<ApproachId, string> = {
-  "woodlands-bke-right": "SG-JB A | BKE Flyover",
-  "woodlands-bke-left": "SG-JB B | BKE Junction",
-  "woodlands-road-left": "SG-JB C | Woodlands Rd",
-  "woodlands-jln-lingkaran-dalam": "JB-SG A | Lingkaran Dalam S",
-  "woodlands-ah2": "JB-SG B | AH2",
-  "woodlands-bukit-chagar": "JB-SG C | Bukit Chagar",
-  "woodlands-jb-city-square": "JB-SG D | Lingkaran Dalam N",
+  "woodlands-bke-right": "SG-JB A | BKE Flyover (adj)",
+  "woodlands-bke-left": "SG-JB B | BKE Junction (adj)",
+  "woodlands-road-left": "SG-JB C | Woodlands Rd (adj)",
+  "woodlands-jln-lingkaran-dalam": "JB-SG A | Lingkaran Dalam S (adj)",
+  "woodlands-ah2": "JB-SG B | AH2 (adj)",
+  "woodlands-bukit-chagar": "JB-SG C | Bukit Chagar (adj)",
+  "woodlands-jb-city-square": "JB-SG D | Lingkaran Dalam N (adj)",
 };
 
 function parseCsvRows(csv: string) {
@@ -1264,10 +1270,17 @@ function singaporeDateKey(date: Date) {
   }).format(date);
 }
 
-function parseApproachHistory(csv: string): Partial<Record<ApproachId, ApproachHistorySeries>> {
-  const [header = [], ...rows] = parseCsvRows(csv);
+function normalizeApproachSheetRows(csv: string) {
+  const [rawHeader = [], ...rows] = parseCsvRows(csv);
+  const embeddedHeader = rawHeader[0]?.split("\t").map((value) => value.trim()) ?? [];
+  const header = embeddedHeader.length > 1 ? embeddedHeader : rawHeader;
+  return { header, rows };
+}
+
+function parseAdjustedApproachSheet(csv: string): AdjustedApproachSheet {
+  const { header, rows } = normalizeApproachSheetRows(csv);
   const timestampIndex = header.indexOf("Timestamp (SGT)");
-  if (timestampIndex === -1) return {};
+  if (timestampIndex === -1) throw new Error("GMaps Adjusted is missing its timestamp column.");
   const now = new Date();
   const comparisonDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const todayKey = singaporeDateKey(now);
@@ -1277,7 +1290,8 @@ function parseApproachHistory(csv: string): Partial<Record<ApproachId, ApproachH
     weekday: "short",
   }).format(comparisonDate)}`;
 
-  return Object.fromEntries(Object.entries(approachHistoryColumns).map(([approachId, column]) => {
+  const latest: AdjustedApproachTimes = {};
+  const history = Object.fromEntries(Object.entries(approachHistoryColumns).map(([approachId, column]) => {
     const valueIndex = header.indexOf(column);
     const today = new Map<number, ApproachHistoryPoint>();
     const comparison = new Map<number, ApproachHistoryPoint>();
@@ -1288,6 +1302,7 @@ function parseApproachHistory(csv: string): Partial<Record<ApproachId, ApproachH
         if (!match || !Number.isFinite(minutes) || minutes <= 0) continue;
         const hour = Number(match[2]) + Number(match[3]) / 60;
         const point = { hour, minutes };
+        latest[approachId as ApproachId] = { minutes: Math.round(minutes), timestamp: row[timestampIndex] };
         if (match[1] === todayKey) today.set(hour, point);
         if (match[1] === comparisonKey) comparison.set(hour, point);
       }
@@ -1298,6 +1313,33 @@ function parseApproachHistory(csv: string): Partial<Record<ApproachId, ApproachH
       comparisonLabel,
     }];
   })) as Partial<Record<ApproachId, ApproachHistorySeries>>;
+
+  return { history, latest };
+}
+
+async function fetchAdjustedApproachSheet() {
+  const response = await fetch(approachHistorySheetUrl, { cache: "no-store" });
+  if (!response.ok) throw new Error(`GMaps Adjusted returned ${response.status}`);
+  return parseAdjustedApproachSheet(await response.text());
+}
+
+function buildAdjustedRouteOptions(
+  direction: Direction,
+  latest: AdjustedApproachTimes,
+  locationRoutes: ApproachRouteOption[] = [],
+) {
+  const locationById = Object.fromEntries(locationRoutes.map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
+  return Object.fromEntries(woodlandsApproachDefinitions[direction].map((definition) => {
+    const crossingMinutes = latest[definition.id]?.minutes;
+    if (crossingMinutes == null) throw new Error(`GMaps Adjusted is missing ${definition.label}.`);
+    const preApproachMinutes = locationById[definition.id]?.preApproachMinutes ?? null;
+    return [definition.id, {
+      id: definition.id,
+      preApproachMinutes,
+      crossingMinutes,
+      totalMinutes: crossingMinutes + (preApproachMinutes ?? 0),
+    }];
+  })) as Record<ApproachId, ApproachRouteOption>;
 }
 
 function ApproachHistoryOverlay({
@@ -1395,7 +1437,6 @@ function V3WoodlandsApproach({
   const [locationMessage, setLocationMessage] = useState("");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
-  const [crossingCalibration, setCrossingCalibration] = useState<CrossingCalibration | null>(null);
   const [crossingOnly, setCrossingOnly] = useState(true);
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
@@ -1417,25 +1458,6 @@ function V3WoodlandsApproach({
     });
   }, [definitions, routeOptions]);
 
-  const calibratedRouteHistory = useMemo<Partial<Record<ApproachId, ApproachHistorySeries>>>(() => {
-    if (!crossingCalibration) return {};
-    const adjust = (minutes: number) => Math.round(Math.max(
-      crossingCalibration.minimumMinutes,
-      Math.min(
-        crossingCalibration.maximumMinutes,
-        crossingCalibration.intercept
-          + crossingCalibration.slope * minutes
-          + crossingCalibration.effectiveBiasMinutes
-          + crossingCalibration.displayOffsetMinutes,
-      ),
-    ));
-    return Object.fromEntries(Object.entries(routeHistory).map(([approachId, series]) => [approachId, {
-      ...series,
-      today: series.today.map((point) => ({ ...point, minutes: adjust(point.minutes) })),
-      comparison: series.comparison.map((point) => ({ ...point, minutes: adjust(point.minutes) })),
-    }])) as Partial<Record<ApproachId, ApproachHistorySeries>>;
-  }, [crossingCalibration, routeHistory]);
-
   const routeHistoryScale: ApproachHistoryScale = { low: 0, high: 120 };
 
   const readyRoutes = routes.filter((route): route is typeof route & { durationMinutes: number; crossingMinutes: number } => (
@@ -1451,33 +1473,60 @@ function V3WoodlandsApproach({
     return direction === "sg-my" ? coordinate.latitude < 1.455 : coordinate.latitude > 1.455;
   }
 
+  function displayRouteOptions(options: Record<ApproachId, ApproachRouteOption>, direction: Direction, isCrossingOnly: boolean) {
+    const nextDefinitions = woodlandsApproachDefinitions[direction];
+    setRouteOptions(options);
+    setCrossingOnly(isCrossingOnly);
+    const recommended = nextDefinitions
+      .map((definition) => options[definition.id])
+      .reduce((current, route) => route.totalMinutes < current.totalMinutes ? route : current);
+    setVisualLoadingApproach(recommended.id === selectedApproach ? null : recommended.id);
+    setSelectedApproach(recommended.id);
+    setLocationState("ready");
+  }
+
   function loadRoutes(coordinate: Coordinate, direction: Direction, includePreApproach = isOnDepartureSide(coordinate, direction)) {
+    if (!includePreApproach) {
+      loadCrossingRoutes(direction);
+      return;
+    }
     setLocationState("loading");
     setLocationMessage("");
-    void loadApproachOptions(coordinate, direction, includePreApproach).then((payload) => {
-      const options = Object.fromEntries((payload.routes ?? []).map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
-      const nextDefinitions = woodlandsApproachDefinitions[direction];
-      if (!nextDefinitions.every((definition) => options[definition.id])) throw new Error("Incomplete route options");
-      setRouteOptions(options);
-      setCrossingCalibration(payload.calibration ?? null);
-      setCrossingOnly(payload.crossingOnly ?? !includePreApproach);
-      const recommended = nextDefinitions
-        .map((definition) => options[definition.id]!)
-        .reduce((current, route) => route.totalMinutes < current.totalMinutes ? route : current);
-      setVisualLoadingApproach(recommended.id === selectedApproach ? null : recommended.id);
-      setSelectedApproach(recommended.id);
-      setLocationState("ready");
+    let sheetForFallback: AdjustedApproachSheet | null = null;
+    void fetchAdjustedApproachSheet().then((sheet) => {
+      sheetForFallback = sheet;
+      setRouteHistory(sheet.history);
+      return loadApproachOptions(coordinate, direction, true);
+    }).then((payload) => {
+      const options = buildAdjustedRouteOptions(direction, sheetForFallback!.latest, payload.routes ?? []);
+      if (woodlandsApproachDefinitions[direction].some((definition) => options[definition.id].preApproachMinutes == null)) {
+        throw new Error("Location approach times were incomplete.");
+      }
+      displayRouteOptions(options, direction, false);
     }).catch((error) => {
+      if (sheetForFallback) {
+        displayRouteOptions(buildAdjustedRouteOptions(direction, sheetForFallback.latest), direction, true);
+        setLocationState("error");
+        setLocationMessage("Approach time is unavailable. GMaps adjusted crossing times are still shown.");
+        return;
+      }
       setRouteOptions({});
-      setCrossingCalibration(null);
       setLocationState("error");
-      setLocationMessage(error instanceof Error ? error.message : "Live route times could not load. Reopen the app to retry.");
+      setLocationMessage(error instanceof Error ? error.message : "GMaps adjusted crossing times could not load. Reopen the app to retry.");
     });
   }
 
   function loadCrossingRoutes(direction: Direction) {
-    const fallbackCoordinate = woodlandsApproachDefinitions[direction][0].waypoint;
-    loadRoutes(fallbackCoordinate, direction, false);
+    setLocationState("loading");
+    setLocationMessage("");
+    void fetchAdjustedApproachSheet().then((sheet) => {
+      setRouteHistory(sheet.history);
+      displayRouteOptions(buildAdjustedRouteOptions(direction, sheet.latest), direction, true);
+    }).catch((error) => {
+      setRouteOptions({});
+      setLocationState("error");
+      setLocationMessage(error instanceof Error ? error.message : "GMaps adjusted crossing times could not load. Reopen the app to retry.");
+    });
   }
 
   function useCurrentLocation() {
@@ -1501,8 +1550,8 @@ function V3WoodlandsApproach({
         (error) => {
           setLocationState("error");
           setLocationMessage(error.code === error.PERMISSION_DENIED
-            ? "Location is blocked. Calibrated crossing times still work without it."
-            : "Location was not available. Crossing times still work; tap Use my location to retry.");
+            ? "Location is blocked. GMaps adjusted crossing times still work without it."
+            : "Location was not available. GMaps adjusted crossing times still work; tap Use my location to retry.");
         },
         { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
       );
@@ -1512,7 +1561,7 @@ function V3WoodlandsApproach({
       void navigator.permissions.query({ name: "geolocation" }).then((permission) => {
         if (permission.state === "denied") {
           setLocationState("error");
-          setLocationMessage("Location is blocked. Calibrated crossing times still work without it.");
+          setLocationMessage("Location is blocked. GMaps adjusted crossing times still work without it.");
           return;
         }
         requestPosition();
@@ -1526,7 +1575,6 @@ function V3WoodlandsApproach({
     if (direction === travelDirection) return;
     setTravelDirection(direction);
     setRouteOptions({});
-    setCrossingCalibration(null);
     setCrossingOnly(true);
     const nextApproach = woodlandsApproachDefinitions[direction][0].id;
     setVisualLoadingApproach(nextApproach);
@@ -1552,21 +1600,6 @@ function V3WoodlandsApproach({
       });
     }, 800);
     return () => window.clearTimeout(preloadTimer);
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(approachHistorySheetUrl, { signal: controller.signal, cache: "no-store" })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Route history returned ${response.status}`);
-        return response.text();
-      })
-      .then((csv) => setRouteHistory(parseApproachHistory(csv)))
-      .catch((error) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setRouteHistory({});
-      });
-    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -1671,7 +1704,7 @@ function V3WoodlandsApproach({
         )}
         {hasLiveTimes && selected && <>
           <div className="v3-crossing-only">
-            <span>{crossingOnly ? "Calibrated crossing times" : "Location-adjusted route times"}</span>
+            <span>{crossingOnly ? "GMaps adjusted crossing times" : "Approach + GMaps adjusted crossing"}</span>
             <button type="button" className="v3-location-action" disabled={locationState === "locating" || locationState === "loading"} onClick={useCurrentLocation}>
               {locationState === "locating" ? "LOCATING…" : currentLocation ? "REFRESH LOCATION" : "USE MY LOCATION"}
             </button>
@@ -1720,8 +1753,8 @@ function V3WoodlandsApproach({
           />
           {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
           </div>
-          {calibratedRouteHistory[selected.id] && (
-            <ApproachHistoryOverlay series={calibratedRouteHistory[selected.id]!} scale={routeHistoryScale} />
+          {routeHistory[selected.id] && (
+            <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
           )}
           <div className="v3-route-actions">
             <a
@@ -2697,7 +2730,7 @@ export default function Home() {
             <h1 id="login-title">Sign in to continue</h1>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
-          <p className="login-note">Codex V3 · 1.4</p>
+          <p className="login-note">Codex V3 · 1.5</p>
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
@@ -2710,7 +2743,7 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
-          <small>Codex V3 · 1.4</small>
+          <small>Codex V3 · 1.5</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
