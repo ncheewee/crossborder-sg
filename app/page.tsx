@@ -1381,24 +1381,27 @@ function ApproachHistoryOverlay({
   return (
     <div className="v3-route-history" aria-label={`Route crossing time today compared with ${series.comparisonLabel}`}>
       <div className="v3-route-history-legend" aria-hidden="true">
-        <strong>Crossing times</strong>
         <span className="today">Today</span>
         <span className="comparison">{series.comparisonLabel}</span>
       </div>
-      <svg viewBox="0 0 300 140" preserveAspectRatio="none" aria-hidden="true">
-        {chart.timeZones.map((zone) => (
-          <rect key={zone.key} x="30" width="262" y={zone.y} height={zone.height} className={`time-zone ${zone.key}`} />
-        ))}
-        {chart.yTicks.map((tick) => (
-          <g key={tick.minutes}>
-            <text x="24" y={tick.y} className="axis-label">{tick.minutes}m</text>
-            <line x1="30" x2="292" y1={tick.y} y2={tick.y} className="grid" />
-          </g>
-        ))}
-        {chart.comparison && <path d={chart.comparison} className="comparison" />}
-        {chart.today && <path d={chart.today} className="today" />}
-        {chart.todayPoint && <circle cx={chart.todayPoint.x} cy={chart.todayPoint.y} r="3" className="today-point" />}
-      </svg>
+      <div className="v3-route-history-plot">
+        <svg viewBox="0 0 300 140" preserveAspectRatio="none" aria-hidden="true">
+          {chart.timeZones.map((zone) => (
+            <rect key={zone.key} x="30" width="262" y={zone.y} height={zone.height} className={`time-zone ${zone.key}`} />
+          ))}
+          {chart.yTicks.map((tick) => (
+            <line key={tick.minutes} x1="30" x2="292" y1={tick.y} y2={tick.y} className="grid" />
+          ))}
+          {chart.comparison && <path d={chart.comparison} className="comparison" />}
+          {chart.today && <path d={chart.today} className="today" />}
+          {chart.todayPoint && <circle cx={chart.todayPoint.x} cy={chart.todayPoint.y} r="3" className="today-point" />}
+        </svg>
+        <div className="v3-route-history-axis" aria-hidden="true">
+          {chart.yTicks.map((tick) => (
+            <span key={tick.minutes} style={{ top: `${(tick.y / 140) * 100}%` }}>{tick.minutes}m</span>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1418,7 +1421,6 @@ function V3WoodlandsApproach({
   const [sideAlert, setSideAlert] = useState<string | null>(null);
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
-  const [crossingOnly, setCrossingOnly] = useState(true);
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
   const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
   const [queueMessage, setQueueMessage] = useState("");
@@ -1450,10 +1452,9 @@ function V3WoodlandsApproach({
   const selected = readyRoutes.find((route) => route.id === selectedApproach) ?? best;
   const hasLiveTimes = readyRoutes.length === definitions.length;
 
-  function displayRouteOptions(options: Record<ApproachId, ApproachRouteOption>, direction: Direction, isCrossingOnly: boolean) {
+  function displayRouteOptions(options: Record<ApproachId, ApproachRouteOption>, direction: Direction) {
     const nextDefinitions = woodlandsApproachDefinitions[direction];
     setRouteOptions(options);
-    setCrossingOnly(isCrossingOnly);
     const recommended = nextDefinitions
       .map((definition) => options[definition.id])
       .reduce((current, route) => route.totalMinutes < current.totalMinutes ? route : current);
@@ -1467,7 +1468,7 @@ function V3WoodlandsApproach({
     setLocationMessage("");
     void fetchAdjustedApproachSheet().then((sheet) => {
       setRouteHistory(sheet.history);
-      displayRouteOptions(buildAdjustedRouteOptions(direction, sheet.latest), direction, true);
+      displayRouteOptions(buildAdjustedRouteOptions(direction, sheet.latest), direction);
     }).catch((error) => {
       setRouteOptions({});
       setLocationState("error");
@@ -1500,7 +1501,6 @@ function V3WoodlandsApproach({
     if (direction === travelDirection) return;
     setTravelDirection(direction);
     setRouteOptions({});
-    setCrossingOnly(true);
     const nextApproach = woodlandsApproachDefinitions[direction][0].id;
     setVisualLoadingApproach(nextApproach);
     setSelectedApproach(nextApproach);
@@ -1658,9 +1658,6 @@ function V3WoodlandsApproach({
                     <span>{route.label.slice(4)}</span>
                     {isRecommended && <span className="v3-fastest-chip">FASTEST</span>}
                   </strong>
-                  <small>{crossingOnly
-                    ? `${route.crossingMinutes} min crossing`
-                    : `${route.preApproachMinutes} min approach · ${route.crossingMinutes} min crossing`}</small>
                 </span>
                 <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
               </button>

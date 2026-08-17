@@ -859,23 +859,16 @@ button { font: inherit; }
 .v3-route-history-legend {
   position: absolute;
   z-index: 1;
-  top: 5px;
-  left: 8px;
+  top: 6px;
+  right: 8px;
+  left: auto;
   display: flex;
   align-items: center;
   gap: 9px;
   color: #263238;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
-}
-
-.v3-route-history-legend strong {
-  color: #475569;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
 }
 
 .v3-route-history-legend span {
@@ -895,10 +888,33 @@ button { font: inherit; }
   border-top-style: dotted;
 }
 
+.v3-route-history-plot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .v3-route-history svg {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.v3-route-history-axis {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.v3-route-history-axis span {
+  position: absolute;
+  left: 4px;
+  transform: translateY(-50%);
+  color: #475569;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
 .v3-route-history path,
@@ -910,14 +926,6 @@ button { font: inherit; }
 .v3-route-history .grid {
   stroke: rgba(100, 116, 139, 0.2);
   stroke-width: 1;
-}
-
-.v3-route-history .axis-label {
-  fill: #64748b;
-  font-size: 8px;
-  font-weight: 700;
-  text-anchor: end;
-  dominant-baseline: middle;
 }
 
 .v3-route-history .time-zone.green { fill: rgba(21, 128, 61, 0.1); }
@@ -1123,12 +1131,9 @@ button { font: inherit; }
 }
 
 .v3-route-copy { min-width: 0; }
-.v3-route-copy strong,
-.v3-route-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.v3-route-copy strong { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 15px; font-weight: 650; }
+.v3-route-copy strong { display: flex; align-items: center; gap: 6px; overflow: hidden; color: var(--ink); font-size: 15px; font-weight: 650; white-space: nowrap; }
 .v3-route-copy strong > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .v3-route-list button.recommended .v3-route-copy strong { color: #0f766e; }
-.v3-route-copy small { margin-top: 1px; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.15; }
 .v3-fastest-chip {
   flex: 0 0 auto;
   padding: 3px 5px;
