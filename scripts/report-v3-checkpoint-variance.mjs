@@ -8,6 +8,7 @@ const calibrationConfig = JSON.parse(await readFile(join(repoRoot, "config", "cr
 const captureRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
+const telegramDisabled = process.env.TELEGRAM_DISABLED === "1" || process.env.TELEGRAM_DISABLED === "true";
 const telegramSender = process.env.GITHUB_ACTIONS === "true" ? "github-actions" : "local-launchd";
 const sheetId = "1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo";
 const timingSources = [
@@ -360,6 +361,10 @@ async function lastValidCrossBorderRows() {
 }
 
 async function sendPhoto(buffer, filename, caption) {
+  if (telegramDisabled) {
+    console.log(`Telegram photo skipped: ${filename} (${telegramSender} disabled)`);
+    return;
+  }
   if (!token || !chatId) throw new Error("Telegram credentials are not configured");
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {

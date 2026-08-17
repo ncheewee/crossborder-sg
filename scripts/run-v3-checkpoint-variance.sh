@@ -11,6 +11,8 @@ if [[ -f "$env_file" ]]; then
   source "$env_file"
   set +a
 fi
+# Hourly Telegram photos are sent by GitHub Actions so the Mac can sleep.
+export TELEGRAM_DISABLED=1
 
 mkdir -p "$COMPETITOR_CAPTURE_DIR/logs"
 {
@@ -41,7 +43,7 @@ mkdir -p "$COMPETITOR_CAPTURE_DIR/logs"
       && /opt/homebrew/bin/node scripts/checkpoint-capture-fallback.mjs upload; then
       echo "Muted emulator fallback capture uploaded."
     else
-      echo "Muted emulator fallback failed; sending the chart with retained history and an explicit unavailable status."
+      echo "Muted emulator fallback failed; writing local charts from retained history with an explicit unavailable status."
     fi
   fi
   /opt/homebrew/bin/node scripts/report-v3-checkpoint-variance.mjs
