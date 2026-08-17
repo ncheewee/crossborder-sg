@@ -1415,6 +1415,7 @@ function V3WoodlandsApproach({
   const [locationMessage, setLocationMessage] = useState("");
   const [navigateState, setNavigateState] = useState<"idle" | "locating" | "error">("idle");
   const [navigateMessage, setNavigateMessage] = useState("");
+  const [sideAlert, setSideAlert] = useState<string | null>(null);
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
   const [crossingOnly, setCrossingOnly] = useState(true);
@@ -1480,7 +1481,9 @@ function V3WoodlandsApproach({
     try {
       const coordinate = await requestGrantedLocation();
       if (!isOnDepartureSide(coordinate, travelDirection)) {
-        throw new Error(wrongSideCheckpointMessage(travelDirection));
+        setNavigateState("idle");
+        setSideAlert(wrongSideCheckpointMessage(travelDirection));
+        return;
       }
       const url = googleMapsNavigationUrl(travelDirection, selected.id);
       const opened = window.open(url, "_blank");
@@ -1505,6 +1508,7 @@ function V3WoodlandsApproach({
     setQueueMessage("");
     setNavigateState("idle");
     setNavigateMessage("");
+    setSideAlert(null);
     loadCrossingRoutes(direction);
   }
 
@@ -1545,7 +1549,9 @@ function V3WoodlandsApproach({
     try {
       const location = await requestGrantedLocation({ enableHighAccuracy: true, maximumAge: 0 });
       if (!isOnDepartureSide(location, directionAtJoin)) {
-        throw new Error(wrongSideCheckpointMessage(directionAtJoin));
+        setQueueState("idle");
+        setSideAlert(wrongSideCheckpointMessage(directionAtJoin));
+        return;
       }
       setQueueCapture({
         direction: directionAtJoin,
@@ -1681,6 +1687,11 @@ function V3WoodlandsApproach({
           </div>
         </>}
       </article>
+      {sideAlert && (
+        <div className="v3-side-alert" role="alertdialog" aria-modal="true" aria-label="Wrong side of checkpoint" onClick={() => setSideAlert(null)}>
+          <p>{sideAlert}</p>
+        </div>
+      )}
       <nav className="v3-bottom-nav" aria-label="Travel direction">
         <button type="button" className={travelDirection === "sg-my" ? "active" : ""} aria-current={travelDirection === "sg-my" ? "page" : undefined} onClick={() => switchDirection("sg-my")}>
           <DirectionGlyph direction="sg-my" />
@@ -2063,17 +2074,18 @@ function wrongSideCheckpointMessage(direction: Direction) {
 }
 
 function DirectionGlyph({ direction }: { direction: Direction }) {
-  const isToJohor = direction === "sg-my";
   return (
     <svg className="v3-direction-glyph" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d={isToJohor ? "M6 18L18 6M10 6h8v8" : "M6 6l12 12M14 18H6V10"}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <g transform={direction === "sg-my" ? undefined : "rotate(180 12 12)"}>
+        <path
+          d="M6 18L18 6M10 6h8v8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.25"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </g>
     </svg>
   );
 }

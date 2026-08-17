@@ -1202,6 +1202,30 @@ button { font: inherit; }
   display: block;
 }
 
+.v3-side-alert {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(17, 24, 39, 0.46);
+}
+
+.v3-side-alert p {
+  max-width: 320px;
+  margin: 0;
+  padding: 18px 18px 16px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgba(17, 24, 39, 0.24);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+  text-align: center;
+}
+
 .v3-bottom-nav button.active {
   background: #4b5563;
   color: #ffffff;
