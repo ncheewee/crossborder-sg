@@ -66,13 +66,22 @@ function buildRow(capture) {
 
 async function loadCaptures() {
   if (!monitorKey) throw new Error("MONITOR_API_KEY is not configured");
-  const response = await fetch(`${apiBase}/api/monitor/checkpoint?hours=4`, {
-    headers: { "X-Monitor-Key": monitorKey },
-  });
-  if (!response.ok) throw new Error(`Checkpoint capture API returned ${response.status}`);
-  const payload = await response.json();
-  if (!Array.isArray(payload?.captures)) throw new Error("Checkpoint capture API returned an invalid payload");
-  return payload.captures;
+  let lastError;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const response = await fetch(`${apiBase}/api/monitor/checkpoint?hours=4`, {
+        headers: { "X-Monitor-Key": monitorKey, Authorization: `Bearer ${monitorKey}` },
+      });
+      if (!response.ok) throw new Error(`Checkpoint capture API returned ${response.status}`);
+      const payload = await response.json();
+      if (!Array.isArray(payload?.captures)) throw new Error("Checkpoint capture API returned an invalid payload");
+      return payload.captures;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+    }
+  }
+  throw lastError;
 }
 
 function decodeServiceAccount() {

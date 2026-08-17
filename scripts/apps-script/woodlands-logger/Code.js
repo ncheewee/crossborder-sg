@@ -661,17 +661,22 @@ function logCheckpoint() {
   if (!sh) return 'tab "' + SHEET_CHECKPOINT + '" missing';
 
   try {
-    const resp = UrlFetchApp.fetch(CHECKPOINT_API, {
-      headers: {
-        'X-Monitor-Key': key,
-        'Authorization': 'Bearer ' + key,
-      },
-      muteHttpExceptions: true,
-      followRedirects: true,
-    });
-    if (resp.getResponseCode() !== 200) {
-      return 'Worker HTTP ' + resp.getResponseCode() + ' ' + resp.getContentText().slice(0, 160);
+    var resp = null;
+    var lastStatus = '';
+    for (var attempt = 1; attempt <= 4; attempt++) {
+      resp = UrlFetchApp.fetch(CHECKPOINT_API, {
+        headers: {
+          'X-Monitor-Key': key,
+          'Authorization': 'Bearer ' + key,
+        },
+        muteHttpExceptions: true,
+        followRedirects: true,
+      });
+      if (resp.getResponseCode() === 200) break;
+      lastStatus = 'Worker HTTP ' + resp.getResponseCode() + ' ' + resp.getContentText().slice(0, 160);
+      Utilities.sleep(1500 * attempt);
     }
+    if (!resp || resp.getResponseCode() !== 200) return lastStatus;
     const captures = JSON.parse(resp.getContentText()).captures || [];
     const latest = latestCompleteWoodlands(captures);
     if (!latest) {
