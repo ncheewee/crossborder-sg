@@ -2217,7 +2217,7 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
 };
 
 const woodlandsApproachVisualImages: Record<ApproachId, string> = {
-  "woodlands-bke-right": "woodlands-approach-a.gif?v=3",
+  "woodlands-bke-right": "woodlands-approach-a.gif?v=4",
   "woodlands-bke-left": "woodlands-approach-b.gif?v=3",
   "woodlands-road-left": "woodlands-approach-c.gif?v=4",
   "woodlands-jln-lingkaran-dalam": "woodlands-approach-jld-south.gif?v=2",
