@@ -30,3 +30,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: node scripts/report-v3-checkpoint-variance.mjs
+      - name: Append Checkpoint.sg row from the Worker
+        env:
+          CROSSBORDER_API_BASE: https://crossborder-sg-api.ncheewee.workers.dev
+          MONITOR_API_KEY: ${{ secrets.MONITOR_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          CHECKPOINT_SHEET_WEBAPP_URL: ${{ secrets.CHECKPOINT_SHEET_WEBAPP_URL }}
+        run: node scripts/append-checkpoint-sheet.mjs
