@@ -1335,8 +1335,8 @@ function ApproachHistoryOverlay({
     const { low, high } = scale;
     const plotLeft = 30;
     const plotRight = 292;
-    const plotTop = 18;
-    const plotBottom = 64;
+    const plotTop = 22;
+    const plotBottom = 132;
     const x = (hour: number) => plotLeft + Math.max(0, Math.min(24, hour)) / 24 * (plotRight - plotLeft);
     const y = (minutes: number) => {
       const clampedMinutes = Math.max(low, Math.min(high, minutes));
@@ -1385,7 +1385,7 @@ function ApproachHistoryOverlay({
         <span className="today">Today</span>
         <span className="comparison">{series.comparisonLabel}</span>
       </div>
-      <svg viewBox="0 0 300 70" preserveAspectRatio="none" aria-hidden="true">
+      <svg viewBox="0 0 300 140" preserveAspectRatio="none" aria-hidden="true">
         {chart.timeZones.map((zone) => (
           <rect key={zone.key} x="30" width="262" y={zone.y} height={zone.height} className={`time-zone ${zone.key}`} />
         ))}
@@ -1478,9 +1478,9 @@ function V3WoodlandsApproach({
     setNavigateState("locating");
     setNavigateMessage("");
     try {
-      const coordinate = await requestNavigateLocation();
+      const coordinate = await requestGrantedLocation();
       if (!isOnDepartureSide(coordinate, travelDirection)) {
-        throw new Error(wrongSideNavigateMessage(travelDirection));
+        throw new Error(wrongSideCheckpointMessage(travelDirection));
       }
       const url = googleMapsNavigationUrl(travelDirection, selected.id);
       const opened = window.open(url, "_blank");
@@ -1535,24 +1535,6 @@ function V3WoodlandsApproach({
     setSelectedApproach(approachId);
   }
 
-  function captureCurrentLocation() {
-    return new Promise<CapturedLocation>((resolve, reject) => {
-      if (!("geolocation" in navigator)) {
-        reject(new Error("This browser does not support location access."));
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (position) => resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null,
-        }),
-        () => reject(new Error("Could not capture your location. Check location services and try again.")),
-        { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 },
-      );
-    });
-  }
-
   async function recordQueueJoin() {
     if (!selected) return;
     const startedAt = new Date().toISOString();
@@ -1561,7 +1543,10 @@ function V3WoodlandsApproach({
     setQueueState("locating-join");
     setQueueMessage("");
     try {
-      const location = await captureCurrentLocation();
+      const location = await requestGrantedLocation({ enableHighAccuracy: true, maximumAge: 0 });
+      if (!isOnDepartureSide(location, directionAtJoin)) {
+        throw new Error(wrongSideCheckpointMessage(directionAtJoin));
+      }
       setQueueCapture({
         direction: directionAtJoin,
         approachId: selectedAtJoin.id,
@@ -1583,7 +1568,7 @@ function V3WoodlandsApproach({
     setQueueState("locating-clear");
     setQueueMessage("");
     try {
-      const location = await captureCurrentLocation();
+      const location = await requestCurrentLocation({ enableHighAccuracy: true, maximumAge: 0 });
       const actualWaitMinutes = Math.max(1, Math.round((new Date(clearedAt).getTime() - new Date(queueCapture.startedAt).getTime()) / 60_000));
       setQueueState("saving");
       await submitApproachReport({
@@ -1672,6 +1657,7 @@ function V3WoodlandsApproach({
           {routeHistory[selected.id] && (
             <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
           )}
+          {navigateMessage && <p className="v3-navigate-status error" role="alert">{navigateMessage}</p>}
           <div className="v3-route-actions">
             <button
               type="button"
@@ -1693,16 +1679,15 @@ function V3WoodlandsApproach({
               {queueMessage && <span>{queueMessage}</span>}
             </div>
           </div>
-          {navigateMessage && <p className="v3-navigate-status error" role="alert">{navigateMessage}</p>}
         </>}
       </article>
       <nav className="v3-bottom-nav" aria-label="Travel direction">
         <button type="button" className={travelDirection === "sg-my" ? "active" : ""} aria-current={travelDirection === "sg-my" ? "page" : undefined} onClick={() => switchDirection("sg-my")}>
-          <span aria-hidden="true">↗</span>
+          <DirectionGlyph direction="sg-my" />
           <strong>To Johor</strong>
         </button>
         <button type="button" className={travelDirection === "my-sg" ? "active" : ""} aria-current={travelDirection === "my-sg" ? "page" : undefined} onClick={() => switchDirection("my-sg")}>
-          <span aria-hidden="true">↙</span>
+          <DirectionGlyph direction="my-sg" />
           <strong>To Singapore</strong>
         </button>
       </nav>
@@ -2071,10 +2056,26 @@ function isOnDepartureSide(coordinate: Coordinate, direction: Direction) {
     : coordinate.latitude > woodlandsCheckpointLatitude;
 }
 
-function wrongSideNavigateMessage(direction: Direction) {
+function wrongSideCheckpointMessage(direction: Direction) {
   return direction === "sg-my"
-    ? "You're already on the Johor side of Woodlands. Switch to To Singapore to navigate back."
-    : "You're already on the Singapore side of Woodlands. Switch to To Johor to navigate across.";
+    ? "You're already on the Johor side of Woodlands. Switch to To Singapore to continue."
+    : "You're already on the Singapore side of Woodlands. Switch to To Johor to continue.";
+}
+
+function DirectionGlyph({ direction }: { direction: Direction }) {
+  const isToJohor = direction === "sg-my";
+  return (
+    <svg className="v3-direction-glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d={isToJohor ? "M6 18L18 6M10 6h8v8" : "M6 6l12 12M14 18H6V10"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 async function geolocationPermissionState(): Promise<PermissionState | "unknown"> {
@@ -2087,8 +2088,8 @@ async function geolocationPermissionState(): Promise<PermissionState | "unknown"
   }
 }
 
-function requestCurrentCoordinate() {
-  return new Promise<Coordinate>((resolve, reject) => {
+function requestCurrentLocation(options: PositionOptions = {}) {
+  return new Promise<CapturedLocation>((resolve, reject) => {
     if (!("geolocation" in navigator)) {
       reject(new Error("This browser does not support location access."));
       return;
@@ -2097,30 +2098,31 @@ function requestCurrentCoordinate() {
       (position) => resolve({
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
+        accuracy: Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null,
       }),
       (error) => {
         if (error.code === error.PERMISSION_DENIED) {
           forgetLocationGrant();
-          reject(new Error("Location permission is needed to start navigation."));
+          reject(new Error("Location permission is needed."));
           return;
         }
         reject(new Error("Could not get your location. Check location services and try again."));
       },
-      { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
+      { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000, ...options },
     );
   });
 }
 
-async function requestNavigateLocation() {
+async function requestGrantedLocation(options: PositionOptions = {}) {
   if (!hasRememberedLocationGrant()) {
     const permission = await geolocationPermissionState();
     if (permission === "denied") {
-      throw new Error("Location is blocked. Enable it in browser settings to start navigation.");
+      throw new Error("Location is blocked. Enable it in browser settings.");
     }
   }
-  const coordinate = await requestCurrentCoordinate();
+  const location = await requestCurrentLocation(options);
   rememberLocationGrant();
-  return coordinate;
+  return location;
 }
 
 const woodlandsApproachDefinitions: Record<Direction, Array<{
