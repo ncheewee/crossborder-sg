@@ -124,26 +124,6 @@ type ApproachRouteOption = {
   crossingMinutes: number;
   totalMinutes: number;
 };
-type CrossingCalibration = {
-  version: string;
-  source: "fresh-checkpoint" | "fallback-bias";
-  capturedAt: string | null;
-  intercept: number;
-  slope: number;
-  alpha: number;
-  fallbackBiasMinutes: number;
-  observedBiasMinutes: number | null;
-  effectiveBiasMinutes: number;
-  displayOffsetMinutes: number;
-  minimumMinutes: number;
-  maximumMinutes: number;
-};
-type ApproachOptionsResponse = {
-  generatedAt?: string;
-  crossingOnly?: boolean;
-  routes?: ApproachRouteOption[];
-  calibration?: CrossingCalibration;
-};
 type ApproachHistoryPoint = { hour: number; minutes: number };
 type ApproachHistorySeries = {
   today: ApproachHistoryPoint[];
@@ -1424,21 +1404,20 @@ function ApproachHistoryOverlay({
 }
 
 function V3WoodlandsApproach({
-  loadApproachOptions,
   submitApproachReport,
 }: {
-  loadApproachOptions: (coordinate: Coordinate, direction: Direction, includePreApproach: boolean) => Promise<ApproachOptionsResponse>;
   submitApproachReport: (report: ApproachTripReport) => Promise<void>;
 }) {
   const [travelDirection, setTravelDirection] = useState<Direction>("sg-my");
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
   const [visualLoadingApproach, setVisualLoadingApproach] = useState<ApproachId | null>("woodlands-bke-left");
-  const [locationState, setLocationState] = useState<"idle" | "locating" | "loading" | "ready" | "error">("idle");
+  const [locationState, setLocationState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [locationMessage, setLocationMessage] = useState("");
+  const [navigateState, setNavigateState] = useState<"idle" | "locating" | "error">("idle");
+  const [navigateMessage, setNavigateMessage] = useState("");
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
   const [crossingOnly, setCrossingOnly] = useState(true);
-  const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
   const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
   const [queueMessage, setQueueMessage] = useState("");
@@ -1469,10 +1448,6 @@ function V3WoodlandsApproach({
   const selected = readyRoutes.find((route) => route.id === selectedApproach) ?? best;
   const hasLiveTimes = readyRoutes.length === definitions.length;
 
-  function isOnDepartureSide(coordinate: Coordinate, direction: Direction) {
-    return direction === "sg-my" ? coordinate.latitude < 1.455 : coordinate.latitude > 1.455;
-  }
-
   function displayRouteOptions(options: Record<ApproachId, ApproachRouteOption>, direction: Direction, isCrossingOnly: boolean) {
     const nextDefinitions = woodlandsApproachDefinitions[direction];
     setRouteOptions(options);
@@ -1483,37 +1458,6 @@ function V3WoodlandsApproach({
     setVisualLoadingApproach(recommended.id === selectedApproach ? null : recommended.id);
     setSelectedApproach(recommended.id);
     setLocationState("ready");
-  }
-
-  function loadRoutes(coordinate: Coordinate, direction: Direction, includePreApproach = isOnDepartureSide(coordinate, direction)) {
-    if (!includePreApproach) {
-      loadCrossingRoutes(direction);
-      return;
-    }
-    setLocationState("loading");
-    setLocationMessage("");
-    let sheetForFallback: AdjustedApproachSheet | null = null;
-    void fetchAdjustedApproachSheet().then((sheet) => {
-      sheetForFallback = sheet;
-      setRouteHistory(sheet.history);
-      return loadApproachOptions(coordinate, direction, true);
-    }).then((payload) => {
-      const options = buildAdjustedRouteOptions(direction, sheetForFallback!.latest, payload.routes ?? []);
-      if (woodlandsApproachDefinitions[direction].some((definition) => options[definition.id].preApproachMinutes == null)) {
-        throw new Error("Location approach times were incomplete.");
-      }
-      displayRouteOptions(options, direction, false);
-    }).catch((error) => {
-      if (sheetForFallback) {
-        displayRouteOptions(buildAdjustedRouteOptions(direction, sheetForFallback.latest), direction, true);
-        setLocationState("error");
-        setLocationMessage("Approach time is unavailable. GMaps adjusted crossing times are still shown.");
-        return;
-      }
-      setRouteOptions({});
-      setLocationState("error");
-      setLocationMessage(error instanceof Error ? error.message : "GMaps adjusted crossing times could not load. Reopen the app to retry.");
-    });
   }
 
   function loadCrossingRoutes(direction: Direction) {
@@ -1529,46 +1473,23 @@ function V3WoodlandsApproach({
     });
   }
 
-  function useCurrentLocation() {
-    if (!("geolocation" in navigator)) {
-      setLocationState("error");
-      setLocationMessage("This browser does not support location access.");
-      return;
+  async function startNavigation() {
+    if (!selected || navigateState === "locating") return;
+    setNavigateState("locating");
+    setNavigateMessage("");
+    try {
+      const coordinate = await requestNavigateLocation();
+      if (!isOnDepartureSide(coordinate, travelDirection)) {
+        throw new Error(wrongSideNavigateMessage(travelDirection));
+      }
+      const url = googleMapsNavigationUrl(travelDirection, selected.id);
+      const opened = window.open(url, "_blank");
+      if (!opened) window.location.assign(url);
+      setNavigateState("idle");
+    } catch (error) {
+      setNavigateState("error");
+      setNavigateMessage(error instanceof Error ? error.message : "Could not start navigation.");
     }
-    const requestPosition = () => {
-      setLocationState("locating");
-      setLocationMessage("");
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const coordinate = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          };
-          setCurrentLocation(coordinate);
-          loadRoutes(coordinate, travelDirection);
-        },
-        (error) => {
-          setLocationState("error");
-          setLocationMessage(error.code === error.PERMISSION_DENIED
-            ? "Location is blocked. GMaps adjusted crossing times still work without it."
-            : "Location was not available. GMaps adjusted crossing times still work; tap Use my location to retry.");
-        },
-        { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
-      );
-    };
-
-    if ("permissions" in navigator) {
-      void navigator.permissions.query({ name: "geolocation" }).then((permission) => {
-        if (permission.state === "denied") {
-          setLocationState("error");
-          setLocationMessage("Location is blocked. GMaps adjusted crossing times still work without it.");
-          return;
-        }
-        requestPosition();
-      }).catch(requestPosition);
-      return;
-    }
-    requestPosition();
   }
 
   function switchDirection(direction: Direction) {
@@ -1582,8 +1503,9 @@ function V3WoodlandsApproach({
     setQueueCapture(null);
     setQueueState("idle");
     setQueueMessage("");
-    if (currentLocation) loadRoutes(currentLocation, direction);
-    else loadCrossingRoutes(direction);
+    setNavigateState("idle");
+    setNavigateMessage("");
+    loadCrossingRoutes(direction);
   }
 
   useEffect(() => {
@@ -1694,21 +1616,15 @@ function V3WoodlandsApproach({
         <button type="button" role="tab" aria-selected="false" disabled>Tuas</button>
       </div>
       <article className={`v3-approach-card ${travelDirection === "my-sg" ? "returning" : ""}`}>
-        {(locationState === "locating" || locationState === "loading") && <p className="v3-location-status">{locationState === "locating" ? "Finding your location…" : "Checking live route times…"}</p>}
+        {locationState === "loading" && <p className="v3-location-status">Checking live route times…</p>}
         {locationState === "error" && <p className="v3-location-status error">{locationMessage}</p>}
-        {!hasLiveTimes && locationState !== "locating" && locationState !== "loading" && (
+        {!hasLiveTimes && locationState !== "loading" && (
           <div className="v3-location-gate" aria-live="polite">
             <span>Route times could not load.</span>
             <button type="button" className="v3-location-action" onClick={() => loadCrossingRoutes(travelDirection)}>RETRY</button>
           </div>
         )}
         {hasLiveTimes && selected && <>
-          <div className="v3-crossing-only">
-            <span>{crossingOnly ? "GMaps adjusted crossing times" : "Approach + GMaps adjusted crossing"}</span>
-            <button type="button" className="v3-location-action" disabled={locationState === "locating" || locationState === "loading"} onClick={useCurrentLocation}>
-              {locationState === "locating" ? "LOCATING…" : currentLocation ? "REFRESH LOCATION" : "USE MY LOCATION"}
-            </button>
-          </div>
           <div ref={routeListRef} className={`v3-route-list ${travelDirection === "my-sg" ? "returning" : ""}`} role="radiogroup" aria-label="Woodlands approach options">
           {readyRoutes.map((route) => {
             const isRecommended = route.id === best?.id;
@@ -1757,14 +1673,14 @@ function V3WoodlandsApproach({
             <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
           )}
           <div className="v3-route-actions">
-            <a
+            <button
+              type="button"
               className="v3-navigate"
-              href={googleMapsNavigationUrl(travelDirection, selected.id)}
-              target="_blank"
-              rel="noreferrer"
+              disabled={navigateState === "locating"}
+              onClick={() => void startNavigation()}
             >
-              NAVIGATE
-            </a>
+              {navigateState === "locating" ? "LOCATING…" : "NAVIGATE"}
+            </button>
             <div className={`v3-queue-tester ${queueState}`} aria-live="polite">
               <button
                 type="button"
@@ -1777,6 +1693,7 @@ function V3WoodlandsApproach({
               {queueMessage && <span>{queueMessage}</span>}
             </div>
           </div>
+          {navigateMessage && <p className="v3-navigate-status error" role="alert">{navigateMessage}</p>}
         </>}
       </article>
       <nav className="v3-bottom-nav" aria-label="Travel direction">
@@ -2121,6 +2038,90 @@ function googleClientId() {
 }
 
 const authStorageKey = "crossborder.google-auth.v2";
+const locationGrantStorageKey = "crossborder.location-granted.v1";
+const woodlandsCheckpointLatitude = 1.455;
+
+function hasRememberedLocationGrant() {
+  try {
+    return window.localStorage.getItem(locationGrantStorageKey) === "granted";
+  } catch {
+    return false;
+  }
+}
+
+function rememberLocationGrant() {
+  try {
+    window.localStorage.setItem(locationGrantStorageKey, "granted");
+  } catch {
+    return;
+  }
+}
+
+function forgetLocationGrant() {
+  try {
+    window.localStorage.removeItem(locationGrantStorageKey);
+  } catch {
+    return;
+  }
+}
+
+function isOnDepartureSide(coordinate: Coordinate, direction: Direction) {
+  return direction === "sg-my"
+    ? coordinate.latitude < woodlandsCheckpointLatitude
+    : coordinate.latitude > woodlandsCheckpointLatitude;
+}
+
+function wrongSideNavigateMessage(direction: Direction) {
+  return direction === "sg-my"
+    ? "You're already on the Johor side of Woodlands. Switch to To Singapore to navigate back."
+    : "You're already on the Singapore side of Woodlands. Switch to To Johor to navigate across.";
+}
+
+async function geolocationPermissionState(): Promise<PermissionState | "unknown"> {
+  if (!("permissions" in navigator)) return "unknown";
+  try {
+    const permission = await navigator.permissions.query({ name: "geolocation" });
+    return permission.state;
+  } catch {
+    return "unknown";
+  }
+}
+
+function requestCurrentCoordinate() {
+  return new Promise<Coordinate>((resolve, reject) => {
+    if (!("geolocation" in navigator)) {
+      reject(new Error("This browser does not support location access."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      }),
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          forgetLocationGrant();
+          reject(new Error("Location permission is needed to start navigation."));
+          return;
+        }
+        reject(new Error("Could not get your location. Check location services and try again."));
+      },
+      { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
+    );
+  });
+}
+
+async function requestNavigateLocation() {
+  if (!hasRememberedLocationGrant()) {
+    const permission = await geolocationPermissionState();
+    if (permission === "denied") {
+      throw new Error("Location is blocked. Enable it in browser settings to start navigation.");
+    }
+  }
+  const coordinate = await requestCurrentCoordinate();
+  rememberLocationGrant();
+  return coordinate;
+}
 
 const woodlandsApproachDefinitions: Record<Direction, Array<{
   id: ApproachId;
@@ -2308,17 +2309,6 @@ export default function Home() {
     }
     return response;
   }, [auth, expireAuth, isAuthConfigured]);
-
-  const loadApproachOptions = useCallback(async (coordinate: Coordinate, direction: Direction, includePreApproach: boolean) => {
-    const response = await authFetch(`${apiBase()}/api/approach-options`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...coordinate, direction, includePreApproach }),
-    });
-    const payload = await response.json() as ApproachOptionsResponse & { message?: string };
-    if (!response.ok) throw new Error(payload.message ?? `Approach options returned ${response.status}`);
-    return payload;
-  }, [authFetch]);
 
   const submitApproachReport = useCallback(async (report: ApproachTripReport) => {
     const response = await authFetch(`${apiBase()}/api/approach-reports`, {
@@ -2755,7 +2745,7 @@ export default function Home() {
         )}
       </header>
 
-      <V3WoodlandsApproach loadApproachOptions={loadApproachOptions} submitApproachReport={submitApproachReport} />
+      <V3WoodlandsApproach submitApproachReport={submitApproachReport} />
 
     </main>
   );
