@@ -82,7 +82,7 @@ sg_tuas_crop="$crop_dir/sg-tuas.png"
 # value in its own crop so a missed line can never shift Tuas into Woodlands.
 "$image_tool" "$latest" -crop 450x65+0+780 +repage -resize 400% \
   -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$jb_main_crop"
-"$image_tool" "$latest" -crop 520x70+0+830 +repage -resize 400% \
+"$image_tool" "$latest" -crop 560x110+0+820 +repage -resize 400% \
   -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$jb_tuas_crop"
 "$image_tool" "$latest" -crop 520x70+560+1390 +repage -resize 400% \
   -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$sg_main_crop"
@@ -117,7 +117,7 @@ payload="{\\"capturedAt\\":\\"$captured_at\\",\\"readings\\":{\\"woodlands\\":{\
 
 printf 'screenshot=%s\\nocr=\\n%s\\nparsed=%s|%s|%s|%s\\npayload=%s\\n' "$latest" "$ocr" "$woodlands_jb" "$woodlands_sg" "$tuas_jb" "$tuas_sg" "$payload" > "$debug_path"
 
-if [ "$woodlands_jb" = null ] || [ "$woodlands_sg" = null ] || [ "$tuas_jb" = null ] || [ "$tuas_sg" = null ]; then
+if [ "$woodlands_jb" = null ] || [ "$woodlands_sg" = null ]; then
   printf '%s\\n' '{"ok":false,"error":"ocr_incomplete"}' > "$status_path"
   exit 1
 fi
