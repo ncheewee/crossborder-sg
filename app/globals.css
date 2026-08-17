@@ -1028,11 +1028,15 @@ button { font: inherit; }
 
 .v3-answer-row p { max-width: 112px; padding-bottom: 3px; text-align: right; }
 
-.v3-route-list {
+.v3-route-list-shell {
   --v3-route-row-height: 66px;
   position: relative;
   flex: 0 0 auto;
   height: calc(var(--v3-route-row-height) * 3 + 3px);
+}
+
+.v3-route-list {
+  height: 100%;
   display: grid;
   gap: 1px;
   margin: 0;
@@ -1043,42 +1047,31 @@ button { font: inherit; }
 .v3-route-list.returning {
   display: block;
   overflow-y: auto;
-  padding-right: 8px;
-  scrollbar-width: thin;
-  scrollbar-color: #0f766e transparent;
+  padding-right: 10px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-.v3-route-list.returning::-webkit-scrollbar { width: 4px; }
-.v3-route-list.returning::-webkit-scrollbar-thumb { border-radius: 99px; background: #0f766e; }
+.v3-route-list.returning::-webkit-scrollbar { display: none; width: 0; }
 
 .v3-route-scroll-indicator {
   position: absolute;
   z-index: 2;
   top: 8px;
-  right: 1px;
+  right: 2px;
   bottom: 8px;
   width: 4px;
   pointer-events: none;
-}
-
-.v3-route-scroll-indicator::before,
-.v3-route-scroll-indicator span {
-  position: absolute;
-  left: 0;
-  width: 100%;
   border-radius: 99px;
-  content: "";
-}
-
-.v3-route-scroll-indicator::before {
-  top: 0;
-  bottom: 0;
   background: #e1e7e9;
 }
 
 .v3-route-scroll-indicator span {
+  position: absolute;
   top: 0;
-  height: 42px;
+  left: 0;
+  width: 100%;
+  border-radius: 99px;
   background: #0f766e;
 }
 

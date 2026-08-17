@@ -1422,6 +1422,7 @@ function V3WoodlandsApproach({
   const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
   const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
   const [queueMessage, setQueueMessage] = useState("");
+  const [routeScrollThumb, setRouteScrollThumb] = useState<{ top: number; height: number } | null>(null);
   const routeListRef = useRef<HTMLDivElement>(null);
   const preloadedRouteImages = useRef<HTMLImageElement[]>([]);
   const definitions = woodlandsApproachDefinitions[travelDirection];
@@ -1529,8 +1530,29 @@ function V3WoodlandsApproach({
   }, []);
 
   useEffect(() => {
-    if (travelDirection !== "my-sg" || !hasLiveTimes) return;
-    routeListRef.current?.querySelector<HTMLButtonElement>('button[aria-checked="true"]')?.scrollIntoView({ block: "nearest" });
+    const list = routeListRef.current;
+    if (travelDirection !== "my-sg" || !hasLiveTimes || !list) {
+      setRouteScrollThumb(null);
+      return;
+    }
+
+    const updateThumb = () => {
+      const { scrollTop, scrollHeight, clientHeight } = list;
+      if (scrollHeight <= clientHeight + 1) {
+        setRouteScrollThumb(null);
+        return;
+      }
+      const trackHeight = Math.max(0, clientHeight - 16);
+      const thumbHeight = Math.max(28, (clientHeight / scrollHeight) * trackHeight);
+      const maxTop = Math.max(0, trackHeight - thumbHeight);
+      const top = (scrollTop / (scrollHeight - clientHeight)) * maxTop;
+      setRouteScrollThumb({ top, height: thumbHeight });
+    };
+
+    list.querySelector<HTMLButtonElement>('button[aria-checked="true"]')?.scrollIntoView({ block: "nearest" });
+    updateThumb();
+    list.addEventListener("scroll", updateThumb, { passive: true });
+    return () => list.removeEventListener("scroll", updateThumb);
   }, [hasLiveTimes, selectedApproach, travelDirection]);
 
   function selectApproach(approachId: ApproachId) {
@@ -1616,6 +1638,7 @@ function V3WoodlandsApproach({
           </div>
         )}
         {hasLiveTimes && selected && <>
+          <div className={`v3-route-list-shell ${travelDirection === "my-sg" ? "returning" : ""}`}>
           <div ref={routeListRef} className={`v3-route-list ${travelDirection === "my-sg" ? "returning" : ""}`} role="radiogroup" aria-label="Woodlands approach options">
           {readyRoutes.map((route) => {
             const isRecommended = route.id === best?.id;
@@ -1643,7 +1666,12 @@ function V3WoodlandsApproach({
               </button>
             );
           })}
-          {travelDirection === "my-sg" && <span className="v3-route-scroll-indicator" aria-hidden="true"><span /></span>}
+          </div>
+          {routeScrollThumb && (
+            <span className="v3-route-scroll-indicator" aria-hidden="true">
+              <span style={{ height: routeScrollThumb.height, transform: `translateY(${routeScrollThumb.top}px)` }} />
+            </span>
+          )}
           </div>
           <div className={`v3-route-visual ${travelDirection === "sg-my" ? "towards-jb" : ""} ${visualLoadingApproach === selected.id ? "loading" : ""}`} role="img" aria-label={`${selected.label} visual approach to Woodlands checkpoint`} aria-busy={visualLoadingApproach === selected.id}>
           {visualLoadingApproach === selected.id && <span className="v3-route-visual-loading" role="status">Loading route</span>}
