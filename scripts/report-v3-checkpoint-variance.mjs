@@ -8,6 +8,7 @@ const calibrationConfig = JSON.parse(await readFile(join(repoRoot, "config", "cr
 const captureRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
+const telegramSender = process.env.GITHUB_ACTIONS === "true" ? "github-actions" : "local-launchd";
 const sheetId = "1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo";
 const timingSources = [
   {
@@ -369,6 +370,7 @@ async function sendPhoto(buffer, filename, caption) {
       form.append("photo", new Blob([buffer], { type: "image/png" }), filename);
       const response = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: "POST", body: form });
       if (!response.ok) throw new Error(`Telegram returned ${response.status}`);
+      console.log(`Telegram photo sent: ${filename} via ${telegramSender}`);
       return;
     } catch (error) {
       lastError = error;
