@@ -385,6 +385,55 @@ async function sendPhoto(buffer, filename, caption) {
   throw lastError;
 }
 
+function formatSheetTimestamp(iso) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso)).replace(",", "");
+}
+
+async function appendCheckpointSheetRow(sheetRows, source, log, stampIso) {
+  const secret = process.env.INGEST_SECRET;
+  if (!secret) {
+    console.log("Checkpoint.sg sheet append skipped: INGEST_SECRET is not set");
+    return;
+  }
+  const jb = sheetRows.find((row) => row.directionKey === "towardsJb");
+  const sg = sheetRows.find((row) => row.directionKey === "towardsSg");
+  const row = [
+    formatSheetTimestamp(stampIso),
+    jb?.checkpointLow ?? "", jb?.checkpointHigh ?? "", jb?.checkpointMid ?? "",
+    sg?.checkpointLow ?? "", sg?.checkpointHigh ?? "", sg?.checkpointMid ?? "",
+    source,
+    log,
+  ];
+  const url = process.env.CHECKPOINT_SHEET_WEBAPP_URL
+    || "https://script.google.com/macros/s/AKfycbzamRGlMzJ8TLjfHPygtw01RU-NaK2TCyzq4iFRVjZRKL9JUef-SR3NSu8-skeGMJoA/exec";
+  let lastBody = "";
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret, type: "checkpoint", row }),
+      redirect: "follow",
+    });
+    lastBody = await response.text();
+    if (lastBody.trim().startsWith("{")) {
+      const payload = JSON.parse(lastBody);
+      if (!payload.ok) throw new Error(payload.error || "Checkpoint.sg sheet rejected the row");
+      console.log(`Checkpoint.sg sheet ${payload.result || "updated"}`);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+  }
+  throw new Error(`Checkpoint.sg sheet web app did not return JSON: ${lastBody.slice(0, 160)}`);
+}
+
 function chartSvg(route, rows) {
   const width = 1120;
   const height = 620;
@@ -565,6 +614,11 @@ await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON
   mi6Log,
   rows,
 }, null, 2)}\n`);
+try {
+  await appendCheckpointSheetRow(rows, checkpointSource, mi6Log, checkpoint?.capturedAt ?? capturedAt);
+} catch (error) {
+  console.warn(`Checkpoint.sg sheet append failed: ${error instanceof Error ? error.message : error}`);
+}
 for (const route of rows) {
   const routeDefinition = routeSets.find((item) => item.label === route.label);
   if (!routeDefinition) throw new Error(`Missing route definition for ${route.label}`);
