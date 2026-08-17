@@ -36,4 +36,5 @@ jobs:
           MONITOR_API_KEY: ${{ secrets.MONITOR_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           CHECKPOINT_SHEET_WEBAPP_URL: ${{ secrets.CHECKPOINT_SHEET_WEBAPP_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
         run: node scripts/append-checkpoint-sheet.mjs

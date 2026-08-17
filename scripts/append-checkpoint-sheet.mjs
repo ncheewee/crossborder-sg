@@ -134,14 +134,26 @@ async function sheetsAppend(accessToken, row) {
 }
 
 async function webappAppend(url, row) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ row }),
-    redirect: "follow",
-  });
-  if (!response.ok) throw new Error(`Sheet web app returned ${response.status}`);
-  console.log(await response.text());
+  const secret = process.env.INGEST_SECRET;
+  if (!secret) throw new Error("INGEST_SECRET is not configured");
+  let lastBody = "";
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret, type: "checkpoint", row }),
+      redirect: "follow",
+    });
+    lastBody = await response.text();
+    if (lastBody.trim().startsWith("{")) {
+      const payload = JSON.parse(lastBody);
+      if (!payload.ok) throw new Error(payload.error || "Sheet web app rejected the row");
+      console.log(payload.result || lastBody);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+  }
+  throw new Error(`Sheet web app did not return JSON: ${lastBody.slice(0, 180)}`);
 }
 
 const captures = await loadCaptures();
@@ -149,9 +161,13 @@ const row = buildRow(latestCompleteWoodlands(captures));
 const serviceAccount = decodeServiceAccount();
 if (serviceAccount) {
   await sheetsAppend(await googleAccessToken(serviceAccount), row);
-} else if (process.env.CHECKPOINT_SHEET_WEBAPP_URL) {
-  await webappAppend(process.env.CHECKPOINT_SHEET_WEBAPP_URL, row);
+} else if (process.env.CHECKPOINT_SHEET_WEBAPP_URL || process.env.INGEST_SECRET) {
+  await webappAppend(
+    process.env.CHECKPOINT_SHEET_WEBAPP_URL
+      || "https://script.google.com/macros/s/AKfycbzamRGlMzJ8TLjfHPygtw01RU-NaK2TCyzq4iFRVjZRKL9JUef-SR3NSu8-skeGMJoA/exec",
+    row,
+  );
 } else {
-  console.log("Sheet append skipped: set GOOGLE_SERVICE_ACCOUNT_JSON or CHECKPOINT_SHEET_WEBAPP_URL");
+  console.log("Sheet append skipped: set INGEST_SECRET or GOOGLE_SERVICE_ACCOUNT_JSON");
   console.log(row.join(","));
 }

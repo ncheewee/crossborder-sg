@@ -447,7 +447,10 @@ async function ensureCheckpointCaptureTable(sql: ReturnType<typeof neon>) {
 }
 
 function isMonitorRequest(request: Request, env: Env) {
-  const key = request.headers.get("X-Monitor-Key");
+  const headerKey = request.headers.get("X-Monitor-Key");
+  const bearer = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+  const queryKey = new URL(request.url).searchParams.get("monitorKey");
+  const key = headerKey || bearer || queryKey;
   return Boolean(env.MONITOR_API_KEY && key && key === env.MONITOR_API_KEY);
 }
 
@@ -502,17 +505,24 @@ async function handleCheckpointCapture(request: Request, env: Env) {
 
 async function handleCheckpointCaptures(request: Request, env: Env) {
   if (!isMonitorRequest(request, env)) return unauthorized(env);
-  const hours = Math.min(48, Math.max(1, Number(new URL(request.url).searchParams.get("hours") ?? 24)));
-  const sql = neon(env.DATABASE_URL);
-  await ensureCheckpointCaptureTable(sql);
-  const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-  const rows = await sql`
-    select captured_at, source, readings
-    from checkpoint_app_captures
-    where captured_at >= ${since}
-    order by captured_at asc
-  `;
-  return json(env, { captures: rows });
+  try {
+    const hours = Math.min(48, Math.max(1, Number(new URL(request.url).searchParams.get("hours") ?? 24)));
+    const sql = neon(env.DATABASE_URL);
+    await ensureCheckpointCaptureTable(sql);
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+    const rows = await sql`
+      select captured_at, source, readings
+      from checkpoint_app_captures
+      where captured_at >= ${since}
+      order by captured_at asc
+    `;
+    return json(env, { captures: rows });
+  } catch (error) {
+    return json(env, {
+      error: "checkpoint_capture_unavailable",
+      message: error instanceof Error ? error.message : "checkpoint query failed",
+    }, { status: 503 });
+  }
 }
 
 async function latestWoodlandsCalibrationRange(
