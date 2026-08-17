@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
+const adbSerial = process.env.ADB_SERIAL?.trim();
 const outRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
 const googleMapsPackageName = "com.google.android.apps.maps";
 
@@ -15,6 +16,7 @@ const apps = [
     packageName: "com.tplusinteractive.checkpointsg",
     launchActivity: "com.tplusinteractive.checkpointsg/.view.SplashActivity",
     playUrl: "market://details?id=com.tplusinteractive.checkpointsg",
+    settleMs: 15000,
   },
   {
     id: "beat-the-jam",
@@ -22,8 +24,14 @@ const apps = [
     packageName: "com.phonegap.btj",
     launchActivity: "com.phonegap.btj/.MainActivity",
     playUrl: "market://details?id=com.phonegap.btj",
+    settleMs: 8000,
   },
 ];
+const selectedAppIds = new Set((process.env.CAPTURE_APPS || apps.map((app) => app.id).join(","))
+  .split(",")
+  .map((id) => id.trim())
+  .filter(Boolean));
+const selectedApps = apps.filter((app) => selectedAppIds.has(app.id));
 
 const routeEndpoints = {
   woodlands: {
@@ -61,6 +69,10 @@ function run(command, args, options = {}) {
   });
 }
 
+function adbArgs(args) {
+  return adbSerial ? ["-s", adbSerial, ...args] : args;
+}
+
 function capture(command, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -80,7 +92,37 @@ function capture(command, args) {
 }
 
 async function adbShell(...args) {
-  return run(adb, ["shell", ...args]);
+  return run(adb, adbArgs(["shell", ...args]));
+}
+
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function adbShellOk(...args) {
+  try {
+    await adbShell(...args);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function prepareDevice() {
+  await run(adb, adbArgs(["wait-for-device"]));
+  await adbShellOk("settings", "put", "global", "airplane_mode_on", "0");
+  await adbShellOk("am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE", "--ez", "state", "false");
+  await adbShellOk("svc", "wifi", "enable");
+  await adbShellOk("svc", "data", "enable");
+  await adbShellOk("settings", "put", "global", "captive_portal_mode", "0");
+  await adbShellOk("settings", "put", "global", "private_dns_mode", "off");
+
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const ok = await adbShellOk("ping", "-c", "1", "-W", "3", "google.com");
+    if (ok) return true;
+    await sleep(attempt * 1500);
+  }
+  return false;
 }
 
 async function isInstalled(packageName) {
@@ -94,7 +136,7 @@ async function isInstalled(packageName) {
 
 async function openPlayListings() {
   for (const app of apps) {
-    await run(adb, [
+    await run(adb, adbArgs([
       "shell",
       "am",
       "start",
@@ -102,15 +144,20 @@ async function openPlayListings() {
       "android.intent.action.VIEW",
       "-d",
       app.playUrl,
-    ]);
+    ]));
     console.log(`Opened ${app.name} Play Store listing.`);
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 }
 
 async function launchApp(app) {
-  await run(adb, ["shell", "am", "start", "-n", app.launchActivity]);
-  await new Promise((resolve) => setTimeout(resolve, Number(process.env.APP_SETTLE_MS || 6000)));
+  // MIUI can leave the recents overview above a newly started activity.
+  await adbShellOk("am", "broadcast", "-a", "android.intent.action.CLOSE_SYSTEM_DIALOGS");
+  await adbShellOk("am", "force-stop", app.packageName);
+  await run(adb, adbArgs([
+    "shell", "am", "start", "-W", "-f", "0x14000000", "-n", app.launchActivity,
+  ]));
+  await sleep(Number(process.env.APP_SETTLE_MS || app.settleMs || 6000));
 }
 
 function extractUiText(xml) {
@@ -166,12 +213,22 @@ function firstRange(text, pattern) {
   return null;
 }
 
+function firstSingleMinute(text, pattern) {
+  for (const match of text.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))) {
+    const minutes = Number(match[1]);
+    if (Number.isFinite(minutes)) return [minutes, minutes];
+  }
+  return null;
+}
+
 function normalizeCheckpointSg(text) {
   const flat = text.replace(/\s+/g, " ");
   return {
     woodlands: {
-      towardsJb: firstRange(flat, /(\d{1,3})\s*-\s*(\d{1,3})\s*mins?\s*to\s*J?B/i),
-      towardsSg: firstRange(flat, /(\d{1,3})\s*-\s*(\d{1,3})\s*mins?\s*to\s*S?G/i),
+      towardsJb: firstRange(flat, /(\d{1,3})\s*-\s*(\d{1,3})\s*mins?\s*to\s*J?B/i)
+        ?? firstSingleMinute(flat, /(\d{1,3})\s*mins?\s*to\s*J?B/i),
+      towardsSg: firstRange(flat, /(\d{1,3})\s*-\s*(\d{1,3})\s*mins?\s*to\s*S?G/i)
+        ?? firstSingleMinute(flat, /(\d{1,3})\s*mins?\s*to\s*S?G/i),
     },
     tuas: {
       towardsJb: firstRange(flat, /\((\d{1,3})\s*-\s*(\d{1,3})\s*mins?\s*via\s*Tuas\)/i),
@@ -302,6 +359,68 @@ async function runOcr(imagePath) {
   }
 }
 
+async function dumpWindowXml(xmlPath) {
+  let dumpError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await adbShell("uiautomator", "dump", "/sdcard/window.xml");
+    } catch (error) {
+      dumpError = error;
+      // uiautomator occasionally exits 137 after successfully writing the XML.
+    }
+
+    try {
+      const { stdout: xml } = await run(adb, adbArgs(["exec-out", "cat", "/sdcard/window.xml"]), {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      if (xml.includes("<hierarchy")) {
+        await writeFile(xmlPath, xml);
+        return xml;
+      }
+    } catch (error) {
+      dumpError = error;
+    }
+
+    await sleep(attempt * 1000);
+  }
+  throw dumpError ?? new Error("Unable to dump Android window XML");
+}
+
+function emptyReadings() {
+  return {
+    woodlands: { towardsJb: null, towardsSg: null },
+    tuas: { towardsJb: null, towardsSg: null },
+  };
+}
+
+function hasAnyReading(readings) {
+  return Object.values(readings || {}).some((directions) => (
+    Object.values(directions || {}).some((value) => Array.isArray(value))
+  ));
+}
+
+function appErrorReason(app, uiText, ocrText) {
+  const text = [...uiText, ocrText].join("\n").toLowerCase();
+  if (text.includes("internet connection appears to be offline")) return "Android app reports offline";
+  if (text.includes("unable to download images")) return "Checkpoint.sg image download failed";
+  if (text.includes("problem reaching our server")) return "Beat the Jam server screen";
+  if (text.includes("oops.") && app.id === "beat-the-jam") return "Beat the Jam error screen";
+  return null;
+}
+
+async function recoverApp(app, reason) {
+  await prepareDevice();
+  if (app.id === "checkpoint-sg") {
+    await adbShellOk("input", "tap", "895", "1390");
+  } else if (app.id === "beat-the-jam") {
+    await adbShellOk("input", "tap", "540", "1450");
+  }
+  await sleep(2000);
+  await adbShellOk("am", "force-stop", app.packageName);
+  await sleep(1000);
+  if (reason) console.warn(`${app.name}: retrying after ${reason}.`);
+}
+
 async function runCheckpointRegionOcr(imagePath, appDir) {
   const cropSpecPath = join(appDir, "checkpoint-ocr-crops.json");
   const python = String.raw`
@@ -323,10 +442,18 @@ def box(left, top, width, height):
         round((top + height) * h / 2400),
     )
 
-crops = {
-    "top": box(0, 740, 760, 220),
-    "bottom": box(480, 1350, 600, 300),
-}
+# The Mi6 renders Checkpoint's image panel at 1920px high, while the former
+# emulator capture is 2400px. Keep both timing labels inside their OCR crops.
+if h <= 2100:
+    crops = {
+        "top": box(0, 700, 800, 250),
+        "bottom": box(430, 1340, 650, 260),
+    }
+else:
+    crops = {
+        "top": box(0, 740, 760, 220),
+        "bottom": box(480, 1350, 600, 300),
+    }
 written = {}
 for name, crop_box in crops.items():
     crop = img.crop(crop_box)
@@ -368,42 +495,78 @@ print(json.dumps(written))
 async function captureApp(app, timestamp) {
   const appDir = join(outRoot, timestamp, app.id);
   await mkdir(appDir, { recursive: true });
-  await launchApp(app);
 
-  const screenshotPath = join(appDir, "screen.png");
-  const xmlPath = join(appDir, "window.xml");
-  const screenshot = await capture(adb, ["exec-out", "screencap", "-p"]);
-  await writeFile(screenshotPath, screenshot);
+  let record = null;
+  const requestedAttempts = Number(process.env.APP_CAPTURE_ATTEMPTS || 3);
+  const attempts = Number.isFinite(requestedAttempts) && requestedAttempts > 0
+    ? Math.floor(requestedAttempts)
+    : 3;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const suffix = attempt === 1 ? "" : `-attempt-${attempt}`;
+    const screenshotPath = join(appDir, `screen${suffix}.png`);
+    const xmlPath = join(appDir, `window${suffix}.xml`);
+    try {
+      await launchApp(app);
+      const screenshot = await capture(adb, adbArgs(["exec-out", "screencap", "-p"]));
+      await writeFile(screenshotPath, screenshot);
 
-  await adbShell("uiautomator", "dump", "/sdcard/window.xml");
-  const { stdout: xml } = await run(adb, ["exec-out", "cat", "/sdcard/window.xml"], {
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  await writeFile(xmlPath, xml);
+      const xml = await dumpWindowXml(xmlPath);
+      const uiText = extractUiText(xml);
+      const wholeScreenOcr = await runOcr(screenshotPath);
+      const regionOcr = app.id === "checkpoint-sg"
+        ? await runCheckpointRegionOcr(screenshotPath, appDir)
+        : "";
+      const ocrText = app.id === "checkpoint-sg"
+        ? [regionOcr, wholeScreenOcr].filter(Boolean).join("\n")
+        : wholeScreenOcr;
+      const combinedText = [...uiText, ocrText].join("\n");
+      const parsedDurations = parseDurations(combinedText);
+      const normalizedReadings = normalizeAppReadings(app, uiText, ocrText);
+      const errorReason = appErrorReason(app, uiText, ocrText);
 
-  const uiText = extractUiText(xml);
-  const wholeScreenOcr = await runOcr(screenshotPath);
-  const regionOcr = app.id === "checkpoint-sg"
-    ? await runCheckpointRegionOcr(screenshotPath, appDir)
-    : "";
-  const ocrText = app.id === "checkpoint-sg"
-    ? [regionOcr, wholeScreenOcr].filter(Boolean).join("\n")
-    : wholeScreenOcr;
-  const combinedText = [...uiText, ocrText].join("\n");
-  const parsedDurations = parseDurations(combinedText);
-  const normalizedReadings = normalizeAppReadings(app, uiText, ocrText);
+      record = {
+        capturedAt: new Date().toISOString(),
+        app: app.name,
+        packageName: app.packageName,
+        screenshotPath,
+        xmlPath,
+        uiText,
+        ocrText,
+        parsedDurations,
+        normalizedReadings: normalizedReadings ?? emptyReadings(),
+        captureStatus: hasAnyReading(normalizedReadings) ? "ok" : "failed",
+        captureError: errorReason,
+        captureAttempt: attempt,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      record = {
+        capturedAt: new Date().toISOString(),
+        app: app.name,
+        packageName: app.packageName,
+        screenshotPath,
+        xmlPath,
+        uiText: [],
+        ocrText: "",
+        parsedDurations: [],
+        normalizedReadings: emptyReadings(),
+        captureStatus: "failed",
+        captureError: `Capture error: ${message}`,
+        captureAttempt: attempt,
+      };
+    }
 
-  const record = {
-    capturedAt: new Date().toISOString(),
-    app: app.name,
-    packageName: app.packageName,
-    screenshotPath,
-    xmlPath,
-    uiText,
-    ocrText,
-    parsedDurations,
-    normalizedReadings,
-  };
+    if (record.captureStatus === "ok" || attempt === attempts) break;
+    await writeFile(join(appDir, `record-attempt-${attempt}.json`), `${JSON.stringify(record, null, 2)}\n`);
+    try {
+      await recoverApp(app, record.captureError || "no parseable readings");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`${app.name}: recovery failed (${message}); retrying capture anyway.`);
+    }
+    await sleep(attempt * 2500);
+  }
+
   await writeFile(join(appDir, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
   return record;
 }
@@ -423,7 +586,7 @@ async function captureGoogleMaps(timestamp) {
       const url = googleMapsUrl(checkpoint, apiDirection);
       const routeDir = join(appDir, routeId);
       await mkdir(routeDir, { recursive: true });
-      await run(adb, [
+      await run(adb, adbArgs([
         "shell",
         "am",
         "start",
@@ -433,19 +596,15 @@ async function captureGoogleMaps(timestamp) {
         url.replaceAll("&", "\\&"),
         "-p",
         googleMapsPackageName,
-      ]);
-      await new Promise((resolve) => setTimeout(resolve, Number(process.env.GOOGLE_MAPS_SETTLE_MS || 7000)));
+      ]));
+      await sleep(Number(process.env.GOOGLE_MAPS_SETTLE_MS || 7000));
 
       const screenshotPath = join(routeDir, "screen.png");
       const xmlPath = join(routeDir, "window.xml");
-      const screenshot = await capture(adb, ["exec-out", "screencap", "-p"]);
+      const screenshot = await capture(adb, adbArgs(["exec-out", "screencap", "-p"]));
       await writeFile(screenshotPath, screenshot);
 
-      await adbShell("uiautomator", "dump", "/sdcard/window.xml");
-      const { stdout: xml } = await run(adb, ["exec-out", "cat", "/sdcard/window.xml"], {
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      await writeFile(xmlPath, xml);
+      const xml = await dumpWindowXml(xmlPath);
 
       const uiText = extractUiText(xml);
       const minutes = parseGoogleMapsMinutes(uiText.join("\n"));
@@ -469,6 +628,8 @@ async function captureGoogleMaps(timestamp) {
     packageName: googleMapsPackageName,
     routes,
     normalizedReadings,
+    captureStatus: hasAnyReading(normalizedReadings) ? "ok" : "failed",
+    captureError: hasAnyReading(normalizedReadings) ? null : "No parseable Google Maps readings",
   };
   await writeFile(join(appDir, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
   return record;
@@ -481,7 +642,8 @@ async function main() {
     return;
   }
 
-  await run(adb, ["wait-for-device"]);
+  const networkReady = await prepareDevice();
+  if (!networkReady) console.warn("Android network preflight failed; capture will still proceed.");
   const installed = Object.fromEntries(await Promise.all(
     apps.map(async (app) => [app.id, await isInstalled(app.packageName)]),
   ));
@@ -492,7 +654,7 @@ async function main() {
     return;
   }
 
-  const missing = apps.filter((app) => !installed[app.id]);
+  const missing = selectedApps.filter((app) => !installed[app.id]);
   if (missing.length) {
     console.error("Missing competitor apps:");
     for (const app of missing) {
@@ -505,7 +667,7 @@ async function main() {
 
   const timestamp = new Date().toISOString().replaceAll(":", "-");
   const records = [];
-  for (const app of apps) records.push(await captureApp(app, timestamp));
+  for (const app of selectedApps) records.push(await captureApp(app, timestamp));
   if (installed["google-maps"] && process.env.CAPTURE_GOOGLE_MAPS !== "false") {
     records.push(await captureGoogleMaps(timestamp));
   }

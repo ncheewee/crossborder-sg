@@ -1256,6 +1256,17 @@ const freshCompetitorRecords = competitorRecords.filter((record) => {
     fetchWarnings.push(`${record.app ?? "Competitor app"}: capture is ${ageMinutes}m old; excluded from current comparison.`);
     return false;
   }
+  if (record.captureStatus === "failed") {
+    fetchWarnings.push(`${record.app ?? "Competitor app"}: capture failed${record.captureError ? ` (${record.captureError})` : ""}; excluded from current comparison.`);
+    return false;
+  }
+  const hasReading = Object.values(record.normalizedReadings || {}).some((directions) => (
+    Object.values(directions || {}).some((value) => Array.isArray(value))
+  ));
+  if (!hasReading) {
+    fetchWarnings.push(`${record.app ?? "Competitor app"}: no parseable readings; excluded from current comparison.`);
+    return false;
+  }
   return true;
 });
 const liveByDirection = Object.fromEntries(await Promise.all(
