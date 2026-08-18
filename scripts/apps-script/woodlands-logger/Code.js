@@ -147,8 +147,9 @@ function logHour() {
   const quarterStr = Utilities.formatDate(quarter, TZ, 'yyyy-MM-dd HH:mm');
 
   // TomTom/Mapbox/GMaps: one API pass per 15-minute slot. Skip if that slot
-  // is full so the 5-minute poll does not burn quota 3×. GMaps still prefers
-  // a Chrome scrape on the hour — Routes only fills empty cells.
+  // is full so the 5-minute poll does not burn quota 3×. GMaps prefers a
+  // Maps reading (Mi6, or Claude scrape when the Mac is on). Routes only
+  // fills empty cells.
   if (logHour.force
       || !providerSlotFilled(SHEET_TOMTOM, quarterStr)
       || !providerSlotFilled(SHEET_MAPBOX, quarterStr)) {
@@ -232,6 +233,7 @@ function doPost(e) {
     if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(body.slot || ''))) {
       return jsonOut({ ok: false, error: 'slot must be "YYYY-MM-DD HH:MM"' });
     }
+    body.slot = quarterSlot(body.slot);
     if (!Array.isArray(body.values) || body.values.length !== ROUTES.length) {
       return jsonOut({ ok: false, error: 'values must be an array of ' + ROUTES.length });
     }
@@ -252,7 +254,8 @@ function doPost(e) {
 
     // Mark provenance only where a real value landed. A failed route stays
     // unmarked so the Routes fallback can claim it a few minutes later.
-    const marks = row.map(function (v) { return v === 'ERR' ? '' : SRC_SCRAPE; });
+    const ingestSource = body.source === 'mi6-maps' ? 'mi6-maps' : SRC_SCRAPE;
+    const marks = row.map(function (v) { return v === 'ERR' ? '' : ingestSource; });
     sh.getRange(r, COL_SOURCE_1, 1, marks.length).setValues([marks]);
 
     Logger.log('Ingest ' + body.slot + ' → row ' + r + ' : ' + row.join('/'));

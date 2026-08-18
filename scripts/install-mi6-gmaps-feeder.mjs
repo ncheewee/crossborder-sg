@@ -1,0 +1,139 @@
+import { execFile } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+
+// Same 15-minute MacroDroid fire as Checkpoint. This script opens each
+// Woodlands route in the Google Maps app, reads "Driving mode: N minutes"
+// from the UI dump, and POSTs the seven durations to Apps Script.
+const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
+const serial = process.env.ADB_SERIAL || "192.168.0.4:5555";
+const webAppUrl = process.env.CHECKPOINT_SHEET_WEBAPP_URL
+  || "https://script.google.com/macros/s/AKfycbzamRGlMzJ8TLjfHPygtw01RU-NaK2TCyzq4iFRVjZRKL9JUef-SR3NSu8-skeGMJoA/exec";
+const localPath = "/private/tmp/crossborder-mi6-gmaps-capture.sh";
+const devicePath = "/sdcard/Download/crossborder-mi6-gmaps-capture.sh";
+
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) reject(new Error(stderr || error.message));
+      else resolve(stdout);
+    });
+  });
+}
+
+async function loadIngestSecret() {
+  if (process.env.INGEST_SECRET) return process.env.INGEST_SECRET.trim();
+  const skill = await readFile(
+    "/Users/cheewee/Documents/Claude/Scheduled/woodlands-checkpoint-route-log/SKILL.md",
+    "utf8",
+  );
+  const match = skill.match(/SEC='([^']+)'/);
+  if (!match) throw new Error("INGEST_SECRET is not set and was not found in the scrape skill");
+  return match[1];
+}
+
+const secret = await loadIngestSecret();
+
+const script = `#!/data/data/com.termux/files/usr/bin/bash
+set -eu
+
+url='${webAppUrl}'
+secret='${secret.replaceAll("'", "'\\''")}'
+status_path='/sdcard/Download/crossborder-mi6-gmaps-status.json'
+debug_path='/sdcard/Download/crossborder-mi6-gmaps-debug.txt'
+dump_path='/sdcard/Download/crossborder-mi6-gmaps-ui.xml'
+: > "$debug_path"
+
+dump_ui() {
+  rm -f "$dump_path"
+  if command -v su >/dev/null 2>&1; then
+    su -c "uiautomator dump $dump_path" >/dev/null 2>&1 || true
+  fi
+  if [ ! -s "$dump_path" ]; then
+    uiautomator dump "$dump_path" >/dev/null 2>&1 || true
+  fi
+  [ -s "$dump_path" ]
+}
+
+minutes_from_dump() {
+  local desc hours mins
+  desc="$(grep -o 'Driving mode: [^"]*' "$dump_path" 2>/dev/null | head -n 1 || true)"
+  printf '%s\\n' "$desc" >> "$debug_path"
+  hours="$(printf '%s' "$desc" | sed -n 's/.*Driving mode: \\([0-9][0-9]*\\) hour.*/\\1/p')"
+  mins="$(printf '%s' "$desc" | sed -n 's/.*\\([0-9][0-9]*\\) min.*/\\1/p')"
+  hours="\${hours:-0}"
+  mins="\${mins:-0}"
+  if [ "$hours" -eq 0 ] && [ "$mins" -eq 0 ]; then
+    return 1
+  fi
+  local total="$(( hours * 60 + mins ))"
+  if [ "$total" -gt 0 ] && [ "$total" -le 240 ]; then
+    printf '%s' "$total"
+  fi
+}
+
+read_route() {
+  local maps_url="$1"
+  am start -a android.intent.action.VIEW -d "$maps_url" com.google.android.apps.maps >/dev/null 2>&1 || true
+  sleep 8
+  if ! dump_ui; then
+    printf 'ERR'
+    return
+  fi
+  local mins
+  mins="$(minutes_from_dump || true)"
+  if [ -n "$mins" ]; then
+    printf '%s' "$mins"
+  else
+    printf 'ERR'
+  fi
+}
+
+day="$(date +%Y-%m-%d)"
+hour="$(date +%H)"
+minute="$(date +%M)"
+quarter="$(( 10#\$minute / 15 * 15 ))"
+slot="$(printf '%s %s:%02d' "\$day" "\$hour" "\$quarter")"
+
+# Same order as the Claude scrape / Apps Script ROUTES array.
+v1="$(read_route 'https://www.google.com/maps/dir/1.439328,103.768422/1.466582,103.768091/data=!4m2!4m1!3e0')"
+v2="$(read_route 'https://www.google.com/maps/dir/1.439356,103.768285/1.466582,103.768091/data=!4m2!4m1!3e0')"
+v3="$(read_route 'https://www.google.com/maps/dir/1.440516,103.768108/1.466582,103.768091/data=!4m2!4m1!3e0')"
+v4="$(read_route 'https://www.google.com/maps/dir/1.472085,103.7651/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
+v5="$(read_route 'https://www.google.com/maps/dir/1.482406,103.7832/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
+v6="$(read_route 'https://www.google.com/maps/dir/1.467340,103.7658/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
+v7="$(read_route 'https://www.google.com/maps/dir/1.465356,103.7702/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
+
+input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+
+json_val() {
+  if [ "$1" = ERR ]; then printf '"ERR"'; else printf '%s' "$1"; fi
+}
+
+payload="{\\"secret\\":\\"$secret\\",\\"source\\":\\"mi6-maps\\",\\"slot\\":\\"$slot\\",\\"values\\":[$(json_val "$v1"),$(json_val "$v2"),$(json_val "$v3"),$(json_val "$v4"),$(json_val "$v5"),$(json_val "$v6"),$(json_val "$v7")]}"
+printf 'slot=%s values=%s/%s/%s/%s/%s/%s/%s\\n' "$slot" "$v1" "$v2" "$v3" "$v4" "$v5" "$v6" "$v7" >> "$debug_path"
+
+ok=0
+i=1
+while [ "$i" -le 6 ]; do
+  resp="$(curl -sS -L --max-time 45 -H 'Content-Type: application/json' --data "$payload" "$url" 2>&1 || true)"
+  printf 'attempt %s %s\\n' "$i" "$resp" >> "$debug_path"
+  case "$resp" in
+    '{'*) printf '%s\\n' "$resp" > "$status_path"; ok=1; break ;;
+  esac
+  i="$(( i + 1 ))"
+  sleep 4
+done
+
+if [ "$ok" -ne 1 ]; then
+  printf '%s\\n' '{"ok":false,"error":"gmaps_ingest_failed"}' > "$status_path"
+  exit 1
+fi
+case "$(cat "$status_path")" in
+  *'"ok":true'*) exit 0 ;;
+  *) exit 1 ;;
+esac
+`;
+
+await writeFile(localPath, script, { mode: 0o600 });
+await run(adb, ["-s", serial, "push", localPath, devicePath]);
+console.log(`Installed Mi6 GMaps feeder at ${devicePath} for ${serial}.`);

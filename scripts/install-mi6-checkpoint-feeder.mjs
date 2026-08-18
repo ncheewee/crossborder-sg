@@ -129,9 +129,17 @@ printf '%s\\n' "$response" > "$status_path"
 case "$response" in
   *'"ok":true'*)
     rm -f "$screenshot_dir"/*_com.tplusinteractive.checkpointsg.*
+    if [ -x /data/data/com.termux/files/usr/bin/bash ] && [ -r /sdcard/Download/crossborder-mi6-gmaps-capture.sh ]; then
+      /data/data/com.termux/files/usr/bin/bash /sdcard/Download/crossborder-mi6-gmaps-capture.sh || true
+    fi
     exit 0
     ;;
-  *) exit 1 ;;
+  *)
+    if [ -r /sdcard/Download/crossborder-mi6-gmaps-capture.sh ]; then
+      /data/data/com.termux/files/usr/bin/bash /sdcard/Download/crossborder-mi6-gmaps-capture.sh || true
+    fi
+    exit 1
+    ;;
 esac
 `;
 
