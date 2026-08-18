@@ -106,16 +106,16 @@ function assessVariance(route, points, sourceKey, sourceLabel) {
   const oursMovement = current.oursMid - previous.oursMid;
   const sourceMovement = current[sourceKey] - previous[sourceKey];
   const movement = Math.abs(oursMovement) <= 5 && Math.abs(sourceMovement) <= 5
-    ? "Both sources are broadly steady hour-on-hour"
+    ? "Both sources are broadly steady interval-to-interval"
     : Math.sign(oursMovement) === Math.sign(sourceMovement)
       ? `Both sources moved in the same direction (${signedMinutes(oursMovement)} ours, ${signedMinutes(sourceMovement)} ${sourceLabel})`
       : `The sources moved differently (${signedMinutes(oursMovement)} ours, ${signedMinutes(sourceMovement)} ${sourceLabel})`;
 
   if (sameDirection === "lower") {
-    return `${separated}; CrossBorder has stayed ${Math.abs(average)}m below ${sourceLabel} on average across ${recent.length} hourly checks. ${movement}. Treat this as a likely measurement-boundary or model bias: validate against completed trips before lifting estimates wholesale.`;
+    return `${separated}; CrossBorder has stayed ${Math.abs(average)}m below ${sourceLabel} on average across ${recent.length} 15-min checks. ${movement}. Treat this as a likely measurement-boundary or model bias: validate against completed trips before lifting estimates wholesale.`;
   }
   if (sameDirection === "higher") {
-    return `${separated}; CrossBorder has stayed ${average}m above ${sourceLabel} on average across ${recent.length} hourly checks. ${movement}. Check whether our chosen route starts earlier than ${sourceLabel}'s queue boundary before tuning down.`;
+    return `${separated}; CrossBorder has stayed ${average}m above ${sourceLabel} on average across ${recent.length} 15-min checks. ${movement}. Check whether our chosen route starts earlier than ${sourceLabel}'s queue boundary before tuning down.`;
   }
   return `${separated}. The gap is not yet directionally stable over ${recent.length} checks (average ${signedMinutes(average)}). ${movement}. Keep collecting: the right lesson may be time-of-day sensitivity rather than a single offset.`;
 }
@@ -259,9 +259,9 @@ function sourceAverage(route, source, record) {
     : null;
 }
 
-function hourBucket(timestamp) {
+function quarterBucket(timestamp) {
   const time = new Date(timestamp).getTime();
-  return Number.isFinite(time) ? Math.round(time / 3_600_000) * 3_600_000 : null;
+  return Number.isFinite(time) ? Math.floor(time / 900_000) * 900_000 : null;
 }
 
 function roundToFive(value) {
@@ -276,10 +276,10 @@ function optionalNumber(value) {
 
 function buildShadowPoints(route, googleSource, checkpointRecords) {
   if (!googleSource?.records?.length) return [];
-  const googleByHour = new Map();
-  const checkpointByHour = new Map();
+  const googleByQuarter = new Map();
+  const checkpointByQuarter = new Map();
 
-  const keepClosestToHour = (map, bucket, candidate) => {
+  const keepClosestToQuarter = (map, bucket, candidate) => {
     const existing = map.get(bucket);
     const distance = Math.abs(new Date(candidate.capturedAt).getTime() - bucket);
     const existingDistance = existing
@@ -289,16 +289,16 @@ function buildShadowPoints(route, googleSource, checkpointRecords) {
   };
 
   for (const record of googleSource.records) {
-    const bucket = hourBucket(record.capturedAt);
+    const bucket = quarterBucket(record.capturedAt);
     const googleMid = sourceAverage(route, googleSource, record);
     if (bucket === null || !Number.isFinite(googleMid)) continue;
-    keepClosestToHour(googleByHour, bucket, { capturedAt: record.capturedAt, googleMid });
+    keepClosestToQuarter(googleByQuarter, bucket, { capturedAt: record.capturedAt, googleMid });
   }
   for (const record of checkpointRecords) {
-    const bucket = hourBucket(record.capturedAt);
+    const bucket = quarterBucket(record.capturedAt);
     const range = plausibleRange(record.normalizedReadings?.woodlands?.[route.directionKey]);
     if (bucket === null || !range) continue;
-    keepClosestToHour(checkpointByHour, bucket, {
+    keepClosestToQuarter(checkpointByQuarter, bucket, {
       capturedAt: record.capturedAt,
       checkpointMid: midpoint(range),
     });
@@ -309,8 +309,8 @@ function buildShadowPoints(route, googleSource, checkpointRecords) {
   let learnedBias = 0;
   let lastCheckpointHour = null;
 
-  return [...googleByHour.entries()].sort(([left], [right]) => left - right).map(([bucket, google]) => {
-    const checkpoint = checkpointByHour.get(bucket);
+  return [...googleByQuarter.entries()].sort(([left], [right]) => left - right).map(([bucket, google]) => {
+    const checkpoint = checkpointByQuarter.get(bucket);
     const hoursSinceCheckpoint = lastCheckpointHour === null
       ? Number.POSITIVE_INFINITY
       : (bucket - lastCheckpointHour) / 3_600_000;
@@ -394,7 +394,9 @@ function formatSheetTimestamp(iso) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(new Date(iso)).replace(",", "").replace(/:\d{2}$/, ":00");
+  }).format(new Date(iso)).replace(",", "").replace(/:(\d{2})$/, (_, minute) => (
+    `:${String(Math.floor(Number(minute) / 15) * 15).padStart(2, "0")}`
+  ));
 }
 
 async function appendCheckpointSheetRow(sheetRows, source, log, stampIso) {
@@ -513,7 +515,7 @@ function chartSvg(route, rows) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     <text x="${margin.left}" y="42" fill="#111827" font-size="34" font-family="Arial, sans-serif" font-weight="700">${route.label}</text>
-    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Hourly route-time range, shadow calibration and comparisons · ${singaporeDate}</text>
+    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">15-minute route-time range, shadow calibration and comparisons · ${singaporeDate}</text>
     ${grids}
     ${hourTicks}
     <path d="${area}" fill="${palette.fill}" fill-opacity="0.14"/>

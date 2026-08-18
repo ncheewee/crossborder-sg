@@ -2,7 +2,8 @@ name: Hourly checkpoint variance charts
 
 on:
   schedule:
-    # The Mi6 capture runs on the hour. Leave time for it to reach the Worker.
+    # Telegram stays hourly. Sheet/Worker now hold 15-minute slots; this job
+    # plots them. Leave a few minutes after the hour for Mi6 to land.
     - cron: "12 * * * *"
   workflow_dispatch:
 

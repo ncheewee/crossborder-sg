@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 
+// MacroDroid must fire this script every 15 minutes (not hourly). The feeder
+// only OCRs the screenshot from the current run; it does not schedule itself.
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
 const serial = process.env.ADB_SERIAL || "192.168.0.4:5555";
 const monitorKey = process.env.MONITOR_API_KEY;
@@ -37,7 +39,7 @@ while [ "$attempt" -lt 15 ]; do
   if [ -n "$latest" ] && [ -r "$latest" ]; then
     screenshot_age="$(( $(date +%s) - $(stat -c %Y "$latest") ))"
     # MacroDroid's screenshot action returns just before the file is flushed.
-    # Wait for the screenshot produced by this run instead of OCRing the prior hour.
+    # Wait for the screenshot produced by this run instead of OCRing the prior slot.
     if [ "$(stat -c %Y "$latest")" -ge "$(( started_at - 2 ))" ]; then
       break
     fi

@@ -133,39 +133,40 @@ const SRC_ROUTES    = 'routes-api';
 function logHour() {
   const now = new Date();
 
-  // Checkpoint.sg is independent of the :45/:55 gates. Mi6 posts on the hour;
-  // pull it on every 5-minute poll so the tab does not wait on this Mac.
+  // Checkpoint.sg is independent of the Google hourly gates. Pull every poll
+  // and upsert into the capture's 15-minute slot.
   const checkpointSheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
   if (checkpointSheet && checkpointNeedsCleanup(checkpointSheet)) {
     Logger.log('Checkpoint.sg cleanup — ' + cleanupCheckpointSheet());
   }
   Logger.log('Checkpoint.sg — ' + logCheckpoint());
 
-  const minute  = Number(Utilities.formatDate(now, TZ, 'm'));
-  const slot    = roundToHour(now);
-  const slotStr = Utilities.formatDate(slot, TZ, 'yyyy-MM-dd HH:00');
+  const minute     = Number(Utilities.formatDate(now, TZ, 'm'));
+  const hourSlot   = Utilities.formatDate(roundToHour(now), TZ, 'yyyy-MM-dd HH:00');
+  const quarter    = floorToQuarter(now);
+  const quarterStr = Utilities.formatDate(quarter, TZ, 'yyyy-MM-dd HH:mm');
 
-  // Late window: the scraper has had its chance. Backfill Google if it failed,
-  // then run the staleness watchdog. No provider or camera work here.
+  // TomTom/Mapbox: one API pass per 15-minute slot. Skip if that slot is full
+  // so the 5-minute poll does not burn quota 3×.
+  if (logHour.force
+      || !providerSlotFilled(SHEET_TOMTOM, quarterStr)
+      || !providerSlotFilled(SHEET_MAPBOX, quarterStr)) {
+    const tomtom = logTomTom(quarterStr);
+    const mapbox = logMapbox(quarterStr);
+    const cams   = (CAMS_ENABLED && (minute >= TARGET_MINUTE || logHour.force))
+      ? logCameras(roundToHour(now), hourSlot)
+      : 'paused';
+    Logger.log('Slot ' + quarterStr + ' | TomTom: ' + tomtom
+               + ' | Mapbox: ' + mapbox + ' | cams: ' + cams);
+  } else {
+    Logger.log('Slot ' + quarterStr + ' | providers already filled');
+  }
+
+  // Late window: the hourly Chrome scrape has had its chance. GMaps stays hourly.
   if (FALLBACK_MINUTE && minute >= FALLBACK_MINUTE && !logHour.force) {
-    Logger.log('Fallback window — ' + backfillGoogle(slotStr));
+    Logger.log('Fallback window — ' + backfillGoogle(hourSlot));
     watchdog();
-    return;
   }
-
-  if (minute < TARGET_MINUTE && !logHour.force) {
-    Logger.log('Skipped — minute ' + minute + ' is before target ' + TARGET_MINUTE);
-    return;
-  }
-
-  // Each leg is independent and swallows its own errors, so one provider
-  // being down never costs us the others or the camera images.
-  const tomtom = logTomTom(slotStr);
-  const mapbox = logMapbox(slotStr);
-  const cams   = CAMS_ENABLED ? logCameras(slot, slotStr) : 'paused';
-
-  Logger.log('Slot ' + slotStr + ' | TomTom: ' + tomtom
-             + ' | Mapbox: ' + mapbox + ' | cams: ' + cams);
 }
 
 // ─── Ingest endpoint for the Google Maps scraper ───────────────────────────
@@ -509,8 +510,8 @@ function testWatchdog() { Logger.log(watchdog()); }
  * Fetches live and baseline travel times for all 7 routes and writes them to
  * the Mapbox tab. Returns a short status string for the log.
  *
- * Two calls per route (driving-traffic + driving) = 14 calls/hour ≈ 10,100 a
- * month, about 10% of Mapbox's 100,000/month free tier.
+ * Two calls per route (driving-traffic + driving) = 14 calls per 15-min slot
+ * ≈ 40,400 a month, about 40% of Mapbox's 100,000/month free tier.
  */
 function logMapbox(slotStr) {
   const token = PropertiesService.getScriptProperties().getProperty('MAPBOX_TOKEN');
@@ -658,7 +659,7 @@ function logCameras(slot, slotStr) {
 
 /**
  * Reads complete Woodlands captures from the Worker and upserts one A:I row
- * per SGT hour. Idempotent on the hour slot. No Mac file involved.
+ * per SGT 15-minute slot. Idempotent on the slot. No Mac file involved.
  */
 function logCheckpoint() {
   const key = PropertiesService.getScriptProperties().getProperty('MONITOR_API_KEY');
@@ -692,7 +693,7 @@ function logCheckpoint() {
       const source = capture.source || 'mi6-macrodroid';
       const capturedAt = new Date(capture.captured_at || capture.capturedAt);
       return appendCheckpointRow(sh, [
-        Utilities.formatDate(capturedAt, TZ, 'yyyy-MM-dd HH:00'),
+        Utilities.formatDate(floorToQuarter(capturedAt), TZ, 'yyyy-MM-dd HH:mm'),
         woodlands.towardsJb[0], woodlands.towardsJb[1], midpoint(woodlands.towardsJb),
         woodlands.towardsSg[0], woodlands.towardsSg[1], midpoint(woodlands.towardsSg),
         source,
@@ -739,9 +740,11 @@ function midpoint(range) {
   return Math.round((Number(range[0]) + Number(range[1])) / 2);
 }
 
-function hourSlot(stamp) {
-  const match = String(stamp || '').trim().match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):\d{2}/);
-  return match ? match[1] + ' ' + match[2] + ':00' : String(stamp || '').trim();
+function quarterSlot(stamp) {
+  const match = String(stamp || '').trim().match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})/);
+  if (!match) return String(stamp || '').trim();
+  const minute = Math.floor(Number(match[3]) / 15) * 15;
+  return match[1] + ' ' + match[2] + ':' + ('0' + minute).slice(-2);
 }
 
 function checkpointSourceRank(source) {
@@ -758,12 +761,12 @@ function appendCheckpointRow(sh, row) {
   if (!hasNums || source === 'unavailable') return 'skipped empty';
 
   row = row.slice();
-  row[0] = hourSlot(row[0]);
+  row[0] = quarterSlot(row[0]);
 
   const lastRow = Math.max(1, sh.getLastRow());
   const stamps = sh.getRange(1, COL_TIMESTAMP, lastRow, 1).getDisplayValues();
   for (var i = 0; i < stamps.length; i++) {
-    if (hourSlot(stamps[i][0]) !== row[0]) continue;
+    if (quarterSlot(stamps[i][0]) !== row[0]) continue;
     const existing = sh.getRange(i + 1, 1, 1, 9).getDisplayValues()[0];
     if (checkpointSourceRank(source) > checkpointSourceRank(existing[7])) {
       sh.getRange(i + 1, 1, 1, 9).setValues([row]);
@@ -786,12 +789,13 @@ function checkpointNeedsCleanup(sh) {
     const stamp = String(rows[i][0] || '').trim();
     const source = String(rows[i][7] || '').trim();
     if (source === 'unavailable') return true;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(stamp) && !stamp.endsWith(':00')) return true;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(stamp)
+        && Number(stamp.slice(-2)) % 15 !== 0) return true;
   }
   return false;
 }
 
-/** Drop empty rows, snap stamps to HH:00, keep one row per hour (Mi6 wins). */
+/** Drop empty rows, snap stamps to :00/:15/:30/:45, keep one row per slot (Mi6 wins). */
 function cleanupCheckpointSheet() {
   const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
   if (!sh) return 'tab "' + SHEET_CHECKPOINT + '" missing';
@@ -805,7 +809,7 @@ function cleanupCheckpointSheet() {
     const source = String(row[7] || '').trim();
     const hasNums = String(row[1] || '').trim() !== '' && String(row[4] || '').trim() !== '';
     if (!hasNums || source === 'unavailable') continue;
-    const slot = hourSlot(row[0]);
+    const slot = quarterSlot(row[0]);
     if (!slot) continue;
     row[0] = slot;
     if (!best[slot] || checkpointSourceRank(source) > checkpointSourceRank(best[slot][7])) {
@@ -820,7 +824,7 @@ function cleanupCheckpointSheet() {
     sh.getRange(2, 1, cleaned.length, 1).setNumberFormat('@');
     sh.getRange(2, 1, cleaned.length, 9).setValues(cleaned);
   }
-  return 'kept ' + cleaned.length + ' hourly rows, dropped ' + (values.length - cleaned.length);
+  return 'kept ' + cleaned.length + ' quarter-hour rows, dropped ' + (values.length - cleaned.length);
 }
 
 function testCheckpoint() { Logger.log(logCheckpoint()); }
@@ -837,6 +841,24 @@ function testCheckpoint() { Logger.log(logCheckpoint()); }
  */
 function roundToHour(d) {
   return new Date(Math.round(d.getTime() / 3600000) * 3600000);
+}
+
+function floorToQuarter(d) {
+  return new Date(Math.floor(d.getTime() / 900000) * 900000);
+}
+
+function providerSlotFilled(tabName, slotStr) {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(tabName);
+  if (!sh) return false;
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return false;
+  const stamps = sh.getRange(2, COL_TIMESTAMP, lastRow - 1, 1).getDisplayValues();
+  for (var i = stamps.length - 1; i >= 0; i--) {
+    if (String(stamps[i][0]).trim() !== slotStr) continue;
+    const live = sh.getRange(i + 2, COL_ROUTE_1, 1, ROUTES.length).getValues()[0];
+    return live.every(function (v) { return v !== '' && v !== null && v !== 'ERR'; });
+  }
+  return false;
 }
 
 /**
@@ -947,8 +969,8 @@ function setupTrigger() {
   // A 15-minute poll can only land once in that span. The extra firings are
   // sub-millisecond no-ops.
   ScriptApp.newTrigger('logHour').timeBased().everyMinutes(5).create();
-  Logger.log('Polling trigger installed: providers after :' + TARGET_MINUTE
-             + ', Google fallback + watchdog after :' + FALLBACK_MINUTE + '.');
+  Logger.log('Polling trigger installed: TomTom/Mapbox every 15 min, Google fallback + watchdog after :'
+             + FALLBACK_MINUTE + '.');
 
   if (RETENTION_DAYS > 0) {
     ScriptApp.newTrigger('purgeOld').timeBased().everyDays(1).atHour(4).create();
