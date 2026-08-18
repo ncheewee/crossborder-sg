@@ -2,9 +2,9 @@ name: Hourly checkpoint variance charts
 
 on:
   schedule:
-    # Telegram stays hourly. Sheet/Worker now hold 15-minute slots; this job
-    # plots them. Leave a few minutes after the hour for Mi6 to land.
-    - cron: "12 * * * *"
+    # Once an hour, on the SGT hour (20:00 SGT = 12:00 UTC). GitHub may be a
+    # few minutes late; do not add a second cron.
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 permissions:

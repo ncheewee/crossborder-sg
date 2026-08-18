@@ -429,6 +429,9 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, 
     const checkpointRecord = closestRecord(checkpointRecords, slot);
     const shadow = closestRecord(shadowPoints, slot);
     const ours = oursRecord ? sourcePoint(route, sources.ours, oursRecord) : null;
+    if (ours && (!Number.isFinite(ours.oursMid) || ours.oursMid < 5 || ours.oursHigh < 5)) {
+      ours.oursLow = ours.oursHigh = ours.oursMid = null;
+    }
     const tomtom = tomtomRecord ? sourcePoint(route, sources.tomtom, tomtomRecord) : null;
     const mapbox = mapboxRecord ? sourcePoint(route, sources.mapbox, mapboxRecord) : null;
     const checkpointRange = checkpointRecord
