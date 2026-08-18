@@ -405,6 +405,10 @@ async function appendCheckpointSheetRow(sheetRows, source, log, stampIso) {
   }
   const jb = sheetRows.find((row) => row.directionKey === "towardsJb");
   const sg = sheetRows.find((row) => row.directionKey === "towardsSg");
+  if (!Number.isFinite(jb?.checkpointMid) || !Number.isFinite(sg?.checkpointMid)) {
+    console.log("Checkpoint.sg sheet append skipped: no complete Woodlands reading");
+    return;
+  }
   const row = [
     formatSheetTimestamp(stampIso),
     jb?.checkpointLow ?? "", jb?.checkpointHigh ?? "", jb?.checkpointMid ?? "",

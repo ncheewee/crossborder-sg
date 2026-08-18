@@ -679,14 +679,7 @@ function logCheckpoint() {
     if (!resp || resp.getResponseCode() !== 200) return lastStatus;
     const captures = JSON.parse(resp.getContentText()).captures || [];
     const latest = latestCompleteWoodlands(captures);
-    if (!latest) {
-      return appendCheckpointRow(sh, [
-        Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm'),
-        '', '', '', '', '', '',
-        'unavailable',
-        'No complete Woodlands Checkpoint.sg capture in the last 4 hours.',
-      ]);
-    }
+    if (!latest) return 'no fresh complete capture';
     const woodlands = latest.readings.woodlands;
     const source = latest.source || 'mi6-macrodroid';
     const capturedAt = new Date(latest.captured_at || latest.capturedAt);
