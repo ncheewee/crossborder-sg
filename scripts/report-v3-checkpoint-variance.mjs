@@ -98,13 +98,15 @@ function describeMovement(currentMid, previousMid) {
 }
 
 function gmapsSourceLabel(raw) {
-  const text = String(raw || "").toLowerCase();
+  const text = String(raw || "").trim();
   if (!text) return "unknown";
+  if (/^(Mi6|Mac|API)( \+ (Mi6|Mac|API))*$/.test(text)) return text;
+  const lower = text.toLowerCase();
   const parts = [];
-  if (text.includes("mi6")) parts.push("Mi6");
-  if (text.includes("scrape")) parts.push("desktop");
-  if (text.includes("routes")) parts.push("Routes");
-  return parts.join("+") || raw;
+  if (lower.includes("mi6")) parts.push("Mi6");
+  if (lower.includes("scrape") || lower.includes("mac")) parts.push("Mac");
+  if (lower.includes("routes") || /\bapi\b/.test(lower)) parts.push("API");
+  return parts.join(" + ") || text;
 }
 
 function gmapsSourceFromRow(header, row) {

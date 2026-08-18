@@ -119,15 +119,11 @@ const COL_ROUTE_1   = 2;   // B
 const COL_FREEFLOW_1= 9;   // I on the TomTom/Mapbox tabs
 const COL_CAM_1     = 9;   // I on the cams tab
 
-// L–R on the GMaps tab: one provenance marker per route, so a mixed-source
-// column can be filtered or split later. Two collection methods now feed B–H
-// and they are NOT the same measurement — the scrape is what a user sees in
-// the Maps app, the API is Google's routing engine. Without this the series
-// silently blends two definitions.
-const COL_SOURCE_1  = 12;  // L
-const COL_GMAPS_SOURCE = 19; // S — one-line source for the whole row
-const SRC_SCRAPE    = 'scrape';
-const SRC_ROUTES    = 'routes-api';
+// L on the GMaps tab: one Source label for the whole row — Mi6, Mac, or API.
+const COL_GMAPS_SOURCE = 12; // L
+const SRC_MI6       = 'Mi6';
+const SRC_MAC       = 'Mac';
+const SRC_API       = 'API';
 
 // ─── Main hourly job ───────────────────────────────────────────────────────
 
@@ -136,6 +132,7 @@ function logHour() {
 
   // Checkpoint.sg is independent of the Google hourly gates. Pull every poll
   // and upsert into the capture's 15-minute slot.
+  Logger.log('GMaps source columns — ' + collapseGmapsSourceColumns());
   const checkpointSheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
   if (checkpointSheet && checkpointNeedsCleanup(checkpointSheet)) {
     Logger.log('Checkpoint.sg cleanup — ' + cleanupCheckpointSheet());
@@ -253,12 +250,8 @@ function doPost(e) {
     const r = findOrCreateRow(sh, body.slot);
     sh.getRange(r, COL_ROUTE_1, 1, row.length).setValues([row]);
 
-    // Mark provenance only where a real value landed. A failed route stays
-    // unmarked so the Routes fallback can claim it a few minutes later.
-    const ingestSource = body.source === 'mi6-maps' ? 'mi6-maps' : SRC_SCRAPE;
-    const marks = row.map(function (v) { return v === 'ERR' ? '' : ingestSource; });
-    sh.getRange(r, COL_SOURCE_1, 1, marks.length).setValues([marks]);
-    writeGmapsSourceSummary(sh, r, marks);
+    const landed = row.some(function (v) { return v !== 'ERR'; });
+    writeGmapsSource(sh, r, landed ? (body.source === 'mi6-maps' ? SRC_MI6 : SRC_MAC) : '');
 
     Logger.log('Ingest ' + body.slot + ' → row ' + r + ' : ' + row.join('/'));
     return jsonOut({ ok: true, slot: body.slot, row: r, values: row });
@@ -363,20 +356,51 @@ function fetchTomTomRoute(route, key) {
  * slot with current traffic would silently fabricate history. Off-hour
  * 15-minute rows have no scrape, so they are Routes-only by design.
  */
+function displayGmapsSource(raw) {
+  const text = String(raw || '').trim();
+  const lower = text.toLowerCase();
+  if (lower === 'mi6' || lower.includes('mi6')) return SRC_MI6;
+  if (lower === 'mac' || lower.includes('scrape')) return SRC_MAC;
+  if (lower === 'api' || lower.includes('routes')) return SRC_API;
+  return text;
+}
+
 function summarizeGmapsSources(marks) {
   const unique = [];
   (marks || []).forEach(function (mark) {
-    const value = String(mark || '').trim();
+    const value = displayGmapsSource(mark);
     if (value && unique.indexOf(value) === -1) unique.push(value);
   });
-  return unique.join('+');
+  return unique.join(' + ');
 }
 
-function writeGmapsSourceSummary(sh, row, marks) {
+function writeGmapsSource(sh, row, label) {
   if (String(sh.getRange(1, COL_GMAPS_SOURCE).getDisplayValue()).trim() !== 'Source') {
     sh.getRange(1, COL_GMAPS_SOURCE).setValue('Source').setFontWeight('bold');
   }
-  sh.getRange(row, COL_GMAPS_SOURCE).setValue(summarizeGmapsSources(marks));
+  sh.getRange(row, COL_GMAPS_SOURCE).setValue(label || '');
+}
+
+function collapseGmapsSourceColumns() {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_GMAPS);
+  if (!sh) return 'GMaps tab missing';
+  const lastCol = sh.getLastColumn();
+  const headerL = String(sh.getRange(1, COL_GMAPS_SOURCE).getDisplayValue()).trim();
+  if (headerL === 'Source' && lastCol <= COL_GMAPS_SOURCE) return 'already collapsed';
+
+  const lastRow = sh.getLastRow();
+  const width = Math.max(1, lastCol - COL_GMAPS_SOURCE + 1);
+  if (lastRow >= 2) {
+    const block = sh.getRange(2, COL_GMAPS_SOURCE, lastRow - 1, width).getDisplayValues();
+    const summaries = block.map(function (row) { return [summarizeGmapsSources(row)]; });
+    sh.getRange(2, COL_GMAPS_SOURCE, lastRow - 1, width).clearContent();
+    sh.getRange(2, COL_GMAPS_SOURCE, summaries.length, 1).setValues(summaries);
+  }
+  if (width > 1) {
+    sh.getRange(1, COL_GMAPS_SOURCE, 1, width).clearContent();
+  }
+  sh.getRange(1, COL_GMAPS_SOURCE).setValue('Source').setFontWeight('bold');
+  return 'collapsed ' + Math.max(0, lastRow - 1) + ' rows';
 }
 
 function backfillGoogle(slotStr) {
@@ -396,16 +420,14 @@ function backfillGoogle(slotStr) {
   });
   if (!missing.length) return 'scraper covered all 7 — nothing to backfill';
 
-  const srcRng = sh.getRange(row, COL_SOURCE_1, 1, ROUTES.length);
-  const marks  = srcRng.getValues()[0];
-
+  const priorSource = displayGmapsSource(sh.getRange(row, COL_GMAPS_SOURCE).getDisplayValue());
+  const hadExisting = existing.some(function (v) { return v !== '' && v !== null && v !== 'ERR'; });
   const out = existing.slice();
   var ok = 0;
   missing.forEach(function (i) {
     const mins = fetchGoogleRoute(ROUTES[i], key);
     if (mins !== 'ERR') {
-      out[i]   = mins;
-      marks[i] = SRC_ROUTES;
+      out[i] = mins;
       ok++;
     } else if (existing[i] === '') {
       out[i] = 'ERR';
@@ -413,8 +435,13 @@ function backfillGoogle(slotStr) {
   });
 
   rng.setValues([out]);
-  srcRng.setValues([marks]);
-  writeGmapsSourceSummary(sh, row, marks);
+  var label = SRC_API;
+  if (hadExisting && priorSource && priorSource !== SRC_API) {
+    label = priorSource + ' + ' + SRC_API;
+  } else if (hadExisting && priorSource) {
+    label = priorSource;
+  }
+  writeGmapsSource(sh, row, ok ? label : priorSource);
   return 'backfilled ' + ok + '/' + missing.length + ' missing route(s) → row ' + row;
 }
 
@@ -930,35 +957,14 @@ function setupSheets() {
   if (!g) throw new Error('Cannot find tab "' + SHEET_GMAPS + '" or "Sheet1".');
 
   // GMaps tab headers — rewritten in place, existing data untouched.
-  // A–H durations, I–K cameras, L–R per-route provenance.
+  // A–H durations, I–K cameras, L Source (Mi6 / Mac / API).
   const gHeaders = ['Timestamp (SGT)']
     .concat(ROUTES.map(function (r) { return r.name; }))
     .concat(['Cam 2701 Causeway', 'Cam 2702 Checkpoint', 'Cam 2704 BKE'])
-    .concat(ROUTES.map(function (r) { return 'src ' + r.col + ' (' + r.name.split('|')[0].trim() + ')'; }))
     .concat(['Source']);
   g.getRange(1, 1, 1, gHeaders.length).setValues([gHeaders]).setFontWeight('bold');
   g.setFrozenRows(1);
-
-  // Backfill provenance for rows collected before markers existed. Every one
-  // of those came from the scraper — the Routes fallback did not exist yet —
-  // so this is a statement of fact, not an assumption.
-  const lastRow = g.getLastRow();
-  if (lastRow >= 2) {
-    const vals = g.getRange(2, COL_ROUTE_1,  lastRow - 1, ROUTES.length).getValues();
-    const srcR = g.getRange(2, COL_SOURCE_1, lastRow - 1, ROUTES.length);
-    const srcV = srcR.getValues();
-    var filled = 0;
-    for (var i = 0; i < vals.length; i++) {
-      for (var j = 0; j < ROUTES.length; j++) {
-        const v = vals[i][j];
-        if (srcV[i][j] === '' && v !== '' && v !== null && v !== 'ERR') {
-          srcV[i][j] = SRC_SCRAPE; filled++;
-        }
-      }
-    }
-    srcR.setValues(srcV);
-    Logger.log('Provenance backfilled for ' + filled + ' historical cell(s).');
-  }
+  Logger.log('GMaps source columns — ' + collapseGmapsSourceColumns());
 
   // Provider tabs — created if missing, headers refreshed, data untouched.
   ensureProviderTab(ss, SHEET_TOMTOM, 'free-flow');
