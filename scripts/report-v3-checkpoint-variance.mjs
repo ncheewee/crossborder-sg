@@ -67,10 +67,6 @@ function midpoint(range) {
   return Array.isArray(range) ? Math.round((Number(range[0]) + Number(range[1])) / 2) : null;
 }
 
-function formatRange(range) {
-  return range ? `${range[0]}-${range[1]}m` : "unavailable";
-}
-
 function plausibleRange(range) {
   if (!Array.isArray(range) || range.length !== 2) return null;
   const [low, high] = range.map(Number);
@@ -81,43 +77,70 @@ function signedMinutes(value) {
   return `${value >= 0 ? "+" : ""}${value}m`;
 }
 
-function assessVariance(route, points, sourceKey, sourceLabel) {
-  const current = points.at(-1);
-  if (!current) return `No comparable ${sourceLabel} reading was captured.`;
+function shortDirection(label) {
+  return label.startsWith("Singapore") ? "SG→JB" : "JB→SG";
+}
 
-  const recent = points.slice(-4);
-  const deltas = recent.map((point) => point.oursMid - point[sourceKey]);
-  const average = Math.round(deltas.reduce((sum, value) => sum + value, 0) / deltas.length);
-  const sameDirection = deltas.length >= 3 && deltas.every((value) => value <= -10) ? "lower"
-    : deltas.length >= 3 && deltas.every((value) => value >= 10) ? "higher"
-      : null;
-  const currentGap = current.oursMid - current[sourceKey];
-  const separated = current.oursHigh < current[`${sourceKey}Low`]
-    ? `Our full route range sits below ${sourceLabel}'s band`
-    : current.oursLow > current[`${sourceKey}High`]
-      ? `Our full route range sits above ${sourceLabel}'s band`
-      : "The two published ranges overlap";
+function formatMinutes(value) {
+  return Number.isFinite(value) ? `${value}m` : "—";
+}
 
-  if (recent.length === 1) {
-    return `${separated} by ${Math.abs(currentGap)}m at this check. This is the first same-day observation, so it is a discrepancy to investigate, not a calibration signal yet.`;
+function gapVsCheckpoint(oursMid, checkpointMid) {
+  if (!Number.isFinite(oursMid) || !Number.isFinite(checkpointMid)) return null;
+  return oursMid - checkpointMid;
+}
+
+function describeMovement(currentMid, previousMid) {
+  if (!Number.isFinite(currentMid) || !Number.isFinite(previousMid)) return null;
+  const delta = currentMid - previousMid;
+  if (Math.abs(delta) < 8) return null;
+  return `${delta > 0 ? "up" : "down"} ${Math.abs(delta)}m`;
+}
+
+function buildHourlyInsight(routeReports, checkpointSource) {
+  const stamp = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Singapore",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date());
+  const sourceNote = checkpointSource === "mi6-macrodroid" ? "Mi6"
+    : checkpointSource === "android-emulator" ? "emulator, no Mi6"
+      : "Checkpoint missing";
+
+  const lines = routeReports.map((report) => {
+    const name = shortDirection(report.label);
+    const ours = formatMinutes(report.oursMid);
+    if (!Number.isFinite(report.checkpointMid)) return `${name}  ${ours}  ·  no Checkpoint`;
+    const gap = gapVsCheckpoint(report.oursMid, report.checkpointMid);
+    const match = Math.abs(gap) <= 8 ? "match" : `${signedMinutes(gap)} vs CP`;
+    return `${name}  ${ours}  ·  CP ${formatMinutes(report.checkpointMid)}  ·  ${match}`;
+  });
+
+  const takeaways = [];
+  if (checkpointSource === "android-emulator") {
+    takeaways.push("Grey line is emulator — treat it as a stand-in.");
+  } else if (checkpointSource !== "mi6-macrodroid") {
+    takeaways.push("No fresh Checkpoint this hour.");
   }
 
-  const previous = recent.at(-2);
-  const oursMovement = current.oursMid - previous.oursMid;
-  const sourceMovement = current[sourceKey] - previous[sourceKey];
-  const movement = Math.abs(oursMovement) <= 5 && Math.abs(sourceMovement) <= 5
-    ? "Both sources are broadly steady interval-to-interval"
-    : Math.sign(oursMovement) === Math.sign(sourceMovement)
-      ? `Both sources moved in the same direction (${signedMinutes(oursMovement)} ours, ${signedMinutes(sourceMovement)} ${sourceLabel})`
-      : `The sources moved differently (${signedMinutes(oursMovement)} ours, ${signedMinutes(sourceMovement)} ${sourceLabel})`;
+  for (const report of routeReports) {
+    const name = shortDirection(report.label);
+    const gap = gapVsCheckpoint(report.oursMid, report.checkpointMid);
+    if (gap !== null && gap <= -12) {
+      takeaways.push(`${name} we are ${Math.abs(gap)}m under Checkpoint — we may be starting before their queue line.`);
+    } else if (gap !== null && gap >= 12) {
+      takeaways.push(`${name} we are ${gap}m over Checkpoint — check whether we are too conservative.`);
+    }
+    const move = describeMovement(report.oursMid, report.previousOursMid);
+    if (move) takeaways.push(`${name} ${move} since the last chart.`);
+  }
 
-  if (sameDirection === "lower") {
-    return `${separated}; CrossBorder has stayed ${Math.abs(average)}m below ${sourceLabel} on average across ${recent.length} 15-min checks. ${movement}. Treat this as a likely measurement-boundary or model bias: validate against completed trips before lifting estimates wholesale.`;
+  if (!takeaways.length) {
+    takeaways.push("Both sides sit with Checkpoint. Nothing to change.");
   }
-  if (sameDirection === "higher") {
-    return `${separated}; CrossBorder has stayed ${average}m above ${sourceLabel} on average across ${recent.length} 15-min checks. ${movement}. Check whether our chosen route starts earlier than ${sourceLabel}'s queue boundary before tuning down.`;
-  }
-  return `${separated}. The gap is not yet directionally stable over ${recent.length} checks (average ${signedMinutes(average)}). ${movement}. Keep collecting: the right lesson may be time-of-day sensitivity rather than a single offset.`;
+
+  return [`${stamp}  ·  ${sourceNote}`, "", ...lines, "", takeaways[0]].join("\n");
 }
 
 async function readCsv(path) {
@@ -360,22 +383,18 @@ async function lastValidCrossBorderRows() {
   return latestByLabel;
 }
 
-async function sendPhoto(buffer, filename, caption) {
+async function sendTelegram(method, body) {
   if (telegramDisabled) {
-    console.log(`Telegram photo skipped: ${filename} (${telegramSender} disabled)`);
+    console.log(`Telegram ${method} skipped (${telegramSender} disabled)`);
     return;
   }
   if (!token || !chatId) throw new Error("Telegram credentials are not configured");
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const form = new FormData();
-      form.append("chat_id", chatId);
-      form.append("caption", caption);
-      form.append("photo", new Blob([buffer], { type: "image/png" }), filename);
-      const response = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: "POST", body: form });
+      const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: "POST", body });
       if (!response.ok) throw new Error(`Telegram returned ${response.status}`);
-      console.log(`Telegram photo sent: ${filename} via ${telegramSender}`);
+      console.log(`Telegram ${method} sent via ${telegramSender}`);
       return;
     } catch (error) {
       lastError = error;
@@ -383,6 +402,19 @@ async function sendPhoto(buffer, filename, caption) {
     }
   }
   throw lastError;
+}
+
+async function sendPhoto(buffer, filename, caption) {
+  const form = new FormData();
+  form.append("chat_id", chatId ?? "");
+  if (caption) form.append("caption", caption);
+  form.append("photo", new Blob([buffer], { type: "image/png" }), filename);
+  await sendTelegram("sendPhoto", form);
+}
+
+async function sendMessage(text) {
+  const body = new URLSearchParams({ chat_id: chatId ?? "", text });
+  await sendTelegram("sendMessage", body);
 }
 
 function formatSheetTimestamp(iso) {
@@ -625,6 +657,7 @@ try {
 } catch (error) {
   console.warn(`Checkpoint.sg sheet append failed: ${error instanceof Error ? error.message : error}`);
 }
+const routeReports = [];
 for (const route of rows) {
   const routeDefinition = routeSets.find((item) => item.label === route.label);
   if (!routeDefinition) throw new Error(`Missing route definition for ${route.label}`);
@@ -683,26 +716,21 @@ for (const route of rows) {
     || Number.isFinite(row.tomtomMid)
     || Number.isFinite(row.mapboxMid)
   )).sort((a, b) => new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime());
-  const checkpointPoints = points.filter((point) => Number.isFinite(point.checkpointMid));
-  const assessment = checkpointPoints.length
-    ? assessVariance(route, checkpointPoints, "checkpointMid", "Checkpoint.sg")
-    : "Checkpoint.sg was unavailable for this hourly capture.";
-  const comparisons = [
-    { label: "Checkpoint.sg", range: [route.checkpointLow, route.checkpointHigh], mid: route.checkpointMid },
-    { label: "TomTom", range: [route.tomtomLow, route.tomtomHigh], mid: route.tomtomMid },
-    { label: "Mapbox", range: [route.mapboxLow, route.mapboxHigh], mid: route.mapboxMid },
-  ].map((source) => {
-    const range = plausibleRange(source.range);
-    if (!range || !Number.isFinite(source.mid)) return `${source.label}: unavailable`;
-    const delta = route.oursMid - source.mid;
-    const percent = Math.round(Math.abs(delta) / source.mid * 100);
-    const status = percent <= 10 ? "GREEN" : percent <= 30 ? "AMBER" : "RED";
-    return `${source.label}: ${formatRange(range)} · ${signedMinutes(delta)} (${percent}%) ${status}`;
-  });
+  const oursHistory = points.filter((point) => Number.isFinite(point.oursMid));
+  const previousOursMid = oursHistory.length >= 2 ? oursHistory.at(-2).oursMid : null;
   const png = await sharp(Buffer.from(chartSvg(route, points))).png().toBuffer();
   await writeFile(join(captureRoot, `latest-${route.directionKey}-hourly-chart.png`), png);
-  const latestShadow = points.filter((point) => Number.isFinite(point.shadowMid)).at(-1);
-  const sourceAgeMinutes = Math.max(0, Math.round((Date.now() - new Date(route.routeDataCapturedAt).getTime()) / 60_000));
-  const sourceNote = sourceAgeMinutes < 60 ? "CrossBorder timing sheet live now" : `CrossBorder timing sheet ${Math.round(sourceAgeMinutes / 60)}h old`;
-  await sendPhoto(png, `${route.label.toLowerCase().replaceAll(" ", "-")}.png`, `${route.label}\nCrossBorder Google Maps A-${String.fromCharCode(64 + route.routeCount)}: ${formatRange([route.oursLow, route.oursHigh])}\nShadow fit: ${formatRange(latestShadow ? [latestShadow.shadowLow, latestShadow.shadowHigh] : null)}\n${comparisons.join("\n")}\n${sourceNote}\n\n${assessment}`);
+  routeReports.push({
+    label: route.label,
+    filename: `${route.label.toLowerCase().replaceAll(" ", "-")}.png`,
+    png,
+    oursMid: route.oursMid,
+    checkpointMid: route.checkpointMid,
+    previousOursMid,
+  });
 }
+
+for (const report of routeReports) {
+  await sendPhoto(report.png, report.filename, shortDirection(report.label));
+}
+await sendMessage(buildHourlyInsight(routeReports, checkpointSource));
