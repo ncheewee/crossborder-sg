@@ -43,6 +43,17 @@ debug_path='/sdcard/Download/crossborder-mi6-gmaps-debug.txt'
 dump_path='/sdcard/Download/crossborder-mi6-gmaps-ui.xml'
 : > "$debug_path"
 
+go_home() {
+  # Termux cannot inject HOME. Force-stop Maps, then start the launcher.
+  if command -v su >/dev/null 2>&1; then
+    su -c 'am force-stop com.google.android.apps.maps; am force-stop com.android.chrome; input keyevent 3' >/dev/null 2>&1 || true
+  fi
+  am force-stop com.google.android.apps.maps >/dev/null 2>&1 || true
+  am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1 || true
+  am start -n com.miui.home/.launcher.Launcher >/dev/null 2>&1 || true
+}
+trap go_home EXIT
+
 dump_ui() {
   rm -f "$dump_path"
   if command -v su >/dev/null 2>&1; then
@@ -109,7 +120,7 @@ v5="$(read_route 'https://www.google.com/maps/dir/1.482406,103.7832/1.4430746,10
 v6="$(read_route 'https://www.google.com/maps/dir/1.467340,103.7658/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
 v7="$(read_route 'https://www.google.com/maps/dir/1.465356,103.7702/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
 
-input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+go_home
 
 good=0
 for v in "$v1" "$v2" "$v3" "$v4" "$v5" "$v6" "$v7"; do
