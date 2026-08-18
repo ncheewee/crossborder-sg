@@ -394,7 +394,7 @@ function formatSheetTimestamp(iso) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(new Date(iso)).replace(",", "");
+  }).format(new Date(iso)).replace(",", "").replace(/:\d{2}$/, ":00");
 }
 
 async function appendCheckpointSheetRow(sheetRows, source, log, stampIso) {

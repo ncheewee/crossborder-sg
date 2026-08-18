@@ -135,6 +135,10 @@ function logHour() {
 
   // Checkpoint.sg is independent of the :45/:55 gates. Mi6 posts on the hour;
   // pull it on every 5-minute poll so the tab does not wait on this Mac.
+  const checkpointSheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
+  if (checkpointSheet && checkpointNeedsCleanup(checkpointSheet)) {
+    Logger.log('Checkpoint.sg cleanup — ' + cleanupCheckpointSheet());
+  }
   Logger.log('Checkpoint.sg — ' + logCheckpoint());
 
   const minute  = Number(Utilities.formatDate(now, TZ, 'm'));
@@ -207,6 +211,9 @@ function doPost(e) {
     }
     if (body.type === 'checkpoint-sync') {
       return jsonOut({ ok: true, result: logCheckpoint() });
+    }
+    if (body.type === 'checkpoint-cleanup') {
+      return jsonOut({ ok: true, result: cleanupCheckpointSheet() });
     }
     if (body.type === 'checkpoint') {
       if (!Array.isArray(body.row) || body.row.length !== 9) {
@@ -650,8 +657,8 @@ function logCameras(slot, slotStr) {
 // ─── Checkpoint.sg from the Worker ─────────────────────────────────────────
 
 /**
- * Reads the latest complete Woodlands capture from the Worker and appends one
- * A:I row. Idempotent on column A. No Mac file involved.
+ * Reads complete Woodlands captures from the Worker and upserts one A:I row
+ * per SGT hour. Idempotent on the hour slot. No Mac file involved.
  */
 function logCheckpoint() {
   const key = PropertiesService.getScriptProperties().getProperty('MONITOR_API_KEY');
@@ -678,28 +685,31 @@ function logCheckpoint() {
     }
     if (!resp || resp.getResponseCode() !== 200) return lastStatus;
     const captures = JSON.parse(resp.getContentText()).captures || [];
-    const latest = latestCompleteWoodlands(captures);
-    if (!latest) return 'no fresh complete capture';
-    const woodlands = latest.readings.woodlands;
-    const source = latest.source || 'mi6-macrodroid';
-    const capturedAt = new Date(latest.captured_at || latest.capturedAt);
-    return appendCheckpointRow(sh, [
-      Utilities.formatDate(capturedAt, TZ, 'yyyy-MM-dd HH:mm'),
-      woodlands.towardsJb[0], woodlands.towardsJb[1], midpoint(woodlands.towardsJb),
-      woodlands.towardsSg[0], woodlands.towardsSg[1], midpoint(woodlands.towardsSg),
-      source,
-      source === 'android-emulator'
-        ? 'Worker source: android-emulator'
-        : 'OK: complete Mi6 capture from Worker.',
-    ]);
+    const complete = completeWoodlandsInWindow(captures);
+    if (!complete.length) return 'no fresh complete capture';
+    return complete.map(function (capture) {
+      const woodlands = capture.readings.woodlands;
+      const source = capture.source || 'mi6-macrodroid';
+      const capturedAt = new Date(capture.captured_at || capture.capturedAt);
+      return appendCheckpointRow(sh, [
+        Utilities.formatDate(capturedAt, TZ, 'yyyy-MM-dd HH:00'),
+        woodlands.towardsJb[0], woodlands.towardsJb[1], midpoint(woodlands.towardsJb),
+        woodlands.towardsSg[0], woodlands.towardsSg[1], midpoint(woodlands.towardsSg),
+        source,
+        source === 'android-emulator'
+          ? 'Worker source: android-emulator'
+          : 'OK: complete Mi6 capture from Worker.',
+      ]);
+    }).join('; ');
   } catch (e) {
     return 'failed: ' + e;
   }
 }
 
-function latestCompleteWoodlands(captures) {
+function completeWoodlandsInWindow(captures) {
   const now = Date.now();
-  for (var i = captures.length - 1; i >= 0; i--) {
+  const out = [];
+  for (var i = 0; i < captures.length; i++) {
     const capture = captures[i];
     const capturedAt = new Date(capture.captured_at || capture.capturedAt);
     if (isNaN(capturedAt.getTime())) continue;
@@ -707,10 +717,15 @@ function latestCompleteWoodlands(captures) {
     const woodlands = capture.readings && capture.readings.woodlands;
     if (validCheckpointRange(woodlands && woodlands.towardsJb)
         && validCheckpointRange(woodlands && woodlands.towardsSg)) {
-      return capture;
+      out.push(capture);
     }
   }
-  return null;
+  return out;
+}
+
+function latestCompleteWoodlands(captures) {
+  const complete = completeWoodlandsInWindow(captures);
+  return complete.length ? complete[complete.length - 1] : null;
 }
 
 function validCheckpointRange(value) {
@@ -724,14 +739,88 @@ function midpoint(range) {
   return Math.round((Number(range[0]) + Number(range[1])) / 2);
 }
 
+function hourSlot(stamp) {
+  const match = String(stamp || '').trim().match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):\d{2}/);
+  return match ? match[1] + ' ' + match[2] + ':00' : String(stamp || '').trim();
+}
+
+function checkpointSourceRank(source) {
+  const value = String(source || '').trim();
+  if (value === 'mi6-macrodroid') return 2;
+  if (value && value !== 'unavailable') return 1;
+  return 0;
+}
+
 function appendCheckpointRow(sh, row) {
+  if (!row || row.length !== 9) return 'bad row';
+  const source = String(row[7] || '').trim();
+  const hasNums = String(row[1] || '').trim() !== '' && String(row[4] || '').trim() !== '';
+  if (!hasNums || source === 'unavailable') return 'skipped empty';
+
+  row = row.slice();
+  row[0] = hourSlot(row[0]);
+
   const lastRow = Math.max(1, sh.getLastRow());
   const stamps = sh.getRange(1, COL_TIMESTAMP, lastRow, 1).getDisplayValues();
   for (var i = 0; i < stamps.length; i++) {
-    if (String(stamps[i][0]).trim() === String(row[0])) return 'exists:' + row[0];
+    if (hourSlot(stamps[i][0]) !== row[0]) continue;
+    const existing = sh.getRange(i + 1, 1, 1, 9).getDisplayValues()[0];
+    if (checkpointSourceRank(source) > checkpointSourceRank(existing[7])) {
+      sh.getRange(i + 1, 1, 1, 9).setValues([row]);
+      return 'upgraded:' + row[0];
+    }
+    return 'exists:' + row[0];
   }
-  sh.getRange(lastRow + 1, 1, 1, 9).setValues([row]);
+  const dest = lastRow + 1;
+  sh.getRange(dest, COL_TIMESTAMP).setNumberFormat('@').setValue(row[0]);
+  sh.getRange(dest, 2, 1, 8).setValues([row.slice(1)]);
   return 'appended:' + row[0];
+}
+
+function checkpointNeedsCleanup(sh) {
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return false;
+  const start = Math.max(2, lastRow - 80);
+  const rows = sh.getRange(start, 1, lastRow - start + 1, 8).getDisplayValues();
+  for (var i = 0; i < rows.length; i++) {
+    const stamp = String(rows[i][0] || '').trim();
+    const source = String(rows[i][7] || '').trim();
+    if (source === 'unavailable') return true;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(stamp) && !stamp.endsWith(':00')) return true;
+  }
+  return false;
+}
+
+/** Drop empty rows, snap stamps to HH:00, keep one row per hour (Mi6 wins). */
+function cleanupCheckpointSheet() {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
+  if (!sh) return 'tab "' + SHEET_CHECKPOINT + '" missing';
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return 'empty';
+
+  const values = sh.getRange(2, 1, lastRow - 1, 9).getDisplayValues();
+  const best = {};
+  for (var i = 0; i < values.length; i++) {
+    const row = values[i].slice();
+    const source = String(row[7] || '').trim();
+    const hasNums = String(row[1] || '').trim() !== '' && String(row[4] || '').trim() !== '';
+    if (!hasNums || source === 'unavailable') continue;
+    const slot = hourSlot(row[0]);
+    if (!slot) continue;
+    row[0] = slot;
+    if (!best[slot] || checkpointSourceRank(source) > checkpointSourceRank(best[slot][7])) {
+      best[slot] = row;
+    }
+  }
+
+  const slots = Object.keys(best).sort();
+  const cleaned = slots.map(function (slot) { return best[slot]; });
+  if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, 9).clearContent();
+  if (cleaned.length) {
+    sh.getRange(2, 1, cleaned.length, 1).setNumberFormat('@');
+    sh.getRange(2, 1, cleaned.length, 9).setValues(cleaned);
+  }
+  return 'kept ' + cleaned.length + ' hourly rows, dropped ' + (values.length - cleaned.length);
 }
 
 function testCheckpoint() { Logger.log(logCheckpoint()); }
