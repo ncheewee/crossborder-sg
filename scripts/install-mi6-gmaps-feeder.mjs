@@ -55,18 +55,24 @@ dump_ui() {
 }
 
 minutes_from_dump() {
-  local desc hours mins
+  local desc hm h m total
   desc="$(grep -o 'Driving mode: [^"]*' "$dump_path" 2>/dev/null | head -n 1 || true)"
   printf '%s\\n' "$desc" >> "$debug_path"
-  hours="$(printf '%s' "$desc" | sed -n 's/.*Driving mode: \\([0-9][0-9]*\\) hour.*/\\1/p')"
-  mins="$(printf '%s' "$desc" | sed -n 's/.*\\([0-9][0-9]*\\) min.*/\\1/p')"
-  hours="\${hours:-0}"
-  mins="\${mins:-0}"
-  if [ "$hours" -eq 0 ] && [ "$mins" -eq 0 ]; then
-    return 1
+  # Match the number after "Driving mode:" — never a later lone digit before "min".
+  hm="$(printf '%s' "$desc" | sed -n 's/^Driving mode: \\([0-9][0-9]*\\) hours* \\([0-9][0-9]*\\) min.*/\\1 \\2/p')"
+  if [ -n "$hm" ]; then
+    set -- $hm
+    total="$(( $1 * 60 + $2 ))"
+  else
+    h="$(printf '%s' "$desc" | sed -n 's/^Driving mode: \\([0-9][0-9]*\\) hours*.*/\\1/p')"
+    if [ -n "$h" ]; then
+      total="$(( h * 60 ))"
+    else
+      m="$(printf '%s' "$desc" | sed -n 's/^Driving mode: \\([0-9][0-9]*\\) min.*/\\1/p')"
+      total="\${m:-0}"
+    fi
   fi
-  local total="$(( hours * 60 + mins ))"
-  if [ "$total" -gt 0 ] && [ "$total" -le 240 ]; then
+  if [ "$total" -ge 5 ] && [ "$total" -le 240 ]; then
     printf '%s' "$total"
   fi
 }
@@ -104,6 +110,16 @@ v6="$(read_route 'https://www.google.com/maps/dir/1.467340,103.7658/1.4430746,10
 v7="$(read_route 'https://www.google.com/maps/dir/1.465356,103.7702/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
 
 input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+
+good=0
+for v in "$v1" "$v2" "$v3" "$v4" "$v5" "$v6" "$v7"; do
+  if [ "$v" != ERR ]; then good="$(( good + 1 ))"; fi
+done
+if [ "$good" -lt 5 ]; then
+  printf 'abort: only %s/7 routes parsed\\n' "$good" >> "$debug_path"
+  printf '%s\\n' '{"ok":false,"error":"gmaps_parse_implausible"}' > "$status_path"
+  exit 1
+fi
 
 json_val() {
   if [ "$1" = ERR ]; then printf '"ERR"'; else printf '%s' "$1"; fi

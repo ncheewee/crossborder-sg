@@ -238,7 +238,7 @@ function doPost(e) {
 
     // Coerce to integers, preserving ERR and treating anything unparseable as
     // missing rather than as zero.
-    const row = body.values.map(function (v) {
+    let row = body.values.map(function (v) {
       if (v === 'ERR' || v === null || v === '') return 'ERR';
       const n = Number(v);
       return isFinite(n) ? Math.round(n) : 'ERR';
@@ -246,6 +246,14 @@ function doPost(e) {
 
     const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_GMAPS);
     if (!sh) return jsonOut({ ok: false, error: 'tab "' + SHEET_GMAPS + '" not found' });
+
+    if (body.source === 'mi6-maps') {
+      row = row.map(function (v) { return typeof v === 'number' && v < 5 ? 'ERR' : v; });
+      const good = row.filter(function (v) { return v !== 'ERR'; }).length;
+      if (good < 5) {
+        return jsonOut({ ok: false, error: 'mi6-maps row looks implausible; not overwriting' });
+      }
+    }
 
     const r = findOrCreateRow(sh, body.slot);
     sh.getRange(r, COL_ROUTE_1, 1, row.length).setValues([row]);
