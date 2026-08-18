@@ -146,8 +146,9 @@ function logHour() {
   const quarter    = floorToQuarter(now);
   const quarterStr = Utilities.formatDate(quarter, TZ, 'yyyy-MM-dd HH:mm');
 
-  // TomTom/Mapbox: one API pass per 15-minute slot. Skip if that slot is full
-  // so the 5-minute poll does not burn quota 3×.
+  // TomTom/Mapbox/GMaps: one API pass per 15-minute slot. Skip if that slot
+  // is full so the 5-minute poll does not burn quota 3×. GMaps still prefers
+  // a Chrome scrape on the hour — Routes only fills empty cells.
   if (logHour.force
       || !providerSlotFilled(SHEET_TOMTOM, quarterStr)
       || !providerSlotFilled(SHEET_MAPBOX, quarterStr)) {
@@ -159,10 +160,14 @@ function logHour() {
     Logger.log('Slot ' + quarterStr + ' | TomTom: ' + tomtom
                + ' | Mapbox: ' + mapbox + ' | cams: ' + cams);
   } else {
-    Logger.log('Slot ' + quarterStr + ' | providers already filled');
+    Logger.log('Slot ' + quarterStr + ' | TomTom/Mapbox already filled');
   }
 
-  // Late window: the hourly Chrome scrape has had its chance. GMaps stays hourly.
+  if (logHour.force || !providerSlotFilled(SHEET_GMAPS, quarterStr)) {
+    Logger.log('GMaps ' + quarterStr + ' — ' + backfillGoogle(quarterStr));
+  }
+
+  // Late window: give the hourly Chrome scrape one last chance on the :00 row.
   if (FALLBACK_MINUTE && minute >= FALLBACK_MINUTE && !logHour.force) {
     Logger.log('Fallback window — ' + backfillGoogle(hourSlot));
     watchdog();
@@ -349,8 +354,9 @@ function fetchTomTomRoute(route, key) {
  * hours to those two things.
  *
  * Deliberately does NOT overwrite scraped values, and does NOT touch rows for
- * past slots — Routes API reports conditions *now*, so backfilling an old hour
- * with current traffic would silently fabricate history.
+ * past slots — Routes API reports conditions *now*, so backfilling an old
+ * slot with current traffic would silently fabricate history. Off-hour
+ * 15-minute rows have no scrape, so they are Routes-only by design.
  */
 function backfillGoogle(slotStr) {
   const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
