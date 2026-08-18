@@ -401,6 +401,63 @@ function inSingaporeDate(timestamp, date) {
   }).format(new Date(timestamp)) === date;
 }
 
+function closestRecord(records, slotMs, maxDistMs = 7.5 * 60 * 1000) {
+  let best = null;
+  let bestDist = maxDistMs + 1;
+  for (const record of records) {
+    const time = new Date(record.capturedAt).getTime();
+    if (!Number.isFinite(time)) continue;
+    const distance = Math.abs(time - slotMs);
+    if (distance < bestDist) {
+      best = record;
+      bestDist = distance;
+    }
+  }
+  return bestDist <= maxDistMs ? best : null;
+}
+
+function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, reportDate) {
+  const start = new Date(`${reportDate}T00:00:00+08:00`).getTime();
+  const end = Math.min(Date.now(), start + 24 * 3_600_000 - 1);
+  const points = [];
+  for (let slot = start; slot <= end; slot += 900_000) {
+    const oursRecord = closestRecord(sources.ours?.records ?? [], slot);
+    const tomtomRecord = closestRecord(sources.tomtom?.records ?? [], slot);
+    const mapboxRecord = closestRecord(sources.mapbox?.records ?? [], slot);
+    const checkpointRecord = closestRecord(checkpointRecords, slot);
+    const shadow = closestRecord(shadowPoints, slot);
+    const ours = oursRecord ? sourcePoint(route, sources.ours, oursRecord) : null;
+    const tomtom = tomtomRecord ? sourcePoint(route, sources.tomtom, tomtomRecord) : null;
+    const mapbox = mapboxRecord ? sourcePoint(route, sources.mapbox, mapboxRecord) : null;
+    const checkpointRange = checkpointRecord
+      ? plausibleRange(checkpointRecord.normalizedReadings?.woodlands?.[route.directionKey])
+      : null;
+    const point = {
+      capturedAt: new Date(slot).toISOString(),
+      label: route.label,
+      oursLow: ours?.oursLow ?? null,
+      oursHigh: ours?.oursHigh ?? null,
+      oursMid: ours?.oursMid ?? null,
+      shadowLow: shadow?.shadowLow ?? null,
+      shadowHigh: shadow?.shadowHigh ?? null,
+      shadowMid: shadow?.shadowMid ?? null,
+      checkpointLow: checkpointRange?.[0] ?? null,
+      checkpointHigh: checkpointRange?.[1] ?? null,
+      checkpointMid: midpoint(checkpointRange),
+      tomtomLow: tomtom?.tomtomLow ?? null,
+      tomtomHigh: tomtom?.tomtomHigh ?? null,
+      tomtomMid: tomtom?.tomtomMid ?? null,
+      mapboxLow: mapbox?.mapboxLow ?? null,
+      mapboxHigh: mapbox?.mapboxHigh ?? null,
+      mapboxMid: mapbox?.mapboxMid ?? null,
+    };
+    if ([point.oursMid, point.shadowMid, point.checkpointMid, point.tomtomMid, point.mapboxMid].some(Number.isFinite)) {
+      points.push(point);
+    }
+  }
+  return points;
+}
+
 async function lastValidCrossBorderRows() {
   const history = await readCsv(historyPath);
   const latestByLabel = new Map();
@@ -538,6 +595,7 @@ function chartSvg(route, rows) {
     let previousWasPoint = false;
     return rows.map((row) => {
       if (!Number.isFinite(row[key])) {
+        previousWasPoint = false;
         return "";
       }
       const command = previousWasPoint ? "L" : "M";
@@ -556,6 +614,9 @@ function chartSvg(route, rows) {
     const label = hour === 0 || hour === 24 ? "12am" : hour === 12 ? "12pm" : `${hour % 12} ${hour < 12 ? "am" : "pm"}`;
     return `<line x1="${tickX}" x2="${tickX}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="#e4e8ec"/><text x="${tickX}" y="${height - 24}" text-anchor="middle" fill="#56616d" font-size="18">${label}</text>`;
   }).join("");
+  const recentOursDots = rows.filter((row) => Number.isFinite(row.oursMid)).slice(-4).map((row) => (
+    `<circle cx="${x(row).toFixed(1)}" cy="${y(row.oursMid).toFixed(1)}" r="5" fill="#ffffff" stroke="${palette.main}" stroke-width="3"/>`
+  )).join("");
   const pointMarker = (key, color, radius) => {
     const latest = rows.slice().reverse().find((row) => Number.isFinite(row[key]));
     if (!latest) return "";
@@ -576,13 +637,14 @@ function chartSvg(route, rows) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     <text x="${margin.left}" y="42" fill="#111827" font-size="34" font-family="Arial, sans-serif" font-weight="700">${route.label}</text>
-    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">15-minute route-time range, shadow calibration and comparisons · ${singaporeDate}</text>
+    <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">15-minute points · hourly Telegram · ${singaporeDate}</text>
     ${grids}
     ${hourTicks}
     <path d="${area}" fill="${palette.fill}" fill-opacity="0.14"/>
     <path d="${line("oursMid")}" fill="none" stroke="${palette.main}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     ${comparisonSeries.map((series) => `<path d="${line(`${series.key}Mid`)}" fill="none" stroke="${series.color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${series.dash}"/>`).join("")}
     <path d="${line("shadowMid")}" fill="none" stroke="#d0008f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    ${recentOursDots}
     ${dots}
     <rect x="${legendX - 12}" y="${legendY - 18}" width="446" height="88" rx="10" fill="#ffffff" fill-opacity="0.9"/>
     ${legendItem(legendX, legendY, "CrossBorder", palette.main)}
@@ -666,7 +728,6 @@ for (const route of routeSets) {
   });
 }
 const history = await readCsv(historyPath);
-const legacyHistory = await readCsv(legacyHistoryPath);
 const historyLines = rows.map((row) => [
   row.capturedAt, row.label, row.oursLow, row.oursHigh, row.oursMid,
   row.checkpointLow ?? "", row.checkpointHigh ?? "", row.checkpointMid ?? "",
@@ -693,58 +754,9 @@ for (const route of rows) {
   const reportDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(route.capturedAt));
-  const sheetPoints = timingSources.flatMap((source) => (sources[source.id]?.records ?? [])
-    .filter((record) => inSingaporeDate(record.capturedAt, reportDate))
-    .map((record) => sourcePoint(routeDefinition, source, record))
-    .filter(Boolean));
   const shadowPoints = buildShadowPoints(routeDefinition, sources.ours, records)
     .filter((point) => inSingaporeDate(point.capturedAt, reportDate));
-  const checkpointHistoryPoints = legacyHistory.filter((row) => (
-    row.label === route.label && inSingaporeDate(row.capturedAt, reportDate)
-  )).map((row) => ({
-    capturedAt: row.capturedAt,
-    label: row.label,
-    checkpointLow: row.checkpointLow,
-    checkpointHigh: row.checkpointHigh,
-  }));
-  const mi6CheckpointPoints = records.map((record) => {
-    const range = plausibleRange(record.normalizedReadings?.woodlands?.[routeDefinition.directionKey]);
-    if (!range || !inSingaporeDate(record.capturedAt, reportDate)) return null;
-    return {
-      capturedAt: record.capturedAt,
-      label: route.label,
-      checkpointLow: range[0],
-      checkpointHigh: range[1],
-    };
-  }).filter(Boolean);
-  const points = [...sheetPoints, ...shadowPoints, ...checkpointHistoryPoints, ...mi6CheckpointPoints, ...history, ...rows]
-    .filter((row) => row.label === route.label && inSingaporeDate(row.capturedAt, reportDate)).map((row) => {
-    const checkpointRange = plausibleRange([row.checkpointLow, row.checkpointHigh]);
-    const tomtomRange = plausibleRange([row.tomtomLow, row.tomtomHigh]);
-    const mapboxRange = plausibleRange([row.mapboxLow, row.mapboxHigh]);
-    return {
-      ...row,
-      oursLow: Number(row.oursLow), oursHigh: Number(row.oursHigh), oursMid: Number(row.oursMid),
-      shadowLow: optionalNumber(row.shadowLow),
-      shadowHigh: optionalNumber(row.shadowHigh),
-      shadowMid: optionalNumber(row.shadowMid),
-      checkpointLow: checkpointRange?.[0] ?? null,
-      checkpointHigh: checkpointRange?.[1] ?? null,
-      checkpointMid: midpoint(checkpointRange),
-      tomtomLow: tomtomRange?.[0] ?? null,
-      tomtomHigh: tomtomRange?.[1] ?? null,
-      tomtomMid: midpoint(tomtomRange),
-      mapboxLow: mapboxRange?.[0] ?? null,
-      mapboxHigh: mapboxRange?.[1] ?? null,
-      mapboxMid: midpoint(mapboxRange),
-    };
-  }).filter((row) => (
-    Number.isFinite(row.oursMid)
-    || Number.isFinite(row.shadowMid)
-    || Number.isFinite(row.checkpointMid)
-    || Number.isFinite(row.tomtomMid)
-    || Number.isFinite(row.mapboxMid)
-  )).sort((a, b) => new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime());
+  const points = buildQuarterDayPoints(routeDefinition, sources, records, shadowPoints, reportDate);
   const oursHistory = points.filter((point) => Number.isFinite(point.oursMid));
   const previousOursMid = oursHistory.length >= 2 ? oursHistory.at(-2).oursMid : null;
   const png = await sharp(Buffer.from(chartSvg(route, points))).png().toBuffer();
