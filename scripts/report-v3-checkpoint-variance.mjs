@@ -97,7 +97,30 @@ function describeMovement(currentMid, previousMid) {
   return `${delta > 0 ? "up" : "down"} ${Math.abs(delta)}m`;
 }
 
-function buildHourlyInsight(routeReports, checkpointSource) {
+function gmapsSourceLabel(raw) {
+  const text = String(raw || "").toLowerCase();
+  if (!text) return "unknown";
+  const parts = [];
+  if (text.includes("mi6")) parts.push("Mi6");
+  if (text.includes("scrape")) parts.push("desktop");
+  if (text.includes("routes")) parts.push("Routes");
+  return parts.join("+") || raw;
+}
+
+function gmapsSourceFromRow(header, row) {
+  const summaryIndex = header.indexOf("Source");
+  if (summaryIndex !== -1 && String(row[summaryIndex] || "").trim()) {
+    return String(row[summaryIndex]).trim();
+  }
+  const marks = header
+    .map((key, index) => ({ key, index }))
+    .filter(({ key }) => key.startsWith("src "))
+    .map(({ index }) => String(row[index] || "").trim())
+    .filter(Boolean);
+  return [...new Set(marks)].join("+");
+}
+
+function buildHourlyInsight(routeReports, checkpointSource, gmapsSource) {
   const stamp = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Singapore",
     hour: "2-digit",
@@ -140,7 +163,7 @@ function buildHourlyInsight(routeReports, checkpointSource) {
     takeaways.push("Both sides sit with Checkpoint. Nothing to change.");
   }
 
-  return [`${stamp}  ·  ${sourceNote}`, "", ...lines, "", takeaways[0]].join("\n");
+  return [`${stamp}  ·  CP ${sourceNote}  ·  GMaps ${gmapsSourceLabel(gmapsSource)}`, "", ...lines, "", takeaways[0]].join("\n");
 }
 
 async function readCsv(path) {
@@ -244,7 +267,13 @@ async function loadTimingSource(source) {
   )));
   const latest = records.at(-1);
   if (!latest) throw new Error(`${source.label} sheet has no complete positive route reading`);
-  return { ...source, ...latest, records };
+  const latestRow = data.find((row) => parseSingaporeTimestamp(row[timestampIndex]) === latest.capturedAt) ?? data.at(-1);
+  return {
+    ...source,
+    ...latest,
+    records,
+    gmapsSource: source.id === "ours" ? gmapsSourceFromRow(header, latestRow || []) : "",
+  };
 }
 
 function sourceRange(route, source) {
@@ -733,4 +762,4 @@ for (const route of rows) {
 for (const report of routeReports) {
   await sendPhoto(report.png, report.filename, shortDirection(report.label));
 }
-await sendMessage(buildHourlyInsight(routeReports, checkpointSource));
+await sendMessage(buildHourlyInsight(routeReports, checkpointSource, sources.ours?.gmapsSource));

@@ -125,6 +125,7 @@ const COL_CAM_1     = 9;   // I on the cams tab
 // the Maps app, the API is Google's routing engine. Without this the series
 // silently blends two definitions.
 const COL_SOURCE_1  = 12;  // L
+const COL_GMAPS_SOURCE = 19; // S — one-line source for the whole row
 const SRC_SCRAPE    = 'scrape';
 const SRC_ROUTES    = 'routes-api';
 
@@ -257,6 +258,7 @@ function doPost(e) {
     const ingestSource = body.source === 'mi6-maps' ? 'mi6-maps' : SRC_SCRAPE;
     const marks = row.map(function (v) { return v === 'ERR' ? '' : ingestSource; });
     sh.getRange(r, COL_SOURCE_1, 1, marks.length).setValues([marks]);
+    writeGmapsSourceSummary(sh, r, marks);
 
     Logger.log('Ingest ' + body.slot + ' → row ' + r + ' : ' + row.join('/'));
     return jsonOut({ ok: true, slot: body.slot, row: r, values: row });
@@ -361,6 +363,22 @@ function fetchTomTomRoute(route, key) {
  * slot with current traffic would silently fabricate history. Off-hour
  * 15-minute rows have no scrape, so they are Routes-only by design.
  */
+function summarizeGmapsSources(marks) {
+  const unique = [];
+  (marks || []).forEach(function (mark) {
+    const value = String(mark || '').trim();
+    if (value && unique.indexOf(value) === -1) unique.push(value);
+  });
+  return unique.join('+');
+}
+
+function writeGmapsSourceSummary(sh, row, marks) {
+  if (String(sh.getRange(1, COL_GMAPS_SOURCE).getDisplayValue()).trim() !== 'Source') {
+    sh.getRange(1, COL_GMAPS_SOURCE).setValue('Source').setFontWeight('bold');
+  }
+  sh.getRange(row, COL_GMAPS_SOURCE).setValue(summarizeGmapsSources(marks));
+}
+
 function backfillGoogle(slotStr) {
   const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
   if (!key) return 'no GOOGLE_ROUTES_KEY — fallback disabled';
@@ -396,6 +414,7 @@ function backfillGoogle(slotStr) {
 
   rng.setValues([out]);
   srcRng.setValues([marks]);
+  writeGmapsSourceSummary(sh, row, marks);
   return 'backfilled ' + ok + '/' + missing.length + ' missing route(s) → row ' + row;
 }
 
@@ -915,7 +934,8 @@ function setupSheets() {
   const gHeaders = ['Timestamp (SGT)']
     .concat(ROUTES.map(function (r) { return r.name; }))
     .concat(['Cam 2701 Causeway', 'Cam 2702 Checkpoint', 'Cam 2704 BKE'])
-    .concat(ROUTES.map(function (r) { return 'src ' + r.col + ' (' + r.name.split('|')[0].trim() + ')'; }));
+    .concat(ROUTES.map(function (r) { return 'src ' + r.col + ' (' + r.name.split('|')[0].trim() + ')'; }))
+    .concat(['Source']);
   g.getRange(1, 1, 1, gHeaders.length).setValues([gHeaders]).setFontWeight('bold');
   g.setFrozenRows(1);
 
