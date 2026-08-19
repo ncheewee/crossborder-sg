@@ -43,6 +43,17 @@ debug_path='/sdcard/Download/crossborder-mi6-gmaps-debug.txt'
 dump_path='/sdcard/Download/crossborder-mi6-gmaps-ui.xml'
 : > "$debug_path"
 
+lock_path='/sdcard/Download/crossborder-mi6-gmaps.lock'
+now="$(date +%s)"
+if [ -f "$lock_path" ]; then
+  lock_age="$(( now - $(stat -c %Y "$lock_path" 2>/dev/null || echo 0) ))"
+  if [ "$lock_age" -lt 180 ]; then
+    printf 'skip: previous gmaps cycle still running (%ss)\\n' "$lock_age" >> "$debug_path"
+    exit 0
+  fi
+fi
+printf '%s\\n' "$now" > "$lock_path"
+
 go_home() {
   # Termux cannot inject HOME. Force-stop Maps, then start the launcher.
   if command -v su >/dev/null 2>&1; then
@@ -52,15 +63,19 @@ go_home() {
   am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1 || true
   am start -n com.miui.home/.launcher.Launcher >/dev/null 2>&1 || true
 }
-trap go_home EXIT
+cleanup() {
+  rm -f "$lock_path"
+  go_home
+}
+trap cleanup EXIT
 
 dump_ui() {
   rm -f "$dump_path"
   if command -v su >/dev/null 2>&1; then
-    su -c "uiautomator dump $dump_path" >/dev/null 2>&1 || true
+    su -c "timeout 8 uiautomator dump $dump_path" >/dev/null 2>&1 || su -c "uiautomator dump $dump_path" >/dev/null 2>&1 || true
   fi
   if [ ! -s "$dump_path" ]; then
-    uiautomator dump "$dump_path" >/dev/null 2>&1 || true
+    timeout 8 uiautomator dump "$dump_path" >/dev/null 2>&1 || uiautomator dump "$dump_path" >/dev/null 2>&1 || true
   fi
   [ -s "$dump_path" ]
 }

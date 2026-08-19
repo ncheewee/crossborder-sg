@@ -30,6 +30,13 @@ screenshot_dir='/sdcard/DCIM/Screenshots'
 status_path='/sdcard/Download/crossborder-mi6-checkpoint-status.json'
 debug_path='/sdcard/Download/crossborder-mi6-checkpoint-debug.txt'
 
+run_gmaps() {
+  if [ -r /sdcard/Download/crossborder-mi6-gmaps-capture.sh ]; then
+    /data/data/com.termux/files/usr/bin/bash /sdcard/Download/crossborder-mi6-gmaps-capture.sh || true
+  fi
+}
+trap run_gmaps EXIT
+
 started_at="$(date +%s)"
 latest=''
 screenshot_age=999999
@@ -129,17 +136,9 @@ printf '%s\\n' "$response" > "$status_path"
 case "$response" in
   *'"ok":true'*)
     rm -f "$screenshot_dir"/*_com.tplusinteractive.checkpointsg.*
-    if [ -x /data/data/com.termux/files/usr/bin/bash ] && [ -r /sdcard/Download/crossborder-mi6-gmaps-capture.sh ]; then
-      /data/data/com.termux/files/usr/bin/bash /sdcard/Download/crossborder-mi6-gmaps-capture.sh || true
-    fi
     exit 0
     ;;
-  *)
-    if [ -r /sdcard/Download/crossborder-mi6-gmaps-capture.sh ]; then
-      /data/data/com.termux/files/usr/bin/bash /sdcard/Download/crossborder-mi6-gmaps-capture.sh || true
-    fi
-    exit 1
-    ;;
+  *) exit 1 ;;
 esac
 `;
 

@@ -162,7 +162,9 @@ function logHour() {
     Logger.log('Slot ' + quarterStr + ' | TomTom/Mapbox already filled');
   }
 
-  if (logHour.force || !providerSlotFilled(SHEET_GMAPS, quarterStr)) {
+  // Give Mi6 ~8 minutes to land Maps times before spending Routes quota.
+  const minuteOfQuarter = minute % 15;
+  if ((logHour.force || minuteOfQuarter >= 8) && !providerSlotFilled(SHEET_GMAPS, quarterStr)) {
     Logger.log('GMaps ' + quarterStr + ' — ' + backfillGoogle(quarterStr));
   }
 
@@ -415,10 +417,17 @@ function backfillGoogle(slotStr) {
   const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
   if (!key) return 'no GOOGLE_ROUTES_KEY — fallback disabled';
 
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('GMAPS_API_SLOT') === slotStr && !logHour.force) {
+    return 'already attempted ' + slotStr;
+  }
+
   const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_GMAPS);
   if (!sh) return 'GMaps tab missing';
 
+  const lastRowBefore = sh.getLastRow();
   const row      = findOrCreateRow(sh, slotStr);
+  const created  = row > lastRowBefore;
   const rng      = sh.getRange(row, COL_ROUTE_1, 1, ROUTES.length);
   const existing = rng.getValues()[0];
 
@@ -432,13 +441,24 @@ function backfillGoogle(slotStr) {
   const hadExisting = existing.some(function (v) { return v !== '' && v !== null && v !== 'ERR'; });
   const out = existing.slice();
   var ok = 0;
+  var hit429 = false;
   missing.forEach(function (i) {
-    const mins = fetchGoogleRoute(ROUTES[i], key);
-    if (mins !== 'ERR') {
-      out[i] = mins;
+    if (hit429) return;
+    const result = fetchGoogleRoute(ROUTES[i], key);
+    if (result.mins !== 'ERR') {
+      out[i] = result.mins;
       ok++;
     }
+    if (result.status === 429) hit429 = true;
+    Utilities.sleep(1200);
   });
+  props.setProperty('GMAPS_API_SLOT', slotStr);
+
+  const stillEmpty = out.every(function (v) { return v === '' || v === null || v === 'ERR'; });
+  if (stillEmpty && created) {
+    sh.deleteRow(row);
+    return hit429 ? '429 quota — no row written' : 'API empty — no row written';
+  }
 
   rng.setValues([out]);
   var label = SRC_API;
@@ -448,10 +468,10 @@ function backfillGoogle(slotStr) {
     label = priorSource;
   }
   writeGmapsSource(sh, row, ok >= 5 ? label : (hadExisting ? priorSource : ''));
-  return 'backfilled ' + ok + '/' + missing.length + ' missing route(s) → row ' + row;
+  return (hit429 ? '429 after ' : 'backfilled ') + ok + '/' + missing.length + ' missing route(s) → row ' + row;
 }
 
-/** One Routes API call. Returns integer minutes, or 'ERR'. Never throws. */
+/** One Routes API call with 429 retries. Returns { mins, status }. Never throws. */
 function fetchGoogleRoute(route, key) {
   const from = route.from.split(',').map(Number);
   const to   = route.to.split(',').map(Number);
@@ -463,33 +483,42 @@ function fetchGoogleRoute(route, key) {
     routingPreference: 'TRAFFIC_AWARE'
   };
 
-  try {
-    const resp = UrlFetchApp.fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
-      method: 'post',
-      contentType: 'application/json',
-      headers: {
-        'X-Goog-Api-Key': key,
-        // Field mask is mandatory; requesting everything is billed at a higher tier.
-        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-
-    if (resp.getResponseCode() !== 200) {
-      Logger.log('Routes ' + route.name + ': HTTP ' + resp.getResponseCode()
+  var lastStatus = 0;
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const resp = UrlFetchApp.fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+        method: 'post',
+        contentType: 'application/json',
+        headers: {
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'
+        },
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+      lastStatus = resp.getResponseCode();
+      if (lastStatus === 200) {
+        const body = JSON.parse(resp.getContentText());
+        if (!body.routes || !body.routes.length) return { mins: 'ERR', status: 200 };
+        return {
+          mins: Math.round(parseFloat(String(body.routes[0].duration).replace('s', '')) / 60),
+          status: 200,
+        };
+      }
+      Logger.log('Routes ' + route.name + ': HTTP ' + lastStatus
                  + ' — ' + resp.getContentText().slice(0, 200));
-      return 'ERR';
+      if (lastStatus === 429 || lastStatus === 503) {
+        Utilities.sleep(2500 * attempt);
+        continue;
+      }
+      return { mins: 'ERR', status: lastStatus };
+    } catch (e) {
+      Logger.log('Routes ' + route.name + ' failed: ' + e);
+      lastStatus = 0;
+      Utilities.sleep(1500 * attempt);
     }
-    const body = JSON.parse(resp.getContentText());
-    if (!body.routes || !body.routes.length) return 'ERR';
-
-    // duration comes back as a string like "710s".
-    return Math.round(parseFloat(String(body.routes[0].duration).replace('s', '')) / 60);
-  } catch (e) {
-    Logger.log('Routes ' + route.name + ' failed: ' + e);
-    return 'ERR';
   }
+  return { mins: 'ERR', status: lastStatus || 429 };
 }
 
 // ─── Watchdog ──────────────────────────────────────────────────────────────
