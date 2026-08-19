@@ -264,9 +264,11 @@ async function loadTimingSource(source) {
     const capturedAt = parseSingaporeTimestamp(row[timestampIndex]);
     const readings = Object.fromEntries(header.map((key, index) => [key, Number(row[index])]));
     return { capturedAt, readings };
-  }).filter((record) => record.capturedAt && requiredColumns.every((column) => (
-    Number.isFinite(record.readings[column]) && record.readings[column] > 0
-  )));
+  }).filter((record) => {
+    if (!record.capturedAt) return false;
+    const hits = requiredColumns.filter((column) => Number.isFinite(record.readings[column]) && record.readings[column] > 0);
+    return hits.length >= 2;
+  });
   const latest = records.at(-1);
   if (!latest) throw new Error(`${source.label} sheet has no complete positive route reading`);
   const latestRow = data.find((row) => parseSingaporeTimestamp(row[timestampIndex]) === latest.capturedAt) ?? data.at(-1);
@@ -283,7 +285,9 @@ function sourceRange(route, source) {
   const values = route.routes
     .map((item) => source.readings[`${item.sourceColumn}${source.suffix}`])
     .filter((value) => Number.isFinite(value) && value > 0);
-  return values.length === route.routes.length ? [Math.min(...values), Math.max(...values)] : null;
+  return values.length >= Math.min(2, route.routes.length)
+    ? [Math.min(...values), Math.max(...values)]
+    : null;
 }
 
 function sourcePoint(route, source, record) {
@@ -597,15 +601,13 @@ function chartSvg(route, rows) {
   const x = (row) => margin.left + minutesIntoSingaporeDay(row.capturedAt) / (24 * 60) * plotWidth;
   const y = (value) => height - margin.bottom - (value - low) * (height - margin.top - margin.bottom) / Math.max(high - low, 1);
   const line = (key) => {
-    let previousWasPoint = false;
+    let lastMs = null;
     return rows.map((row) => {
-      if (!Number.isFinite(row[key])) {
-        previousWasPoint = false;
-        return "";
-      }
-      const command = previousWasPoint ? "L" : "M";
-      previousWasPoint = true;
-      return `${command}${x(row).toFixed(1)},${y(row[key]).toFixed(1)}`;
+      if (!Number.isFinite(row[key])) return "";
+      const ms = new Date(row.capturedAt).getTime();
+      const connect = lastMs !== null && ms - lastMs <= 30 * 60 * 1000;
+      lastMs = ms;
+      return `${connect ? "L" : "M"}${x(row).toFixed(1)},${y(row[key]).toFixed(1)}`;
     }).filter(Boolean).join(" ");
   };
   const oursPoints = rows.filter((row) => Number.isFinite(row.oursLow) && Number.isFinite(row.oursHigh));

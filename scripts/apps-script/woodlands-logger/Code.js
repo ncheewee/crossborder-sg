@@ -437,8 +437,6 @@ function backfillGoogle(slotStr) {
     if (mins !== 'ERR') {
       out[i] = mins;
       ok++;
-    } else if (existing[i] === '') {
-      out[i] = 'ERR';
     }
   });
 
@@ -449,7 +447,7 @@ function backfillGoogle(slotStr) {
   } else if (hadExisting && priorSource) {
     label = priorSource;
   }
-  writeGmapsSource(sh, row, ok ? label : priorSource);
+  writeGmapsSource(sh, row, ok >= 5 ? label : (hadExisting ? priorSource : ''));
   return 'backfilled ' + ok + '/' + missing.length + ' missing route(s) → row ' + row;
 }
 
