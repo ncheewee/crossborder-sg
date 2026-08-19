@@ -1,6 +1,11 @@
 import { neon } from "@neondatabase/serverless";
 import crossingCalibration from "../config/crossing-calibration.json";
-import { adjustSourceMinutesToCheckpoint } from "../lib/crossing-calibration";
+import {
+  createShadowBiasState,
+  learnShadowBias,
+  shadowEffectiveBias,
+  shadowMinutesForSource,
+} from "../lib/crossing-calibration";
 import {
   buildForecast,
   cameraFor,
@@ -563,19 +568,23 @@ async function calibrateApproachRoutes(
   const checkpointMidpoint = capture ? (capture.range[0] + capture.range[1]) / 2 : null;
   const sourceMinutes = routes.map((route) => route.crossingMinutes);
   const meanSource = sourceMinutes.reduce((sum, value) => sum + value, 0) / Math.max(1, sourceMinutes.length);
-  const adjustedMinutes = adjustSourceMinutesToCheckpoint(sourceMinutes, checkpointMidpoint, direction);
-  const observedBiasMinutes = checkpointMidpoint == null ? null : checkpointMidpoint - meanSource;
-  const calibratedRoutes = routes.map((route, index) => {
-    const crossingMinutes = adjustedMinutes[index] ?? route.crossingMinutes;
+  const observedBiasMinutes = checkpointMidpoint == null ? null : checkpointMidpoint - (
+    settings.intercept + settings.slope * meanSource
+  );
+  let state = createShadowBiasState();
+  if (capture && checkpointMidpoint != null) {
+    const capturedAt = new Date(capture.capturedAt).getTime();
+    state = learnShadowBias(state, meanSource, checkpointMidpoint, direction, capturedAt, 0);
+  }
+  const effectiveBiasMinutes = shadowEffectiveBias(state, Date.now());
+  const calibratedRoutes = routes.map((route) => {
+    const crossingMinutes = shadowMinutesForSource(route.crossingMinutes, direction, effectiveBiasMinutes);
     return {
       ...route,
       crossingMinutes,
       totalMinutes: (route.preApproachMinutes ?? 0) + crossingMinutes,
     };
   });
-  const effectiveBiasMinutes = observedBiasMinutes == null
-    ? settings.fallbackBiasMinutes
-    : observedBiasMinutes;
   const calibration: CrossingCalibration = {
     version: crossingCalibration.version,
     source: capture ? "fresh-checkpoint" : "fallback-bias",

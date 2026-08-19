@@ -1,7 +1,12 @@
 "use client";
 
 import { type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { adjustSourceMinutesToCheckpoint } from "../lib/crossing-calibration";
+import {
+  createShadowBiasState,
+  learnShadowBias,
+  shadowEffectiveBias,
+  shadowMinutesForSource,
+} from "../lib/crossing-calibration";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -1303,20 +1308,23 @@ function parseCheckpointMids(csv: string): CheckpointMids[] {
   }).sort((left, right) => left.at - right.at);
 }
 
-function checkpointMidsAtOrBefore(rows: CheckpointMids[], at: number): CheckpointMids | null {
-  let found: CheckpointMids | null = null;
-  for (const row of rows) {
-    if (row.at <= at) found = row;
-    else break;
-  }
-  return found;
+function quarterSlotMs(at: number) {
+  return Math.floor(at / 900_000) * 900_000;
+}
+
+function meanPositive(values: Array<number | null>) {
+  const finite = values.filter((value): value is number => Number.isFinite(value) && value > 0);
+  return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : null;
 }
 
 function parseCalibratedApproachSheet(gmapsCsv: string, checkpointCsv: string): AdjustedApproachSheet {
   const { header, rows } = normalizeApproachSheetRows(gmapsCsv);
   const timestampIndex = header.indexOf("Timestamp (SGT)");
   if (timestampIndex === -1) throw new Error("GMaps sheet is missing its timestamp column.");
-  const checkpointRows = parseCheckpointMids(checkpointCsv);
+  const checkpointBySlot = new Map<number, CheckpointMids>();
+  for (const row of parseCheckpointMids(checkpointCsv)) {
+    checkpointBySlot.set(quarterSlotMs(row.at), row);
+  }
   const now = new Date();
   const comparisonDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const todayKey = singaporeDateKey(now);
@@ -1337,40 +1345,64 @@ function parseCalibratedApproachSheet(gmapsCsv: string, checkpointCsv: string): 
   const latest: AdjustedApproachTimes = {};
   const sgMyIds = (Object.keys(approachDirections) as ApproachId[]).filter((id) => approachDirections[id] === "sg-my");
   const mySgIds = (Object.keys(approachDirections) as ApproachId[]).filter((id) => approachDirections[id] === "my-sg");
+  const slots = new Map<number, { time: NonNullable<ReturnType<typeof parseSingaporeSheetTime>>; sourceByApproach: Record<ApproachId, number | null> }>();
 
   for (const row of rows) {
     const time = parseSingaporeSheetTime(row[timestampIndex] ?? "");
     if (!time) continue;
-    const sourceByApproach = Object.fromEntries(
-      (Object.keys(approachGmapsColumns) as ApproachId[]).map((approachId) => {
-        const index = columnIndex[approachId];
-        const minutes = index === -1 ? NaN : Number(row[index]);
-        return [approachId, Number.isFinite(minutes) && minutes > 0 ? minutes : null];
-      }),
-    ) as Record<ApproachId, number | null>;
-    const checkpoint = checkpointMidsAtOrBefore(checkpointRows, time.at);
-    const sgAdjusted = adjustSourceMinutesToCheckpoint(
-      sgMyIds.map((id) => sourceByApproach[id]),
-      checkpoint?.towardsJb ?? null,
-      "sg-my",
-    );
-    const myAdjusted = adjustSourceMinutesToCheckpoint(
-      mySgIds.map((id) => sourceByApproach[id]),
-      checkpoint?.towardsSg ?? null,
-      "my-sg",
-    );
-    const adjustedByApproach = {
-      ...Object.fromEntries(sgMyIds.map((id, index) => [id, sgAdjusted[index]])),
-      ...Object.fromEntries(mySgIds.map((id, index) => [id, myAdjusted[index]])),
-    } as Record<ApproachId, number | null>;
+    slots.set(quarterSlotMs(time.at), {
+      time,
+      sourceByApproach: Object.fromEntries(
+        (Object.keys(approachGmapsColumns) as ApproachId[]).map((approachId) => {
+          const index = columnIndex[approachId];
+          const minutes = index === -1 ? NaN : Number(row[index]);
+          return [approachId, Number.isFinite(minutes) && minutes > 0 ? minutes : null];
+        }),
+      ) as Record<ApproachId, number | null>,
+    });
+  }
+
+  const shadowState = {
+    "sg-my": createShadowBiasState(),
+    "my-sg": createShadowBiasState(),
+  };
+
+  for (const [slot, { time, sourceByApproach }] of [...slots.entries()].sort(([left], [right]) => left - right)) {
+    const checkpoint = checkpointBySlot.get(slot) ?? null;
+    const directionMeans: Record<Direction, number | null> = {
+      "sg-my": meanPositive(sgMyIds.map((id) => sourceByApproach[id])),
+      "my-sg": meanPositive(mySgIds.map((id) => sourceByApproach[id])),
+    };
+    const directionBias: Record<Direction, number> = {
+      "sg-my": shadowEffectiveBias(shadowState["sg-my"], slot),
+      "my-sg": shadowEffectiveBias(shadowState["my-sg"], slot),
+    };
     for (const approachId of Object.keys(approachGmapsColumns) as ApproachId[]) {
-      const minutes = adjustedByApproach[approachId];
-      if (!Number.isFinite(minutes) || (minutes as number) <= 0) continue;
-      const point = { hour: time.hour, minutes: minutes as number };
-      latest[approachId] = { minutes: minutes as number, timestamp: time.stamp };
+      const gmapsMinutes = sourceByApproach[approachId];
+      if (!Number.isFinite(gmapsMinutes) || (gmapsMinutes as number) <= 0) continue;
+      const direction = approachDirections[approachId];
+      const minutes = shadowMinutesForSource(gmapsMinutes as number, direction, directionBias[direction]);
+      const point = { hour: time.hour, minutes };
+      latest[approachId] = { minutes, timestamp: time.stamp };
       if (time.key === todayKey) historyBuckets[approachId].today.set(time.hour, point);
       if (time.key === comparisonKey) historyBuckets[approachId].comparison.set(time.hour, point);
     }
+    shadowState["sg-my"] = learnShadowBias(
+      shadowState["sg-my"],
+      directionMeans["sg-my"] ?? Number.NaN,
+      checkpoint?.towardsJb,
+      "sg-my",
+      slot,
+      directionBias["sg-my"],
+    );
+    shadowState["my-sg"] = learnShadowBias(
+      shadowState["my-sg"],
+      directionMeans["my-sg"] ?? Number.NaN,
+      checkpoint?.towardsSg,
+      "my-sg",
+      slot,
+      directionBias["my-sg"],
+    );
   }
 
   const history = Object.fromEntries(

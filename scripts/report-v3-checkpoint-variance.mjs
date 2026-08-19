@@ -2,6 +2,7 @@ import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
+import { createShadowBiasState, learnShadowBias, shadowEffectiveBias, shadowMinutesForSource } from "../lib/shadow-fit.js";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const calibrationConfig = JSON.parse(await readFile(join(repoRoot, "config", "crossing-calibration.json"), "utf8"));
@@ -448,33 +449,21 @@ function buildShadowPoints(route, googleSource, checkpointRecords) {
   }
 
   const direction = route.directionKey === "towardsJb" ? "sg-my" : "my-sg";
-  const settings = calibrationConfig.directions[direction];
-  let learnedBias = 0;
-  let lastCheckpointHour = null;
+  let state = createShadowBiasState();
 
   return [...googleByQuarter.entries()].sort(([left], [right]) => left - right).map(([bucket, google]) => {
     const checkpoint = checkpointByQuarter.get(bucket);
-    const hoursSinceCheckpoint = lastCheckpointHour === null
-      ? Number.POSITIVE_INFINITY
-      : (bucket - lastCheckpointHour) / 3_600_000;
-    const decay = hoursSinceCheckpoint <= calibrationConfig.biasHoldHours
-      ? 1
-      : 0.5 ** (
-        (hoursSinceCheckpoint - calibrationConfig.biasHoldHours) / calibrationConfig.biasHalfLifeHours
-      );
-    const effectiveBias = lastCheckpointHour === null ? 0 : learnedBias * decay;
-    const base = settings.intercept + settings.slope * google.googleMid;
-    const shadowMid = Math.round(Math.max(
-      calibrationConfig.minimumMinutes,
-      Math.min(calibrationConfig.maximumMinutes, base + effectiveBias + calibrationConfig.displayOffsetMinutes),
-    ));
-
-    // Update after emitting this hour so the shadow line never learns from its target point.
-    if (checkpoint) {
-      const residual = checkpoint.checkpointMid - base;
-      learnedBias = settings.alpha * residual + (1 - settings.alpha) * effectiveBias;
-      lastCheckpointHour = bucket;
-    }
+    const effectiveBias = shadowEffectiveBias(state, bucket, calibrationConfig);
+    const shadowMid = shadowMinutesForSource(google.googleMid, direction, effectiveBias, calibrationConfig);
+    state = learnShadowBias(
+      state,
+      google.googleMid,
+      checkpoint?.checkpointMid,
+      direction,
+      bucket,
+      effectiveBias,
+      calibrationConfig,
+    );
 
     return {
       capturedAt: google.capturedAt,
