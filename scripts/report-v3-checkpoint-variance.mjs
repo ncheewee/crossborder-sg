@@ -263,7 +263,11 @@ async function loadTimingSource(source) {
   const records = data.map((row) => {
     const capturedAt = parseSingaporeTimestamp(row[timestampIndex]);
     const readings = Object.fromEntries(header.map((key, index) => [key, Number(row[index])]));
-    return { capturedAt, readings };
+    return {
+      capturedAt,
+      readings,
+      source: source.id === "ours" ? gmapsSourceFromRow(header, row) : "",
+    };
   }).filter((record) => {
     if (!record.capturedAt) return false;
     const hits = requiredColumns.filter((column) => Number.isFinite(record.readings[column]) && record.readings[column] > 0);
@@ -441,18 +445,26 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, 
     const checkpointRange = checkpointRecord
       ? plausibleRange(checkpointRecord.normalizedReadings?.woodlands?.[route.directionKey])
       : null;
+    const oursSynthetic = /api/i.test(String(oursRecord?.source || ""));
+    const checkpointSynthetic = String(checkpointRecord?.source || "").includes("emulator");
     const point = {
       capturedAt: new Date(slot).toISOString(),
       label: route.label,
-      oursLow: ours?.oursLow ?? null,
-      oursHigh: ours?.oursHigh ?? null,
-      oursMid: ours?.oursMid ?? null,
+      oursLow: oursSynthetic ? null : ours?.oursLow ?? null,
+      oursHigh: oursSynthetic ? null : ours?.oursHigh ?? null,
+      oursMid: oursSynthetic ? null : ours?.oursMid ?? null,
+      oursApiLow: oursSynthetic ? ours?.oursLow ?? null : null,
+      oursApiHigh: oursSynthetic ? ours?.oursHigh ?? null : null,
+      oursApiMid: oursSynthetic ? ours?.oursMid ?? null : null,
       shadowLow: shadow?.shadowLow ?? null,
       shadowHigh: shadow?.shadowHigh ?? null,
       shadowMid: shadow?.shadowMid ?? null,
-      checkpointLow: checkpointRange?.[0] ?? null,
-      checkpointHigh: checkpointRange?.[1] ?? null,
-      checkpointMid: midpoint(checkpointRange),
+      checkpointLow: checkpointSynthetic ? null : checkpointRange?.[0] ?? null,
+      checkpointHigh: checkpointSynthetic ? null : checkpointRange?.[1] ?? null,
+      checkpointMid: checkpointSynthetic ? null : midpoint(checkpointRange),
+      checkpointEmuLow: checkpointSynthetic ? checkpointRange?.[0] ?? null : null,
+      checkpointEmuHigh: checkpointSynthetic ? checkpointRange?.[1] ?? null : null,
+      checkpointEmuMid: checkpointSynthetic ? midpoint(checkpointRange) : null,
       tomtomLow: tomtom?.tomtomLow ?? null,
       tomtomHigh: tomtom?.tomtomHigh ?? null,
       tomtomMid: tomtom?.tomtomMid ?? null,
@@ -460,7 +472,7 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, 
       mapboxHigh: mapbox?.mapboxHigh ?? null,
       mapboxMid: mapbox?.mapboxMid ?? null,
     };
-    if ([point.oursMid, point.shadowMid, point.checkpointMid, point.tomtomMid, point.mapboxMid].some(Number.isFinite)) {
+    if ([point.oursMid, point.oursApiMid, point.shadowMid, point.checkpointMid, point.checkpointEmuMid, point.tomtomMid, point.mapboxMid].some(Number.isFinite)) {
       points.push(point);
     }
   }
@@ -576,6 +588,7 @@ function chartSvg(route, rows) {
     : { main: "#2563eb", fill: "#2563eb", label: "JB to Singapore" };
   const comparisonSeries = [
     { key: "checkpoint", label: "Checkpoint.sg", color: "#64748b", dash: "12 10" },
+    { key: "checkpointEmu", label: "CP emulator", color: "#ea580c", dash: "4 6" },
     { key: "tomtom", label: "TomTom", color: "#d97706", dash: "10 7" },
     { key: "mapbox", label: "Mapbox", color: "#9333ea", dash: "3 9" },
   ];
@@ -649,16 +662,19 @@ function chartSvg(route, rows) {
     ${hourTicks}
     <path d="${area}" fill="${palette.fill}" fill-opacity="0.14"/>
     <path d="${line("oursMid")}" fill="none" stroke="${palette.main}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${line("oursApiMid")}" fill="none" stroke="#ea580c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6"/>
     ${comparisonSeries.map((series) => `<path d="${line(`${series.key}Mid`)}" fill="none" stroke="${series.color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${series.dash}"/>`).join("")}
     <path d="${line("shadowMid")}" fill="none" stroke="#d0008f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     ${recentOursDots}
     ${dots}
-    <rect x="${legendX - 12}" y="${legendY - 18}" width="446" height="88" rx="10" fill="#ffffff" fill-opacity="0.9"/>
+    <rect x="${legendX - 12}" y="${legendY - 18}" width="500" height="116" rx="10" fill="#ffffff" fill-opacity="0.9"/>
     ${legendItem(legendX, legendY, "CrossBorder", palette.main)}
-    ${legendItem(legendX + 202, legendY, "Shadow fit", "#d0008f")}
-    ${legendItem(legendX, legendY + 28, "Checkpoint", "#64748b", "8 6")}
-    ${legendItem(legendX + 202, legendY + 28, "TomTom", "#d97706", "8 6")}
-    ${legendItem(legendX, legendY + 56, "Mapbox", "#9333ea", "3 8")}
+    ${legendItem(legendX + 230, legendY, "API (synthetic)", "#ea580c", "5 6")}
+    ${legendItem(legendX, legendY + 28, "Shadow fit", "#d0008f")}
+    ${legendItem(legendX + 230, legendY + 28, "Checkpoint", "#64748b", "8 6")}
+    ${legendItem(legendX, legendY + 56, "CP emulator", "#ea580c", "4 6")}
+    ${legendItem(legendX + 230, legendY + 56, "TomTom", "#d97706", "8 6")}
+    ${legendItem(legendX, legendY + 84, "Mapbox", "#9333ea", "3 8")}
   </svg>`;
 }
 

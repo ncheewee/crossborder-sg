@@ -133,6 +133,8 @@ function logHour() {
   // Checkpoint.sg is independent of the Google hourly gates. Pull every poll
   // and upsert into the capture's 15-minute slot.
   Logger.log('GMaps source columns — ' + collapseGmapsSourceColumns());
+  paintExistingGmapsSources();
+  paintExistingCheckpointSources();
   const checkpointSheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
   if (checkpointSheet && checkpointNeedsCleanup(checkpointSheet)) {
     Logger.log('Checkpoint.sg cleanup — ' + cleanupCheckpointSheet());
@@ -384,11 +386,25 @@ function summarizeGmapsSources(marks) {
   return unique.join(' + ');
 }
 
+const COLOR_SYNTHETIC = '#FDE68A'; // amber — API / emulator
+const COLOR_REAL = '#FFFFFF';
+
+function isSyntheticGmapsLabel(label) {
+  return String(label || '').toLowerCase().indexOf('api') !== -1;
+}
+
+function paintGmapsRow(sh, row, label) {
+  const fill = isSyntheticGmapsLabel(label) ? COLOR_SYNTHETIC : COLOR_REAL;
+  sh.getRange(row, COL_ROUTE_1, 1, ROUTES.length).setBackground(fill);
+  sh.getRange(row, COL_GMAPS_SOURCE).setBackground(fill);
+}
+
 function writeGmapsSource(sh, row, label) {
   if (String(sh.getRange(1, COL_GMAPS_SOURCE).getDisplayValue()).trim() !== 'Source') {
     sh.getRange(1, COL_GMAPS_SOURCE).setValue('Source').setFontWeight('bold');
   }
   sh.getRange(row, COL_GMAPS_SOURCE).setValue(label || '');
+  paintGmapsRow(sh, row, label);
 }
 
 function collapseGmapsSourceColumns() {
@@ -405,6 +421,9 @@ function collapseGmapsSourceColumns() {
     const summaries = block.map(function (row) { return [summarizeGmapsSources(row)]; });
     sh.getRange(2, COL_GMAPS_SOURCE, lastRow - 1, width).clearContent();
     sh.getRange(2, COL_GMAPS_SOURCE, summaries.length, 1).setValues(summaries);
+    for (var i = 0; i < summaries.length; i++) {
+      paintGmapsRow(sh, i + 2, summaries[i][0]);
+    }
   }
   if (width > 1) {
     sh.getRange(1, COL_GMAPS_SOURCE, 1, width).clearContent();
@@ -844,6 +863,29 @@ function checkpointSourceRank(source) {
   return 0;
 }
 
+function paintExistingGmapsSources() {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_GMAPS);
+  if (!sh) return;
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return;
+  const labels = sh.getRange(2, COL_GMAPS_SOURCE, lastRow - 1, 1).getDisplayValues();
+  for (var i = 0; i < labels.length; i++) paintGmapsRow(sh, i + 2, labels[i][0]);
+}
+
+function paintExistingCheckpointSources() {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
+  if (!sh) return;
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return;
+  const sources = sh.getRange(2, 8, lastRow - 1, 1).getDisplayValues();
+  for (var i = 0; i < sources.length; i++) paintCheckpointRow(sh, i + 2, sources[i][0]);
+}
+
+function paintCheckpointRow(sh, row, source) {
+  const fill = String(source || '').indexOf('emulator') !== -1 ? COLOR_SYNTHETIC : COLOR_REAL;
+  sh.getRange(row, 1, 1, 9).setBackground(fill);
+}
+
 function appendCheckpointRow(sh, row) {
   if (!row || row.length !== 9) return 'bad row';
   const source = String(row[7] || '').trim();
@@ -860,6 +902,7 @@ function appendCheckpointRow(sh, row) {
     const existing = sh.getRange(i + 1, 1, 1, 9).getDisplayValues()[0];
     if (checkpointSourceRank(source) > checkpointSourceRank(existing[7])) {
       sh.getRange(i + 1, 1, 1, 9).setValues([row]);
+      paintCheckpointRow(sh, i + 1, source);
       return 'upgraded:' + row[0];
     }
     return 'exists:' + row[0];
@@ -867,6 +910,7 @@ function appendCheckpointRow(sh, row) {
   const dest = lastRow + 1;
   sh.getRange(dest, COL_TIMESTAMP).setNumberFormat('@').setValue(row[0]);
   sh.getRange(dest, 2, 1, 8).setValues([row.slice(1)]);
+  paintCheckpointRow(sh, dest, source);
   return 'appended:' + row[0];
 }
 
@@ -913,6 +957,9 @@ function cleanupCheckpointSheet() {
   if (cleaned.length) {
     sh.getRange(2, 1, cleaned.length, 1).setNumberFormat('@');
     sh.getRange(2, 1, cleaned.length, 9).setValues(cleaned);
+    for (var c = 0; c < cleaned.length; c++) {
+      paintCheckpointRow(sh, c + 2, cleaned[c][7]);
+    }
   }
   return 'kept ' + cleaned.length + ' quarter-hour rows, dropped ' + (values.length - cleaned.length);
 }
