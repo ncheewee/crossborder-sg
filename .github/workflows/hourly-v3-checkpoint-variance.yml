@@ -2,8 +2,8 @@ name: Hourly checkpoint variance charts
 
 on:
   schedule:
-    # Once an hour, on the SGT hour (20:00 SGT = 12:00 UTC). GitHub may be a
-    # few minutes late; do not add a second cron.
+    # Intended: once per SGT hour. GitHub cron often starts 15–50 minutes late;
+    # that delay is the late Telegram, not a second sender.
     - cron: "0 * * * *"
   workflow_dispatch:
 

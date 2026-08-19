@@ -605,7 +605,7 @@ function chartSvg(route, rows) {
     return rows.map((row) => {
       if (!Number.isFinite(row[key])) return "";
       const ms = new Date(row.capturedAt).getTime();
-      const connect = lastMs !== null && ms - lastMs <= 30 * 60 * 1000;
+      const connect = lastMs !== null && ms - lastMs <= 60 * 60 * 1000;
       lastMs = ms;
       return `${connect ? "L" : "M"}${x(row).toFixed(1)},${y(row[key]).toFixed(1)}`;
     }).filter(Boolean).join(" ");
