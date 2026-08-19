@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import crossingCalibration from "../config/crossing-calibration.json";
+import { adjustSourceMinutesToCheckpoint } from "../lib/crossing-calibration";
 import {
   buildForecast,
   cameraFor,
@@ -559,27 +560,22 @@ async function calibrateApproachRoutes(
 ) {
   const settings = crossingCalibration.directions[direction];
   const capture = await latestWoodlandsCalibrationRange(sql, direction);
-  const bases = routes.map((route) => settings.intercept + settings.slope * route.crossingMinutes);
-  const meanBase = bases.reduce((sum, value) => sum + value, 0) / Math.max(1, bases.length);
   const checkpointMidpoint = capture ? (capture.range[0] + capture.range[1]) / 2 : null;
-  const observedBiasMinutes = checkpointMidpoint == null ? null : checkpointMidpoint - meanBase;
-  const effectiveBiasMinutes = observedBiasMinutes == null
-    ? settings.fallbackBiasMinutes
-    : settings.alpha * observedBiasMinutes + (1 - settings.alpha) * settings.fallbackBiasMinutes;
+  const sourceMinutes = routes.map((route) => route.crossingMinutes);
+  const meanSource = sourceMinutes.reduce((sum, value) => sum + value, 0) / Math.max(1, sourceMinutes.length);
+  const adjustedMinutes = adjustSourceMinutesToCheckpoint(sourceMinutes, checkpointMidpoint, direction);
+  const observedBiasMinutes = checkpointMidpoint == null ? null : checkpointMidpoint - meanSource;
   const calibratedRoutes = routes.map((route, index) => {
-    const crossingMinutes = Math.round(Math.max(
-      crossingCalibration.minimumMinutes,
-      Math.min(
-        crossingCalibration.maximumMinutes,
-        bases[index] + effectiveBiasMinutes + crossingCalibration.displayOffsetMinutes,
-      ),
-    ));
+    const crossingMinutes = adjustedMinutes[index] ?? route.crossingMinutes;
     return {
       ...route,
       crossingMinutes,
       totalMinutes: (route.preApproachMinutes ?? 0) + crossingMinutes,
     };
   });
+  const effectiveBiasMinutes = observedBiasMinutes == null
+    ? settings.fallbackBiasMinutes
+    : observedBiasMinutes;
   const calibration: CrossingCalibration = {
     version: crossingCalibration.version,
     source: capture ? "fresh-checkpoint" : "fallback-bias",

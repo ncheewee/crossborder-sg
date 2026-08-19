@@ -1,6 +1,7 @@
 "use client";
 
 import { type TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { adjustSourceMinutesToCheckpoint } from "../lib/crossing-calibration";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -1198,15 +1199,25 @@ function V2CameraStrip({
   );
 }
 
-const approachHistorySheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=94841451";
-const approachHistoryColumns: Record<ApproachId, string> = {
-  "woodlands-bke-right": "SG-JB A | BKE Flyover (adj)",
-  "woodlands-bke-left": "SG-JB B | BKE Junction (adj)",
-  "woodlands-road-left": "SG-JB C | Woodlands Rd (adj)",
-  "woodlands-jln-lingkaran-dalam": "JB-SG A | Lingkaran Dalam S (adj)",
-  "woodlands-ah2": "JB-SG B | AH2 (adj)",
-  "woodlands-bukit-chagar": "JB-SG C | Bukit Chagar (adj)",
-  "woodlands-jb-city-square": "JB-SG D | Lingkaran Dalam N (adj)",
+const gmapsSheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=0";
+const checkpointSheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=734892105";
+const approachGmapsColumns: Record<ApproachId, string> = {
+  "woodlands-bke-right": "SG-JB A | BKE Flyover",
+  "woodlands-bke-left": "SG-JB B | BKE Junction",
+  "woodlands-road-left": "SG-JB C | Woodlands Rd",
+  "woodlands-jln-lingkaran-dalam": "JB-SG A | Lingkaran Dalam S",
+  "woodlands-ah2": "JB-SG B | AH2",
+  "woodlands-bukit-chagar": "JB-SG C | Bukit Chagar",
+  "woodlands-jb-city-square": "JB-SG D | Lingkaran Dalam N",
+};
+const approachDirections: Record<ApproachId, Direction> = {
+  "woodlands-bke-right": "sg-my",
+  "woodlands-bke-left": "sg-my",
+  "woodlands-road-left": "sg-my",
+  "woodlands-jln-lingkaran-dalam": "my-sg",
+  "woodlands-ah2": "my-sg",
+  "woodlands-bukit-chagar": "my-sg",
+  "woodlands-jb-city-square": "my-sg",
 };
 
 function parseCsvRows(csv: string) {
@@ -1257,10 +1268,55 @@ function normalizeApproachSheetRows(csv: string) {
   return { header, rows };
 }
 
-function parseAdjustedApproachSheet(csv: string): AdjustedApproachSheet {
+function parseSingaporeSheetTime(value: string) {
+  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute] = match;
+  return {
+    key: `${year}-${month}-${day}`,
+    hour: Number(hour) + Number(minute) / 60,
+    at: new Date(`${year}-${month}-${day}T${hour.padStart(2, "0")}:${minute}:00+08:00`).getTime(),
+    stamp: `${year}-${month}-${day} ${hour.padStart(2, "0")}:${minute}`,
+  };
+}
+
+type CheckpointMids = { towardsJb: number | null; towardsSg: number | null; at: number };
+
+function parseCheckpointMids(csv: string): CheckpointMids[] {
   const { header, rows } = normalizeApproachSheetRows(csv);
   const timestampIndex = header.indexOf("Timestamp (SGT)");
-  if (timestampIndex === -1) throw new Error("GMaps Adjusted is missing its timestamp column.");
+  const jbIndex = header.indexOf("SG-JB | Woodlands (midpoint)");
+  const sgIndex = header.indexOf("JB-SG | Woodlands (midpoint)");
+  if (timestampIndex === -1 || jbIndex === -1 || sgIndex === -1) {
+    throw new Error("Checkpoint.sg sheet is missing Woodlands midpoint columns.");
+  }
+  return rows.flatMap((row) => {
+    const time = parseSingaporeSheetTime(row[timestampIndex] ?? "");
+    if (!time) return [];
+    const towardsJb = Number(row[jbIndex]);
+    const towardsSg = Number(row[sgIndex]);
+    return [{
+      towardsJb: Number.isFinite(towardsJb) && towardsJb > 0 ? towardsJb : null,
+      towardsSg: Number.isFinite(towardsSg) && towardsSg > 0 ? towardsSg : null,
+      at: time.at,
+    }];
+  }).sort((left, right) => left.at - right.at);
+}
+
+function checkpointMidsAtOrBefore(rows: CheckpointMids[], at: number): CheckpointMids | null {
+  let found: CheckpointMids | null = null;
+  for (const row of rows) {
+    if (row.at <= at) found = row;
+    else break;
+  }
+  return found;
+}
+
+function parseCalibratedApproachSheet(gmapsCsv: string, checkpointCsv: string): AdjustedApproachSheet {
+  const { header, rows } = normalizeApproachSheetRows(gmapsCsv);
+  const timestampIndex = header.indexOf("Timestamp (SGT)");
+  if (timestampIndex === -1) throw new Error("GMaps sheet is missing its timestamp column.");
+  const checkpointRows = parseCheckpointMids(checkpointCsv);
   const now = new Date();
   const comparisonDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const todayKey = singaporeDateKey(now);
@@ -1269,38 +1325,77 @@ function parseAdjustedApproachSheet(csv: string): AdjustedApproachSheet {
     timeZone: "Asia/Singapore",
     weekday: "short",
   }).format(comparisonDate)}`;
-
+  const columnIndex = Object.fromEntries(
+    Object.entries(approachGmapsColumns).map(([approachId, column]) => [approachId, header.indexOf(column)]),
+  ) as Record<ApproachId, number>;
+  const historyBuckets = Object.fromEntries(
+    Object.keys(approachGmapsColumns).map((approachId) => [approachId, {
+      today: new Map<number, ApproachHistoryPoint>(),
+      comparison: new Map<number, ApproachHistoryPoint>(),
+    }]),
+  ) as Record<ApproachId, { today: Map<number, ApproachHistoryPoint>; comparison: Map<number, ApproachHistoryPoint> }>;
   const latest: AdjustedApproachTimes = {};
-  const history = Object.fromEntries(Object.entries(approachHistoryColumns).map(([approachId, column]) => {
-    const valueIndex = header.indexOf(column);
-    const today = new Map<number, ApproachHistoryPoint>();
-    const comparison = new Map<number, ApproachHistoryPoint>();
-    if (valueIndex !== -1) {
-      for (const row of rows) {
-        const match = row[timestampIndex]?.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})$/);
-        const minutes = Number(row[valueIndex]);
-        if (!match || !Number.isFinite(minutes) || minutes <= 0) continue;
-        const hour = Number(match[2]) + Number(match[3]) / 60;
-        const point = { hour, minutes };
-        latest[approachId as ApproachId] = { minutes: Math.round(minutes), timestamp: row[timestampIndex] };
-        if (match[1] === todayKey) today.set(hour, point);
-        if (match[1] === comparisonKey) comparison.set(hour, point);
-      }
+  const sgMyIds = (Object.keys(approachDirections) as ApproachId[]).filter((id) => approachDirections[id] === "sg-my");
+  const mySgIds = (Object.keys(approachDirections) as ApproachId[]).filter((id) => approachDirections[id] === "my-sg");
+
+  for (const row of rows) {
+    const time = parseSingaporeSheetTime(row[timestampIndex] ?? "");
+    if (!time) continue;
+    const sourceByApproach = Object.fromEntries(
+      (Object.keys(approachGmapsColumns) as ApproachId[]).map((approachId) => {
+        const index = columnIndex[approachId];
+        const minutes = index === -1 ? NaN : Number(row[index]);
+        return [approachId, Number.isFinite(minutes) && minutes > 0 ? minutes : null];
+      }),
+    ) as Record<ApproachId, number | null>;
+    const checkpoint = checkpointMidsAtOrBefore(checkpointRows, time.at);
+    const sgAdjusted = adjustSourceMinutesToCheckpoint(
+      sgMyIds.map((id) => sourceByApproach[id]),
+      checkpoint?.towardsJb ?? null,
+      "sg-my",
+    );
+    const myAdjusted = adjustSourceMinutesToCheckpoint(
+      mySgIds.map((id) => sourceByApproach[id]),
+      checkpoint?.towardsSg ?? null,
+      "my-sg",
+    );
+    const adjustedByApproach = {
+      ...Object.fromEntries(sgMyIds.map((id, index) => [id, sgAdjusted[index]])),
+      ...Object.fromEntries(mySgIds.map((id, index) => [id, myAdjusted[index]])),
+    } as Record<ApproachId, number | null>;
+    for (const approachId of Object.keys(approachGmapsColumns) as ApproachId[]) {
+      const minutes = adjustedByApproach[approachId];
+      if (!Number.isFinite(minutes) || (minutes as number) <= 0) continue;
+      const point = { hour: time.hour, minutes: minutes as number };
+      latest[approachId] = { minutes: minutes as number, timestamp: time.stamp };
+      if (time.key === todayKey) historyBuckets[approachId].today.set(time.hour, point);
+      if (time.key === comparisonKey) historyBuckets[approachId].comparison.set(time.hour, point);
     }
-    return [approachId, {
-      today: [...today.values()].sort((a, b) => a.hour - b.hour),
-      comparison: [...comparison.values()].sort((a, b) => a.hour - b.hour),
+  }
+
+  const history = Object.fromEntries(
+    (Object.keys(approachGmapsColumns) as ApproachId[]).map((approachId) => [approachId, {
+      today: [...historyBuckets[approachId].today.values()].sort((left, right) => left.hour - right.hour),
+      comparison: [...historyBuckets[approachId].comparison.values()].sort((left, right) => left.hour - right.hour),
       comparisonLabel,
-    }];
-  })) as Partial<Record<ApproachId, ApproachHistorySeries>>;
+    }]),
+  ) as Partial<Record<ApproachId, ApproachHistorySeries>>;
 
   return { history, latest };
 }
 
+async function fetchSheetCsv(url: string, label: string) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${label} returned ${response.status}`);
+  return response.text();
+}
+
 async function fetchAdjustedApproachSheet() {
-  const response = await fetch(approachHistorySheetUrl, { cache: "no-store" });
-  if (!response.ok) throw new Error(`GMaps Adjusted returned ${response.status}`);
-  return parseAdjustedApproachSheet(await response.text());
+  const [gmapsCsv, checkpointCsv] = await Promise.all([
+    fetchSheetCsv(gmapsSheetUrl, "GMaps"),
+    fetchSheetCsv(checkpointSheetUrl, "Checkpoint.sg"),
+  ]);
+  return parseCalibratedApproachSheet(gmapsCsv, checkpointCsv);
 }
 
 function buildAdjustedRouteOptions(
@@ -1311,7 +1406,7 @@ function buildAdjustedRouteOptions(
   const locationById = Object.fromEntries(locationRoutes.map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
   return Object.fromEntries(woodlandsApproachDefinitions[direction].map((definition) => {
     const crossingMinutes = latest[definition.id]?.minutes;
-    if (crossingMinutes == null) throw new Error(`GMaps Adjusted is missing ${definition.label}.`);
+    if (crossingMinutes == null) throw new Error(`Adjusted crossing time is missing ${definition.label}.`);
     const preApproachMinutes = locationById[definition.id]?.preApproachMinutes ?? null;
     return [definition.id, {
       id: definition.id,
@@ -1472,7 +1567,7 @@ function V3WoodlandsApproach({
     }).catch((error) => {
       setRouteOptions({});
       setLocationState("error");
-      setLocationMessage(error instanceof Error ? error.message : "GMaps adjusted crossing times could not load. Reopen the app to retry.");
+      setLocationMessage(error instanceof Error ? error.message : "Adjusted crossing times could not load. Reopen the app to retry.");
     });
   }
 
