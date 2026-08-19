@@ -144,7 +144,7 @@ function buildHourlyInsight(routeReports, checkpointSource, gmapsSource) {
 
   const takeaways = [];
   if (checkpointSource === "android-emulator") {
-    takeaways.push("Grey line is emulator — treat it as a stand-in.");
+    takeaways.push("Orange Checkpoint is emulator — treat it as a stand-in.");
   } else if (checkpointSource !== "mi6-macrodroid") {
     takeaways.push("No fresh Checkpoint this hour.");
   }
@@ -212,6 +212,87 @@ async function loadWorkerCheckpointCaptures() {
   const payload = await response.json();
   if (!Array.isArray(payload?.captures)) throw new Error("Checkpoint capture API returned an invalid payload");
   return payload.captures.map(checkpointRecordFromWorker).filter(Boolean);
+}
+
+function checkpointSourceRank(source) {
+  const text = String(source || "").toLowerCase();
+  if (text.includes("mi6")) return 3;
+  if (text.includes("emulator")) return 1;
+  return 2;
+}
+
+async function loadCheckpointSheetRecords() {
+  const response = await fetch(
+    `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=734892105`,
+    { headers: { Accept: "text/csv" } },
+  );
+  if (!response.ok) throw new Error(`Checkpoint.sg sheet returned ${response.status}`);
+  const [header = [], ...data] = parseCsv(await response.text());
+  const timestampIndex = header.indexOf("Timestamp (SGT)");
+  const jbLow = header.indexOf("SG-JB | Woodlands (low)");
+  const jbHigh = header.indexOf("SG-JB | Woodlands (high)");
+  const sgLow = header.indexOf("JB-SG | Woodlands (low)");
+  const sgHigh = header.indexOf("JB-SG | Woodlands (high)");
+  const sourceIndex = header.indexOf("Source");
+  if (timestampIndex === -1 || jbLow === -1 || sgLow === -1) {
+    throw new Error("Checkpoint.sg sheet is missing Woodlands columns");
+  }
+  return data.map((row) => {
+    const capturedAt = parseSingaporeTimestamp(row[timestampIndex]);
+    if (!capturedAt) return null;
+    return {
+      app: "Checkpoint.sg",
+      captureStatus: "completed",
+      capturedAt,
+      source: String(row[sourceIndex] || "sheet").trim() || "sheet",
+      normalizedReadings: {
+        woodlands: {
+          towardsJb: [Number(row[jbLow]), Number(row[jbHigh])],
+          towardsSg: [Number(row[sgLow]), Number(row[sgHigh])],
+        },
+      },
+    };
+  }).filter(Boolean);
+}
+
+function mergeCheckpointRecords(...lists) {
+  const byBucket = new Map();
+  for (const record of lists.flat().filter(Boolean)) {
+    const bucket = quarterBucket(record.capturedAt);
+    if (bucket === null) continue;
+    const existing = byBucket.get(bucket);
+    if (!existing) {
+      byBucket.set(bucket, record);
+      continue;
+    }
+    const nextRank = checkpointSourceRank(record.source);
+    const existingRank = checkpointSourceRank(existing.source);
+    if (nextRank > existingRank) {
+      byBucket.set(bucket, record);
+      continue;
+    }
+    if (nextRank === existingRank) {
+      const nextDist = Math.abs(new Date(record.capturedAt).getTime() - bucket);
+      const existingDist = Math.abs(new Date(existing.capturedAt).getTime() - bucket);
+      if (nextDist < existingDist) byBucket.set(bucket, record);
+    }
+  }
+  return [...byBucket.values()].sort((left, right) => (
+    new Date(left.capturedAt).getTime() - new Date(right.capturedAt).getTime()
+  ));
+}
+
+function checkpointByQuarter(checkpointRecords) {
+  const map = new Map();
+  for (const record of checkpointRecords) {
+    const bucket = quarterBucket(record.capturedAt);
+    if (bucket === null) continue;
+    const existing = map.get(bucket);
+    if (!existing || Math.abs(new Date(record.capturedAt).getTime() - bucket) < Math.abs(new Date(existing.capturedAt).getTime() - bucket)) {
+      map.set(bucket, record);
+    }
+  }
+  return map;
 }
 
 function parseCsv(text) {
@@ -429,12 +510,14 @@ function closestRecord(records, slotMs, maxDistMs = 7.5 * 60 * 1000) {
 function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, reportDate) {
   const start = new Date(`${reportDate}T00:00:00+08:00`).getTime();
   const end = Math.min(Date.now(), start + 24 * 3_600_000 - 1);
+  const checkpointSlots = checkpointByQuarter(checkpointRecords);
   const points = [];
+  let lastCheckpoint = null;
   for (let slot = start; slot <= end; slot += 900_000) {
     const oursRecord = closestRecord(sources.ours?.records ?? [], slot);
     const tomtomRecord = closestRecord(sources.tomtom?.records ?? [], slot);
     const mapboxRecord = closestRecord(sources.mapbox?.records ?? [], slot);
-    const checkpointRecord = closestRecord(checkpointRecords, slot);
+    const checkpointRecord = checkpointSlots.get(slot) ?? null;
     const shadow = closestRecord(shadowPoints, slot);
     const ours = oursRecord ? sourcePoint(route, sources.ours, oursRecord) : null;
     if (ours && (!Number.isFinite(ours.oursMid) || ours.oursMid < 5 || ours.oursHigh < 5)) {
@@ -442,11 +525,19 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, 
     }
     const tomtom = tomtomRecord ? sourcePoint(route, sources.tomtom, tomtomRecord) : null;
     const mapbox = mapboxRecord ? sourcePoint(route, sources.mapbox, mapboxRecord) : null;
-    const checkpointRange = checkpointRecord
+    const observedRange = checkpointRecord
       ? plausibleRange(checkpointRecord.normalizedReadings?.woodlands?.[route.directionKey])
       : null;
     const oursSynthetic = /api/i.test(String(oursRecord?.source || ""));
-    const checkpointSynthetic = String(checkpointRecord?.source || "").includes("emulator");
+    let checkpointRange = observedRange;
+    let checkpointSynthetic = false;
+    if (observedRange) {
+      checkpointSynthetic = String(checkpointRecord?.source || "").includes("emulator");
+      lastCheckpoint = { range: observedRange, synthetic: checkpointSynthetic };
+    } else if (lastCheckpoint) {
+      checkpointRange = lastCheckpoint.range;
+      checkpointSynthetic = true;
+    }
     const point = {
       capturedAt: new Date(slot).toISOString(),
       label: route.label,
@@ -459,12 +550,10 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, 
       shadowLow: shadow?.shadowLow ?? null,
       shadowHigh: shadow?.shadowHigh ?? null,
       shadowMid: shadow?.shadowMid ?? null,
-      checkpointLow: checkpointSynthetic ? null : checkpointRange?.[0] ?? null,
-      checkpointHigh: checkpointSynthetic ? null : checkpointRange?.[1] ?? null,
-      checkpointMid: checkpointSynthetic ? null : midpoint(checkpointRange),
-      checkpointEmuLow: checkpointSynthetic ? checkpointRange?.[0] ?? null : null,
-      checkpointEmuHigh: checkpointSynthetic ? checkpointRange?.[1] ?? null : null,
-      checkpointEmuMid: checkpointSynthetic ? midpoint(checkpointRange) : null,
+      checkpointLow: checkpointRange?.[0] ?? null,
+      checkpointHigh: checkpointRange?.[1] ?? null,
+      checkpointMid: midpoint(checkpointRange),
+      checkpointSynthetic,
       tomtomLow: tomtom?.tomtomLow ?? null,
       tomtomHigh: tomtom?.tomtomHigh ?? null,
       tomtomMid: tomtom?.tomtomMid ?? null,
@@ -472,7 +561,7 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, shadowPoints, 
       mapboxHigh: mapbox?.mapboxHigh ?? null,
       mapboxMid: mapbox?.mapboxMid ?? null,
     };
-    if ([point.oursMid, point.oursApiMid, point.shadowMid, point.checkpointMid, point.checkpointEmuMid, point.tomtomMid, point.mapboxMid].some(Number.isFinite)) {
+    if ([point.oursMid, point.oursApiMid, point.shadowMid, point.checkpointMid, point.tomtomMid, point.mapboxMid].some(Number.isFinite)) {
       points.push(point);
     }
   }
@@ -587,13 +676,11 @@ function chartSvg(route, rows) {
     ? { main: "#15803d", fill: "#15803d", label: "Singapore to JB" }
     : { main: "#2563eb", fill: "#2563eb", label: "JB to Singapore" };
   const comparisonSeries = [
-    { key: "checkpoint", label: "Checkpoint.sg", color: "#64748b", dash: "12 10" },
-    { key: "checkpointEmu", label: "CP emulator", color: "#ea580c", dash: "4 6" },
     { key: "tomtom", label: "TomTom", color: "#d97706", dash: "10 7" },
     { key: "mapbox", label: "Mapbox", color: "#9333ea", dash: "3 9" },
   ];
   const values = rows.flatMap((row) => [
-    row.oursLow, row.oursHigh, row.shadowMid,
+    row.oursLow, row.oursHigh, row.shadowMid, row.checkpointLow, row.checkpointHigh, row.checkpointMid,
     ...comparisonSeries.flatMap((series) => [row[`${series.key}Low`], row[`${series.key}High`]]),
   ]).filter(Number.isFinite);
   const low = Math.max(0, Math.floor((Math.min(...values, 20) - 10) / 10) * 10);
@@ -623,6 +710,24 @@ function chartSvg(route, rows) {
       return `${connect ? "L" : "M"}${x(row).toFixed(1)},${y(row[key]).toFixed(1)}`;
     }).filter(Boolean).join(" ");
   };
+  const checkpointSegments = () => {
+    const real = [];
+    const synthetic = [];
+    let previous = null;
+    for (const row of rows) {
+      if (!Number.isFinite(row.checkpointMid)) {
+        previous = null;
+        continue;
+      }
+      if (previous && Number.isFinite(previous.checkpointMid)) {
+        const command = `M${x(previous).toFixed(1)},${y(previous.checkpointMid).toFixed(1)} L${x(row).toFixed(1)},${y(row.checkpointMid).toFixed(1)}`;
+        (previous.checkpointSynthetic || row.checkpointSynthetic ? synthetic : real).push(command);
+      }
+      previous = row;
+    }
+    return { real: real.join(" "), synthetic: synthetic.join(" ") };
+  };
+  const checkpointPaths = checkpointSegments();
   const oursPoints = rows.filter((row) => Number.isFinite(row.oursLow) && Number.isFinite(row.oursHigh));
   const area = oursPoints.length < 2 ? "" : `${line("oursLow")} ${oursPoints.slice().reverse().map((row) => `L${x(row).toFixed(1)},${y(row.oursHigh).toFixed(1)}`).join(" ")} Z`;
   const grids = Array.from({ length: (high - low) / 15 + 1 }, (_, index) => low + index * 15)
@@ -647,6 +752,7 @@ function chartSvg(route, rows) {
   const dots = [
     pointMarker("oursMid", palette.main, 6),
     pointMarker("shadowMid", "#d0008f", 6),
+    pointMarker("checkpointMid", rows.at(-1)?.checkpointSynthetic ? "#ea580c" : "#64748b", 4),
     ...comparisonSeries.map((series) => pointMarker(`${series.key}Mid`, series.color, 4)),
   ].join("");
   const legendX = margin.left + 18;
@@ -663,6 +769,8 @@ function chartSvg(route, rows) {
     <path d="${area}" fill="${palette.fill}" fill-opacity="0.14"/>
     <path d="${line("oursMid")}" fill="none" stroke="${palette.main}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="${line("oursApiMid")}" fill="none" stroke="#ea580c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6"/>
+    <path d="${checkpointPaths.real}" fill="none" stroke="#64748b" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="12 10"/>
+    <path d="${checkpointPaths.synthetic}" fill="none" stroke="#ea580c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 6"/>
     ${comparisonSeries.map((series) => `<path d="${line(`${series.key}Mid`)}" fill="none" stroke="${series.color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${series.dash}"/>`).join("")}
     <path d="${line("shadowMid")}" fill="none" stroke="#d0008f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     ${recentOursDots}
@@ -672,7 +780,7 @@ function chartSvg(route, rows) {
     ${legendItem(legendX + 230, legendY, "API (synthetic)", "#ea580c", "5 6")}
     ${legendItem(legendX, legendY + 28, "Shadow fit", "#d0008f")}
     ${legendItem(legendX + 230, legendY + 28, "Checkpoint", "#64748b", "8 6")}
-    ${legendItem(legendX, legendY + 56, "CP emulator", "#ea580c", "4 6")}
+    ${legendItem(legendX, legendY + 56, "CP held / emulator", "#ea580c", "4 6")}
     ${legendItem(legendX + 230, legendY + 56, "TomTom", "#d97706", "8 6")}
     ${legendItem(legendX, legendY + 84, "Mapbox", "#9333ea", "3 8")}
   </svg>`;
@@ -685,6 +793,7 @@ const mi6StatusIsCurrent = mi6Status?.checkedAt
 const mi6Log = mi6StatusIsCurrent
   ? mi6Status.mi6Log
   : "Mi6 status was not recorded during this hourly run.";
+const chartDryRun = process.env.CHART_DRY_RUN === "1";
 let records = [];
 try {
   records = await loadWorkerCheckpointCaptures();
@@ -692,6 +801,13 @@ try {
 } catch (error) {
   records = await readJson(join(captureRoot, "latest-summary.json")) ?? [];
   console.warn(`Mi6 Worker capture refresh failed; using local capture cache: ${error.message}`);
+}
+try {
+  const sheetRecords = await loadCheckpointSheetRecords();
+  records = mergeCheckpointRecords(records, sheetRecords);
+  console.log(`Merged Checkpoint.sg sheet; ${records.length} unique 15-minute slot(s).`);
+} catch (error) {
+  console.warn(`Checkpoint.sg sheet merge skipped: ${error.message}`);
 }
 const checkpoint = records.slice().reverse().find((record) => (
   record.app === "Checkpoint.sg"
@@ -757,18 +873,24 @@ const historyLines = rows.map((row) => [
   row.tomtomLow ?? "", row.tomtomHigh ?? "", row.tomtomMid ?? "",
   row.mapboxLow ?? "", row.mapboxHigh ?? "", row.mapboxMid ?? "",
 ].join(","));
-try { await access(historyPath); } catch { await writeFile(historyPath, "capturedAt,label,oursLow,oursHigh,oursMid,checkpointLow,checkpointHigh,checkpointMid,tomtomLow,tomtomHigh,tomtomMid,mapboxLow,mapboxHigh,mapboxMid\n"); }
-await appendFile(historyPath, `${historyLines.join("\n")}\n`);
+if (!chartDryRun) {
+  try { await access(historyPath); } catch { await writeFile(historyPath, "capturedAt,label,oursLow,oursHigh,oursMid,checkpointLow,checkpointHigh,checkpointMid,tomtomLow,tomtomHigh,tomtomMid,mapboxLow,mapboxHigh,mapboxMid\n"); }
+  await appendFile(historyPath, `${historyLines.join("\n")}\n`);
+}
 await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON.stringify({
   capturedAt,
   checkpointSource,
   mi6Log,
   rows,
 }, null, 2)}\n`);
-try {
-  await appendCheckpointSheetRow(rows, checkpointSource, mi6Log, checkpoint?.capturedAt ?? capturedAt);
-} catch (error) {
-  console.warn(`Checkpoint.sg sheet append failed: ${error instanceof Error ? error.message : error}`);
+if (!chartDryRun) {
+  try {
+    await appendCheckpointSheetRow(rows, checkpointSource, mi6Log, checkpoint?.capturedAt ?? capturedAt);
+  } catch (error) {
+    console.warn(`Checkpoint.sg sheet append failed: ${error instanceof Error ? error.message : error}`);
+  }
+} else {
+  console.log("Chart dry run: skipped history and Checkpoint.sg sheet append.");
 }
 const routeReports = [];
 for (const route of rows) {
@@ -794,7 +916,11 @@ for (const route of rows) {
   });
 }
 
-for (const report of routeReports) {
-  await sendPhoto(report.png, report.filename, shortDirection(report.label));
+if (chartDryRun) {
+  console.log("Chart dry run: skipped Telegram send.");
+} else {
+  for (const report of routeReports) {
+    await sendPhoto(report.png, report.filename, shortDirection(report.label));
+  }
+  await sendMessage(buildHourlyInsight(routeReports, checkpointSource, sources.ours?.gmapsSource));
 }
-await sendMessage(buildHourlyInsight(routeReports, checkpointSource, sources.ours?.gmapsSource));
