@@ -5,7 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 // Woodlands route in the Google Maps app, reads "Driving mode: N minutes"
 // from the UI dump, and POSTs the seven durations to Apps Script.
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
-const serial = process.env.ADB_SERIAL || "192.168.0.4:5555";
+const serial = process.env.ADB_SERIAL || "192.168.0.3:5555";
 const webAppUrl = process.env.CHECKPOINT_SHEET_WEBAPP_URL
   || "https://script.google.com/macros/s/AKfycbzamRGlMzJ8TLjfHPygtw01RU-NaK2TCyzq4iFRVjZRKL9JUef-SR3NSu8-skeGMJoA/exec";
 const localPath = "/private/tmp/crossborder-mi6-gmaps-capture.sh";

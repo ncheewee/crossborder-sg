@@ -12,7 +12,7 @@ const monitorKey = process.env.MONITOR_API_KEY;
 const maxAgeMinutes = Number(process.env.CHECKPOINT_MAX_AGE_MINUTES || 75);
 const statusPath = captureRoot ? join(captureRoot, "checkpoint-mi6-status.json") : null;
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
-const mi6Serial = process.env.MI6_ADB_SERIAL || "192.168.0.4:5555";
+const mi6Serial = process.env.MI6_ADB_SERIAL || "192.168.0.3:5555";
 const mi6DeviceStatusPath = "/sdcard/Download/crossborder-mi6-checkpoint-status.json";
 
 if (!monitorKey) throw new Error("MONITOR_API_KEY is not configured");

@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 // MacroDroid must fire this script every 15 minutes (not hourly). The feeder
 // only OCRs the screenshot from the current run; it does not schedule itself.
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
-const serial = process.env.ADB_SERIAL || "192.168.0.4:5555";
+const serial = process.env.ADB_SERIAL || "192.168.0.3:5555";
 const monitorKey = process.env.MONITOR_API_KEY;
 const apiBase = (process.env.CROSSBORDER_API_BASE || "https://crossborder-sg-api.ncheewee.workers.dev").replace(/\/$/, "");
 const localPath = "/private/tmp/crossborder-mi6-checkpoint-capture.sh";
