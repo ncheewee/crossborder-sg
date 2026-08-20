@@ -12,6 +12,11 @@
  *                        I–K: LTA camera image links — CURRENTLY PAUSED, see
  *                        CAMS_ENABLED. Existing images and links are retained.
  *
+ *   Tab "Shadow Fit"     A: slot key | B–H: intercept + slope × GMaps plus the
+ *                        Checkpoint.sg-learned bias. Same pink line as the
+ *                        Telegram charts and the app listing. Rebuilt from
+ *                        GMaps Scraped + Checkpoint.sg on each logHour.
+ *
  *   Tab "TomTom API"     A: slot key | B–H: live traffic-aware minutes
  *                        I–O: free-flow minutes (true no-traffic baseline)
  *
@@ -53,9 +58,24 @@
 
 const SHEET_ID      = '1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo';
 const SHEET_GMAPS       = 'GMaps Scraped';
+const SHEET_SHADOW      = 'Shadow Fit';
+const SHEET_SHADOW_LEGACY = 'GMaps Adjusted';
 const SHEET_TOMTOM      = 'TomTom API';
 const SHEET_MAPBOX      = 'Mapbox API';
 const SHEET_CHECKPOINT  = 'Checkpoint.sg';
+
+// Keep in sync with config/crossing-calibration.json and lib/shadow-fit.js.
+const SHADOW_CALIBRATION = {
+  displayOffsetMinutes: -5,
+  minimumMinutes: 5,
+  maximumMinutes: 180,
+  biasHoldHours: 3,
+  biasHalfLifeHours: 3,
+  directions: {
+    'sg-my': { intercept: 10, slope: 1.9, alpha: 0.25 },
+    'my-sg': { intercept: 5, slope: 1.7, alpha: 0.65 },
+  },
+};
 const CHECKPOINT_API    = 'https://crossborder-sg-api.ncheewee.workers.dev/api/monitor/checkpoint?hours=4';
 const CHECKPOINT_MAX_AGE_MINUTES = 90;
 
@@ -175,6 +195,8 @@ function logHour() {
     Logger.log('Fallback window — ' + backfillGoogle(hourSlot));
     watchdog();
   }
+
+  Logger.log('Shadow Fit — ' + rebuildShadowFit());
 }
 
 // ─── Ingest endpoint for the Google Maps scraper ───────────────────────────
@@ -219,10 +241,15 @@ function doPost(e) {
       return jsonOut({ ok: true, setup: 'MONITOR_API_KEY' });
     }
     if (body.type === 'checkpoint-sync') {
-      return jsonOut({ ok: true, result: logCheckpoint() });
+      const result = logCheckpoint();
+      rebuildShadowFit();
+      return jsonOut({ ok: true, result: result });
     }
     if (body.type === 'checkpoint-cleanup') {
       return jsonOut({ ok: true, result: cleanupCheckpointSheet() });
+    }
+    if (body.type === 'shadow-rebuild') {
+      return jsonOut({ ok: true, result: rebuildShadowFit() });
     }
     if (body.type === 'checkpoint') {
       if (!Array.isArray(body.row) || body.row.length !== 9) {
@@ -230,7 +257,9 @@ function doPost(e) {
       }
       const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
       if (!sh) return jsonOut({ ok: false, error: 'tab "' + SHEET_CHECKPOINT + '" not found' });
-      return jsonOut({ ok: true, result: appendCheckpointRow(sh, body.row) });
+      const result = appendCheckpointRow(sh, body.row);
+      rebuildShadowFit();
+      return jsonOut({ ok: true, result: result });
     }
     if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(body.slot || ''))) {
       return jsonOut({ ok: false, error: 'slot must be "YYYY-MM-DD HH:MM"' });
@@ -266,6 +295,7 @@ function doPost(e) {
     writeGmapsSource(sh, r, landed ? (body.source === 'mi6-maps' ? SRC_MI6 : SRC_MAC) : '');
 
     Logger.log('Ingest ' + body.slot + ' → row ' + r + ' : ' + row.join('/'));
+    rebuildShadowFit();
     return jsonOut({ ok: true, slot: body.slot, row: r, values: row });
 
   } catch (err) {
@@ -1022,6 +1052,155 @@ function getOrCreateFolder(parent, name) {
   return it.hasNext() ? it.next() : parent.createFolder(name);
 }
 
+// ─── Shadow Fit tab ────────────────────────────────────────────────────────
+// Same walk as lib/shadow-fit.js and the Telegram pink line. Sequential EMA
+// cannot be an ARRAYFORMULA, so this tab is rewritten as values.
+
+function createShadowBiasState() {
+  return { learnedBias: 0, lastCheckpointMs: null };
+}
+
+function shadowEffectiveBias(state, atMs, config) {
+  if (state.lastCheckpointMs == null) return 0;
+  const hoursSinceCheckpoint = (atMs - state.lastCheckpointMs) / 3600000;
+  const decay = hoursSinceCheckpoint <= config.biasHoldHours
+    ? 1
+    : Math.pow(0.5, (hoursSinceCheckpoint - config.biasHoldHours) / config.biasHalfLifeHours);
+  return state.learnedBias * decay;
+}
+
+function shadowMinutesForSource(gmapsMinutes, direction, effectiveBias, config) {
+  const settings = config.directions[direction];
+  const value = settings.intercept
+    + settings.slope * gmapsMinutes
+    + effectiveBias
+    + config.displayOffsetMinutes;
+  return Math.round(Math.max(config.minimumMinutes, Math.min(config.maximumMinutes, value)));
+}
+
+function learnShadowBias(state, gmapsMean, checkpointMid, direction, atMs, effectiveBias, config) {
+  if (!isFinite(checkpointMid) || !isFinite(gmapsMean) || gmapsMean <= 0) return state;
+  const settings = config.directions[direction];
+  const base = settings.intercept + settings.slope * gmapsMean;
+  return {
+    learnedBias: settings.alpha * (checkpointMid - base) + (1 - settings.alpha) * effectiveBias,
+    lastCheckpointMs: atMs,
+  };
+}
+
+function sgtStampToMs(stamp) {
+  const match = String(stamp || '').match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hour = ('0' + match[4]).slice(-2);
+  const parsed = Utilities.parseDate(
+    match[1] + '-' + match[2] + '-' + match[3] + ' ' + hour + ':' + match[5] + ':00',
+    TZ,
+    'yyyy-MM-dd HH:mm:ss'
+  );
+  return parsed ? parsed.getTime() : null;
+}
+
+function shadowMeanPositive(values) {
+  const finite = values.filter(function (value) { return typeof value === 'number' && isFinite(value) && value > 0; });
+  if (!finite.length) return NaN;
+  return finite.reduce(function (sum, value) { return sum + value; }, 0) / finite.length;
+}
+
+function parseGmapsMinutes(value) {
+  if (value === '' || value === 'ERR' || value == null) return null;
+  const number = Number(value);
+  return isFinite(number) && number > 0 ? number : null;
+}
+
+function ensureShadowFitTab(ss) {
+  let sh = ss.getSheetByName(SHEET_SHADOW);
+  const legacy = ss.getSheetByName(SHEET_SHADOW_LEGACY);
+  if (!sh && legacy) {
+    legacy.setName(SHEET_SHADOW);
+    sh = legacy;
+    Logger.log('Renamed "' + SHEET_SHADOW_LEGACY + '" → "' + SHEET_SHADOW + '"');
+  }
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_SHADOW);
+    Logger.log('Created tab "' + SHEET_SHADOW + '"');
+  }
+  const headers = ['Timestamp (SGT)'].concat(ROUTES.map(function (route) { return route.name; }));
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+  sh.setFrozenRows(1);
+  sh.getRange(1, 1).setNote(
+    'Shadow fit - same pink line as the Telegram charts and the CrossBorder.sg app.\n'
+    + 'Per approach: intercept + slope x GMaps + Checkpoint-learned bias - 5 min.\n'
+    + 'Rewritten from GMaps Scraped + Checkpoint.sg. Do not put formulas here.'
+  );
+  if (sh.getMaxColumns() > headers.length) {
+    const extra = sh.getRange(1, headers.length + 1, Math.max(sh.getLastRow(), 1), sh.getMaxColumns() - headers.length);
+    extra.clearContent();
+    extra.clearNote();
+  }
+  return sh;
+}
+
+/** Rebuilds the Shadow Fit tab from GMaps Scraped + Checkpoint.sg. Safe to re-run. */
+function rebuildShadowFit() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const gmaps = ss.getSheetByName(SHEET_GMAPS);
+  const checkpoint = ss.getSheetByName(SHEET_CHECKPOINT);
+  if (!gmaps) return 'GMaps tab missing';
+  if (!checkpoint) return 'Checkpoint.sg tab missing';
+  const shadow = ensureShadowFitTab(ss);
+
+  const gLast = gmaps.getLastRow();
+  if (gLast < 2) return 'no GMaps rows';
+  const gValues = gmaps.getRange(2, COL_TIMESTAMP, gLast - 1, 8).getDisplayValues();
+  const cpLast = checkpoint.getLastRow();
+  const checkpointByMs = {};
+  if (cpLast >= 2) {
+    const cpValues = checkpoint.getRange(2, COL_TIMESTAMP, cpLast - 1, 7).getDisplayValues();
+    cpValues.forEach(function (row) {
+      const at = sgtStampToMs(row[0]);
+      if (at == null) return;
+      const jb = Number(row[3]);
+      const sg = Number(row[6]);
+      checkpointByMs[at] = {
+        towardsJb: isFinite(jb) && jb > 0 ? jb : null,
+        towardsSg: isFinite(sg) && sg > 0 ? sg : null,
+      };
+    });
+  }
+
+  let sgState = createShadowBiasState();
+  let myState = createShadowBiasState();
+  const out = [];
+  for (var i = 0; i < gValues.length; i++) {
+    const row = gValues[i];
+    const stamp = row[0];
+    const at = sgtStampToMs(stamp);
+    const minutes = row.slice(1, 8).map(parseGmapsMinutes);
+    if (at == null) {
+      out.push([stamp, '', '', '', '', '', '', '']);
+      continue;
+    }
+    const sgBias = shadowEffectiveBias(sgState, at, SHADOW_CALIBRATION);
+    const myBias = shadowEffectiveBias(myState, at, SHADOW_CALIBRATION);
+    const fitted = minutes.map(function (value, index) {
+      if (value == null) return '';
+      const direction = index < 3 ? 'sg-my' : 'my-sg';
+      return shadowMinutesForSource(value, direction, direction === 'sg-my' ? sgBias : myBias, SHADOW_CALIBRATION);
+    });
+    const cp = checkpointByMs[at] || {};
+    sgState = learnShadowBias(sgState, shadowMeanPositive(minutes.slice(0, 3)), cp.towardsJb, 'sg-my', at, sgBias, SHADOW_CALIBRATION);
+    myState = learnShadowBias(myState, shadowMeanPositive(minutes.slice(3, 7)), cp.towardsSg, 'my-sg', at, myBias, SHADOW_CALIBRATION);
+    out.push([stamp].concat(fitted));
+  }
+
+  shadow.getRange(2, 1, out.length, 8).setValues(out);
+  const leftover = shadow.getLastRow() - (out.length + 1);
+  if (leftover > 0) {
+    shadow.getRange(out.length + 2, 1, leftover, Math.max(shadow.getLastColumn(), 8)).clearContent();
+  }
+  return 'rewrote ' + out.length + ' rows';
+}
+
 // ─── One-time setup ────────────────────────────────────────────────────────
 
 /** Renames the original tab, creates the TomTom tab, writes headers. Safe to re-run. */
@@ -1052,8 +1231,11 @@ function setupSheets() {
   ensureProviderTab(ss, SHEET_TOMTOM, 'free-flow');
   ensureProviderTab(ss, SHEET_MAPBOX, 'baseline');
 
+  ensureShadowFitTab(ss);
+  Logger.log('Shadow Fit — ' + rebuildShadowFit());
+
   Logger.log('Sheets ready: "' + SHEET_GMAPS + '", "' + SHEET_TOMTOM
-             + '", "' + SHEET_MAPBOX + '"');
+             + '", "' + SHEET_MAPBOX + '", "' + SHEET_SHADOW + '"');
 }
 
 /** Creates a provider tab if absent and writes its headers. Idempotent. */
@@ -1193,7 +1375,7 @@ function testRun() {
  */
 function normaliseSlotKeys() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  [SHEET_GMAPS, SHEET_TOMTOM, SHEET_MAPBOX].forEach(function (name) {
+  [SHEET_GMAPS, SHEET_TOMTOM, SHEET_MAPBOX, SHEET_SHADOW].forEach(function (name) {
     const sh = ss.getSheetByName(name);
     if (!sh) { Logger.log('Tab "' + name + '" not found — skipped.'); return; }
 
