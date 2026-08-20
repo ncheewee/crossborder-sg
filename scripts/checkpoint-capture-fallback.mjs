@@ -62,8 +62,10 @@ async function recordMi6Status(status) {
 
 function deviceErrorMessage(status) {
   const messages = {
-    no_checkpoint_screenshot: "MacroDroid did not produce a Checkpoint.sg screenshot",
-    stale_checkpoint_screenshot: `MacroDroid supplied a stale screenshot${status?.ageSeconds ? ` (${status.ageSeconds}s old)` : ""}`,
+    no_checkpoint_screenshot: "Termux could not save a Checkpoint.sg screen snap",
+    screencap_failed: "Termux screencap produced an empty Checkpoint.sg snap",
+    checkpoint_not_in_front: "Checkpoint.sg was not on screen, so no snap was taken",
+    stale_checkpoint_screenshot: `Mi6 supplied a stale Checkpoint.sg snap${status?.ageSeconds ? ` (${status.ageSeconds}s old)` : ""}`,
     ocr_incomplete: "Mi6 OCR missed one or more of the four checkpoint ranges",
     tesseract_install_failed: "Tesseract was unavailable and its installation failed",
     imagemagick_install_failed: "ImageMagick was unavailable and its installation failed",

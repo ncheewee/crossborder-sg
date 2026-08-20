@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 
-// MacroDroid must fire this script every 15 minutes (not hourly). The feeder
-// only OCRs the screenshot from the current run; it does not schedule itself.
+// MacroDroid must fire this script every 15 minutes (not hourly): open
+// Checkpoint.sg, wait for the times, then run this script. Do not take a
+// MacroDroid screenshot. Termux snaps to a temp file only while the app is
+// in front, then deletes it. The feeder does not schedule itself.
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
 const serial = process.env.ADB_SERIAL || "192.168.0.3:5555";
 const monitorKey = process.env.MONITOR_API_KEY;
@@ -29,6 +31,9 @@ monitor_key='${monitorKey.replaceAll("'", "'\\''")}'
 screenshot_dir='/sdcard/DCIM/Screenshots'
 status_path='/sdcard/Download/crossborder-mi6-checkpoint-status.json'
 debug_path='/sdcard/Download/crossborder-mi6-checkpoint-debug.txt'
+tmp_snap='/sdcard/Download/crossborder-mi6-checkpoint-tmp.png'
+crop_dir="$PREFIX/tmp/crossborder-checkpoint-ocr"
+latest="$crop_dir/screen.png"
 
 run_gmaps() {
   if [ -r /sdcard/Download/crossborder-mi6-gmaps-capture.sh ]; then
@@ -36,38 +41,12 @@ run_gmaps() {
   fi
 }
 cleanup_images() {
+  rm -f "$tmp_snap" "$latest"
   rm -f "$screenshot_dir"/*_com.tplusinteractive.checkpointsg.*
-  rm -rf "$PREFIX/tmp/crossborder-checkpoint-ocr"
+  rm -rf "$crop_dir"
   run_gmaps
 }
 trap cleanup_images EXIT
-
-started_at="$(date +%s)"
-latest=''
-screenshot_age=999999
-attempt=0
-while [ "$attempt" -lt 15 ]; do
-  latest="$(ls -t "$screenshot_dir"/*_com.tplusinteractive.checkpointsg.* 2>/dev/null | head -n 1 || true)"
-  if [ -n "$latest" ] && [ -r "$latest" ]; then
-    screenshot_age="$(( $(date +%s) - $(stat -c %Y "$latest") ))"
-    # MacroDroid's screenshot action returns just before the file is flushed.
-    # Wait for the screenshot produced by this run instead of OCRing the prior slot.
-    if [ "$(stat -c %Y "$latest")" -ge "$(( started_at - 2 ))" ]; then
-      break
-    fi
-  fi
-  attempt="$(( attempt + 1 ))"
-  sleep 1
-done
-
-if [ -z "$latest" ] || [ ! -r "$latest" ]; then
-  printf '%s\\n' '{"ok":false,"error":"no_checkpoint_screenshot"}' > "$status_path"
-  exit 1
-fi
-if [ "$screenshot_age" -gt 120 ]; then
-  printf '{"ok":false,"error":"stale_checkpoint_screenshot","ageSeconds":%s}\\n' "$screenshot_age" > "$status_path"
-  exit 1
-fi
 
 if [ ! -x "$PREFIX/bin/tesseract" ]; then
   "$PREFIX/bin/pkg" install -y tesseract >/dev/null 2>&1 || {
@@ -85,8 +64,46 @@ fi
 
 image_tool="$PREFIX/bin/magick"
 [ -x "$image_tool" ] || image_tool="$PREFIX/bin/convert"
-crop_dir="$PREFIX/tmp/crossborder-checkpoint-ocr"
+
+checkpoint_is_front() {
+  local focus=''
+  if command -v su >/dev/null 2>&1; then
+    focus="$(su -c 'dumpsys window' 2>/dev/null | grep mCurrentFocus || true)"
+  fi
+  if [ -z "$focus" ]; then
+    focus="$(dumpsys window 2>/dev/null | grep mCurrentFocus || true)"
+  fi
+  printf '%s' "$focus" | grep -q 'com.tplusinteractive.checkpointsg'
+}
+
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+  if checkpoint_is_front; then
+    break
+  fi
+  attempt="$(( attempt + 1 ))"
+  sleep 1
+done
+
+if ! checkpoint_is_front; then
+  printf '%s\\n' '{"ok":false,"error":"checkpoint_not_in_front"}' > "$status_path"
+  exit 1
+fi
+
 mkdir -p "$crop_dir"
+rm -f "$tmp_snap" "$latest"
+if command -v su >/dev/null 2>&1; then
+  su -c "screencap -p $tmp_snap && cp $tmp_snap $latest && chmod 644 $latest" >/dev/null 2>&1 || true
+fi
+if [ ! -s "$latest" ]; then
+  screencap -p "$latest" >/dev/null 2>&1 || true
+fi
+rm -f "$tmp_snap"
+if [ ! -s "$latest" ]; then
+  printf '%s\\n' '{"ok":false,"error":"screencap_failed"}' > "$status_path"
+  exit 1
+fi
+
 jb_main_crop="$crop_dir/jb-main.png"
 jb_tuas_crop="$crop_dir/jb-tuas.png"
 sg_main_crop="$crop_dir/sg-main.png"
