@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>What the pink line is adding up</title>
+  <style>
+    :root {
+      --ink: #12202b;
+      --muted: #5b6b78;
+      --line: #d9e0e6;
+      --paper: #f6f8fa;
+      --gmaps: #15803d;
+      --cp: #64748b;
+      --pink: #d0008f;
+      --booth: #c2410c;
+      --plaza: #7c3aed;
+      --bias: #0369a1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #fff;
+      color: var(--ink);
+      font: 18px/1.45 "Avenir Next", "Segoe UI", sans-serif;
+    }
+    .page {
+      width: 1100px;
+      margin: 0 auto;
+      padding: 36px 40px 48px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 34px;
+      letter-spacing: -0.03em;
+    }
+    .lede {
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 19px;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 22px;
+    }
+    p { margin: 0 0 12px; }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px 24px 20px;
+      margin-bottom: 18px;
+      background: #fff;
+    }
+    .row { display: flex; gap: 18px; }
+    .row > * { flex: 1; }
+    .chip {
+      display: inline-block;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: #fff;
+    }
+    .chip.gmaps { background: var(--gmaps); }
+    .chip.cp { background: var(--cp); }
+    .chip.pink { background: var(--pink); }
+    .chip.booth { background: var(--booth); }
+    .chip.plaza { background: var(--plaza); }
+    .chip.bias { background: var(--bias); }
+    .journey {
+      position: relative;
+      height: 168px;
+      background: var(--paper);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .road {
+      position: absolute;
+      left: 0; right: 0; top: 78px;
+      height: 18px;
+      background: #cfd6dc;
+    }
+    .seg {
+      position: absolute;
+      top: 18px;
+      text-align: center;
+      font-size: 14px;
+    }
+    .seg strong { display: block; font-size: 15px; }
+    .seg small { color: var(--muted); }
+    .dot {
+      width: 16px; height: 16px; border-radius: 50%;
+      margin: 46px auto 6px;
+      border: 3px solid #fff;
+      box-shadow: 0 0 0 2px currentColor;
+    }
+    .formula {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .block {
+      flex: 1;
+      border-radius: 12px;
+      color: #fff;
+      padding: 14px 14px 12px;
+      min-height: 118px;
+    }
+    .block b { display: block; font-size: 20px; margin-bottom: 4px; }
+    .block span { display: block; font-size: 14px; line-height: 1.35; opacity: 0.95; }
+    .plus, .eq {
+      align-self: center;
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--muted);
+      width: 18px;
+      text-align: center;
+    }
+    .graph {
+      background: var(--paper);
+      border-radius: 12px;
+      padding: 8px 8px 0;
+    }
+    .ex {
+      background: var(--paper);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .ex ol { margin: 8px 0 0; padding-left: 20px; }
+    .ex li { margin: 4px 0; }
+    .kicker { color: var(--muted); font-size: 14px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 16px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .foot { color: var(--muted); font-size: 14px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>What the pink line is adding up</h1>
+    <p class="lede">Woodlands SG→JB. Google Maps times the road. Checkpoint.sg times the crossing. The pink shadow fit is the translation between them.</p>
+
+    <section class="panel">
+      <div class="kicker">1 · Two clocks on the same trip</div>
+      <div class="journey">
+        <div class="road"></div>
+        <div class="seg" style="left: 16px; width: 160px; color: var(--gmaps);">
+          <div class="dot" style="background:#fff; color: var(--gmaps);"></div>
+          <strong>BKE pin</strong>
+          <small>GMaps starts</small>
+        </div>
+        <div class="seg" style="left: 200px; width: 230px; color: var(--gmaps);">
+          <div class="dot" style="background: var(--gmaps); color: var(--gmaps);"></div>
+          <strong>Road queue</strong>
+          <small>Maps sees stop-go traffic</small>
+        </div>
+        <div class="seg" style="left: 450px; width: 270px; color: var(--booth);">
+          <div class="dot" style="background: var(--booth); color: var(--booth);"></div>
+          <strong>Plaza + booths</strong>
+          <small>CIQ and stacking, mostly invisible to Maps</small>
+        </div>
+        <div class="seg" style="left: 740px; width: 210px; color: var(--cp);">
+          <div class="dot" style="background: var(--cp); color: var(--cp);"></div>
+          <strong>Cleared</strong>
+          <small>Checkpoint.sg finish</small>
+        </div>
+      </div>
+      <p style="margin-top:14px;">
+        <span class="chip gmaps">GMaps</span> is driving time along a mapped road from the BKE pin to a clearance pin.
+        <span class="chip cp">Checkpoint.sg</span> is “how long will the whole crossing take?” — the number drivers treat as truth.
+      </p>
+    </section>
+
+    <section class="panel">
+      <div class="kicker">2 · Three pieces, then a small fudge</div>
+      <p>Pink minutes ≈ booth floor + hidden queue + today’s leftover − 5.</p>
+      <div class="formula">
+        <div class="block" style="background: var(--booth);">
+          <b>Intercept = 10m</b>
+          <span>Empty causeway still needs CIQ. This is counter time that exists even when Maps is nearly free-flow.</span>
+        </div>
+        <div class="plus">+</div>
+        <div class="block" style="background: var(--plaza); flex: 1.15;">
+          <b>Slope × GMaps = 1.9 × road</b>
+          <span>When the approach slows, the plaza is worse than the road implies. Each extra Maps minute is a proxy for ~1.9 minutes of real crossing.</span>
+        </div>
+        <div class="plus">+</div>
+        <div class="block" style="background: var(--bias);">
+          <b>Bias</b>
+          <span>Today’s leftover vs Checkpoint.sg after the two terms above: closed booths, holiday, rain. Learned slowly, then fades.</span>
+        </div>
+        <div class="plus">−</div>
+        <div class="block" style="background: #334155;">
+          <b>Minus 5 min</b>
+          <span>Start-line fudge. Our BKE pin is south of Checkpoint’s clock, so we shave 5 so we don’t over-count the approach.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="kicker">3 · Same idea as a graph</div>
+      <div class="row">
+        <div class="graph">
+          <svg viewBox="0 0 520 340" width="100%" height="340" aria-label="GMaps versus crossing time">
+            <rect x="0" y="0" width="520" height="340" fill="#f6f8fa"/>
+            <g font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" fill="#5b6b78">
+              <text x="278" y="328" text-anchor="middle">GMaps road time (min)</text>
+              <text x="16" y="170" text-anchor="middle" transform="rotate(-90 16 170)">Crossing time (min)</text>
+            </g>
+            <line x1="58" y1="292" x2="500" y2="292" stroke="#c5ced6"/>
+            <line x1="58" y1="28" x2="58" y2="292" stroke="#c5ced6"/>
+            <g font-size="12" fill="#5b6b78" font-family="Avenir Next, Segoe UI, sans-serif">
+              <text x="58" y="310" text-anchor="middle">0</text>
+              <text x="184" y="310" text-anchor="middle">10</text>
+              <text x="311" y="310" text-anchor="middle">20</text>
+              <text x="437" y="310" text-anchor="middle">30</text>
+              <text x="46" y="296" text-anchor="end">0</text>
+              <text x="46" y="204" text-anchor="end">30</text>
+              <text x="46" y="112" text-anchor="end">60</text>
+              <text x="46" y="36" text-anchor="end">90</text>
+            </g>
+            <line x1="58" y1="292" x2="500" y2="189" stroke="#94a3b8" stroke-dasharray="6 6" stroke-width="2"/>
+            <text x="250" y="204" font-size="12" fill="#64748b" font-family="Avenir Next, Segoe UI, sans-serif">1:1 if Maps were the whole story</text>
+            <line x1="58" y1="263" x2="500" y2="68" stroke="#7c3aed" stroke-width="4"/>
+            <text x="210" y="84" font-size="13" fill="#7c3aed" font-family="Avenir Next, Segoe UI, sans-serif" font-weight="700">10 + 1.9 × GMaps</text>
+            <circle cx="58" cy="263" r="5" fill="#c2410c"/>
+            <text x="70" y="250" font-size="12" fill="#c2410c" font-family="Avenir Next, Segoe UI, sans-serif">intercept 10m</text>
+            <circle cx="336" cy="140" r="7" fill="#d0008f"/>
+            <text x="348" y="146" font-size="13" fill="#d0008f" font-family="Avenir Next, Segoe UI, sans-serif" font-weight="700">pink ~52m</text>
+            <circle cx="336" cy="122" r="6" fill="#64748b"/>
+            <text x="250" y="108" font-size="12" fill="#64748b" font-family="Avenir Next, Segoe UI, sans-serif">Checkpoint 58m</text>
+          </svg>
+        </div>
+        <div>
+          <p><strong>If Maps were truth</strong>, the dashed 1:1 line would be the crossing. It never is — booths exist even on an empty road, so the real line starts at 10 minutes, not zero.</p>
+          <p><strong>Slope 1.9 means the line is steeper than 1:1.</strong> Road congestion is a leading indicator of plaza overflow Maps cannot fully see. 20 minutes on Maps is not “20 plus booths”; it is closer to 10 + 1.9×20.</p>
+          <p><strong>Bias is the vertical gap</strong> between that purple line and Checkpoint.sg right now. The pink line rides the purple line, then nudges toward today’s Checkpoint residual (slowly on SG→JB, faster on JB→SG).</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="kicker">4 · One 11:00 worked example (SG→JB)</div>
+      <div class="row">
+        <div class="ex">
+          <p><span class="chip gmaps">GMaps</span> approaches 18 / 25 / 24 min · mean 22</p>
+          <ol>
+            <li>Booth floor: <strong>10</strong></li>
+            <li>Hidden queue: 1.9 × 22 = <strong>42</strong></li>
+            <li>Static base: 10 + 42 = <strong>52</strong></li>
+            <li>Start-line fudge: 52 − 5 = <strong>47</strong></li>
+            <li>Today’s bias (~+3 to +10 after learning): pink lands around <strong>46–59</strong> per approach</li>
+          </ol>
+          <p class="foot">Checkpoint.sg midpoint that hour was 58. Pink is allowed to lag it — SG→JB only takes 25% of each residual, so a sudden Checkpoint jump does not yank the line all the way in one slot.</p>
+        </div>
+        <div>
+          <table>
+            <thead>
+              <tr><th>Term</th><th>Real world</th><th>SG→JB</th><th>JB→SG</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Intercept</td><td>CIQ / booth floor on an empty road</td><td>10 min</td><td>5 min</td></tr>
+              <tr><td>Slope</td><td>Unmapped plaza growing faster than the road</td><td>1.9×</td><td>1.7×</td></tr>
+              <tr><td>Bias</td><td>Today vs Checkpoint.sg, after the two terms above</td><td>learns 25%</td><td>learns 65%</td></tr>
+              <tr><td>−5 min</td><td>Our pin starts before their queue line</td><td colspan="2">both directions</td></tr>
+            </tbody>
+          </table>
+          <p class="foot">JB→SG intercept is lower because Singapore processing is usually the faster stop in free flow. Slope is still above 1 — the plaza still hides queue that Maps undercounts.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
