@@ -35,7 +35,12 @@ run_gmaps() {
     /data/data/com.termux/files/usr/bin/bash /sdcard/Download/crossborder-mi6-gmaps-capture.sh || true
   fi
 }
-trap run_gmaps EXIT
+cleanup_images() {
+  rm -f "$screenshot_dir"/*_com.tplusinteractive.checkpointsg.*
+  rm -rf "$PREFIX/tmp/crossborder-checkpoint-ocr"
+  run_gmaps
+}
+trap cleanup_images EXIT
 
 started_at="$(date +%s)"
 latest=''
@@ -134,10 +139,7 @@ fi
 response="$(curl -sS --connect-timeout 20 --max-time 45 -H "X-Monitor-Key: $monitor_key" -H 'Content-Type: application/json' --data "$payload" "$api_url" 2>&1 || true)"
 printf '%s\\n' "$response" > "$status_path"
 case "$response" in
-  *'"ok":true'*)
-    rm -f "$screenshot_dir"/*_com.tplusinteractive.checkpointsg.*
-    exit 0
-    ;;
+  *'"ok":true'*) exit 0 ;;
   *) exit 1 ;;
 esac
 `;
