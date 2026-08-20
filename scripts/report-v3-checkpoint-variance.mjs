@@ -689,36 +689,74 @@ function chartSvg(route, rows) {
   const plotWidth = width - margin.left - margin.right;
   const x = (row) => margin.left + minutesIntoSingaporeDay(row.capturedAt) / (24 * 60) * plotWidth;
   const y = (value) => height - margin.bottom - (value - low) * (height - margin.top - margin.bottom) / Math.max(high - low, 1);
-  const line = (key) => {
-    let lastMs = null;
-    return rows.map((row) => {
-      if (!Number.isFinite(row[key])) return "";
-      const ms = new Date(row.capturedAt).getTime();
-      const connect = lastMs !== null && ms - lastMs <= 60 * 60 * 1000;
-      lastMs = ms;
-      return `${connect ? "L" : "M"}${x(row).toFixed(1)},${y(row[key]).toFixed(1)}`;
-    }).filter(Boolean).join(" ");
-  };
-  const checkpointSegments = () => {
-    const real = [];
-    const synthetic = [];
-    let previous = null;
-    for (const row of rows) {
-      if (!Number.isFinite(row.checkpointMid)) {
-        previous = null;
+  const monotonePath = (points) => {
+    if (points.length === 0) return "";
+    if (points.length === 1) return `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+    if (points.length === 2) {
+      return `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)} L${points[1].x.toFixed(1)},${points[1].y.toFixed(1)}`;
+    }
+    const n = points.length;
+    const delta = [];
+    for (let index = 0; index < n - 1; index += 1) {
+      const dx = points[index + 1].x - points[index].x;
+      delta.push(Math.abs(dx) < 1e-6 ? 0 : (points[index + 1].y - points[index].y) / dx);
+    }
+    const slope = new Array(n).fill(0);
+    slope[0] = delta[0];
+    slope[n - 1] = delta[n - 2];
+    for (let index = 1; index < n - 1; index += 1) {
+      slope[index] = delta[index - 1] * delta[index] <= 0 ? 0 : (delta[index - 1] + delta[index]) / 2;
+    }
+    for (let index = 0; index < n - 1; index += 1) {
+      if (Math.abs(delta[index]) < 1e-6) {
+        slope[index] = 0;
+        slope[index + 1] = 0;
         continue;
       }
-      if (previous && Number.isFinite(previous.checkpointMid)) {
-        const command = `M${x(previous).toFixed(1)},${y(previous.checkpointMid).toFixed(1)} L${x(row).toFixed(1)},${y(row.checkpointMid).toFixed(1)}`;
-        (previous.checkpointSynthetic || row.checkpointSynthetic ? synthetic : real).push(command);
+      const alpha = slope[index] / delta[index];
+      const beta = slope[index + 1] / delta[index];
+      const sum = alpha * alpha + beta * beta;
+      if (sum > 9) {
+        const tau = 3 / Math.sqrt(sum);
+        slope[index] = tau * alpha * delta[index];
+        slope[index + 1] = tau * beta * delta[index];
       }
-      previous = row;
     }
-    return { real: real.join(" "), synthetic: synthetic.join(" ") };
+    let path = `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+    for (let index = 0; index < n - 1; index += 1) {
+      const dx = (points[index + 1].x - points[index].x) / 3;
+      path += ` C${(points[index].x + dx).toFixed(1)},${(points[index].y + slope[index] * dx).toFixed(1)} ${(points[index + 1].x - dx).toFixed(1)},${(points[index + 1].y - slope[index + 1] * dx).toFixed(1)} ${points[index + 1].x.toFixed(1)},${points[index + 1].y.toFixed(1)}`;
+    }
+    return path;
   };
-  const checkpointPaths = checkpointSegments();
+  const line = (key, include = () => true) => {
+    const runs = [];
+    let run = [];
+    let lastMs = null;
+    for (const row of rows) {
+      if (!Number.isFinite(row[key]) || !include(row)) {
+        if (run.length) runs.push(run);
+        run = [];
+        lastMs = null;
+        continue;
+      }
+      const ms = new Date(row.capturedAt).getTime();
+      if (lastMs !== null && ms - lastMs > 60 * 60 * 1000) {
+        if (run.length) runs.push(run);
+        run = [];
+      }
+      run.push({ x: x(row), y: y(row[key]) });
+      lastMs = ms;
+    }
+    if (run.length) runs.push(run);
+    return runs.map(monotonePath).join(" ");
+  };
+  const checkpointPaths = {
+    real: line("checkpointMid", (row) => !row.checkpointSynthetic),
+    synthetic: line("checkpointMid", (row) => row.checkpointSynthetic),
+  };
   const oursPoints = rows.filter((row) => Number.isFinite(row.oursLow) && Number.isFinite(row.oursHigh));
-  const area = oursPoints.length < 2 ? "" : `${line("oursLow")} ${oursPoints.slice().reverse().map((row) => `L${x(row).toFixed(1)},${y(row.oursHigh).toFixed(1)}`).join(" ")} Z`;
+  const area = oursPoints.length < 2 ? "" : `${line("oursLow")} ${monotonePath(oursPoints.slice().reverse().map((row) => ({ x: x(row), y: y(row.oursHigh) }))).replace(/^M/, "L")} Z`;
   const grids = Array.from({ length: (high - low) / 15 + 1 }, (_, index) => low + index * 15)
     .filter((value) => value <= high)
     .map((value) => `<line x1="${margin.left}" x2="${width - margin.right}" y1="${y(value)}" y2="${y(value)}" stroke="#d7dde2"/><text x="${margin.left - 14}" y="${y(value) + 5}" text-anchor="end" fill="#56616d" font-size="20">${value}m</text>`)
