@@ -276,7 +276,9 @@ function doPost(e) {
     }
     if (body.type === 'jam-log') {
       const slot = body.slot || Utilities.formatDate(floorToQuarter(new Date()), TZ, 'yyyy-MM-dd HH:mm');
+      logJamLengths.force = !!body.force;
       const jam = logJamLengths(slot);
+      logJamLengths.force = false;
       const rebuilt = rebuildShadowFit();
       return jsonOut({ ok: true, result: jam + '; ' + rebuilt });
     }
