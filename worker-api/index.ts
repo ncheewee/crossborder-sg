@@ -122,9 +122,9 @@ const woodlandsRoutePlans: Record<Direction, { clearance: Coordinate; approaches
   "sg-my": {
     clearance: { latitude: 1.466582, longitude: 103.768091 },
     approaches: [
-      { id: "woodlands-bke-right", latitude: 1.439328, longitude: 103.768422 },
-      { id: "woodlands-bke-left", latitude: 1.439356, longitude: 103.768285 },
-      { id: "woodlands-road-left", latitude: 1.440516, longitude: 103.768108 },
+      { id: "woodlands-bke-right", latitude: 1.421730, longitude: 103.771179 },
+      { id: "woodlands-bke-left", latitude: 1.421730, longitude: 103.771179 },
+      { id: "woodlands-road-left", latitude: 1.426905, longitude: 103.763665 },
     ],
   },
   "my-sg": {

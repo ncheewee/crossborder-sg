@@ -60,6 +60,7 @@ const SHEET_ID      = '1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo';
 const SHEET_GMAPS       = 'GMaps Scraped';
 const SHEET_SHADOW      = 'Shadow Fit';
 const SHEET_SHADOW_LEGACY = 'GMaps Adjusted';
+const SHEET_PARAMETERS  = 'Parameters';
 const SHEET_TOMTOM      = 'TomTom API';
 const SHEET_MAPBOX      = 'Mapbox API';
 const SHEET_CHECKPOINT  = 'Checkpoint.sg';
@@ -125,9 +126,9 @@ const CAMS = [
 // Column order here defines B–H on both tabs. Do not reorder without also
 // updating the Chrome scraping task, which writes B–H positionally.
 const ROUTES = [
-  { col: 'B', name: 'SG-JB A | BKE Flyover',        from: '1.439328,103.768422',  to: '1.466582,103.768091'   },
-  { col: 'C', name: 'SG-JB B | BKE Junction',       from: '1.439356,103.768285',  to: '1.466582,103.768091'   },
-  { col: 'D', name: 'SG-JB C | Woodlands Rd',       from: '1.440516,103.768108',  to: '1.466582,103.768091'   },
+  { col: 'B', name: 'SG-JB A | BKE Flyover',        from: '1.421730,103.771179',  to: '1.466582,103.768091'   },
+  { col: 'C', name: 'SG-JB B | BKE Junction',       from: '1.421730,103.771179',  to: '1.466582,103.768091'   },
+  { col: 'D', name: 'SG-JB C | Woodlands Rd',       from: '1.426905,103.763665',  to: '1.466582,103.768091'   },
   { col: 'E', name: 'JB-SG A | Lingkaran Dalam S',  from: '1.472085,103.7651',    to: '1.4430746,103.7683229' },
   { col: 'F', name: 'JB-SG B | AH2',                from: '1.482406,103.7832',    to: '1.4430746,103.7683229' },
   { col: 'G', name: 'JB-SG C | Bukit Chagar',       from: '1.467340,103.7658',    to: '1.4430746,103.7683229' },
@@ -250,6 +251,9 @@ function doPost(e) {
     }
     if (body.type === 'shadow-rebuild') {
       return jsonOut({ ok: true, result: rebuildShadowFit() });
+    }
+    if (body.type === 'parameters-sync') {
+      return jsonOut({ ok: true, result: writeParametersSheet() });
     }
     if (body.type === 'checkpoint') {
       if (!Array.isArray(body.row) || body.row.length !== 9) {
@@ -1201,6 +1205,54 @@ function rebuildShadowFit() {
   return 'rewrote ' + out.length + ' rows';
 }
 
+/** Canonical pins and shadow-fit model. Safe to re-run; replaces the tab contents. */
+function writeParametersSheet() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sh = ss.getSheetByName(SHEET_PARAMETERS);
+  if (!sh) sh = ss.insertSheet(SHEET_PARAMETERS);
+  const cal = SHADOW_CALIBRATION;
+  const sg = cal.directions['sg-my'];
+  const my = cal.directions['my-sg'];
+  const stamp = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm');
+  const rows = [
+    ['Key', 'Value', 'Notes'],
+    ['updated_sgt', stamp, 'Rewritten when pins or model change'],
+    ['', '', ''],
+    ['sg_jb_clearance', '1.466582, 103.768091', 'Past Malaysian CIQ'],
+    ['sg_jb_a_origin', '1.421730, 103.771179', 'Far start on Bukit Timah Expy (PUB WH2). Shared with B.'],
+    ['sg_jb_b_origin', '1.421730, 103.771179', 'Same far start as A. Mi6 copies A duration into B.'],
+    ['sg_jb_c_origin', '1.426905, 103.763665', 'Far start on Woodlands Ave 3 into Woodlands Road'],
+    ['', '', ''],
+    ['jb_sg_clearance', '1.4430746, 103.7683229', 'Past Singapore CIQ'],
+    ['jb_sg_a_origin', '1.472085, 103.7651', 'Lingkaran Dalam S'],
+    ['jb_sg_b_origin', '1.482406, 103.7832', 'AH2'],
+    ['jb_sg_c_origin', '1.467340, 103.7658', 'Bukit Chagar'],
+    ['jb_sg_d_origin', '1.465356, 103.7702', 'Lingkaran Dalam N'],
+    ['', '', ''],
+    ['sg_jb_intercept_min', String(sg.intercept), 'Booth / CIQ floor, empty road'],
+    ['sg_jb_slope', String(sg.slope), 'Hidden plaza vs Maps road time'],
+    ['sg_jb_alpha', String(sg.alpha), 'Currently in code; agreed not to chase Checkpoint with bias'],
+    ['jb_sg_intercept_min', String(my.intercept), 'Booth / CIQ floor, empty road'],
+    ['jb_sg_slope', String(my.slope), 'Hidden plaza vs Maps road time'],
+    ['jb_sg_alpha', String(my.alpha), 'Currently in code; agreed not to chase Checkpoint with bias'],
+    ['display_offset_min', String(cal.displayOffsetMinutes), 'Currently in code; agreed to drop the static minus-five'],
+    ['bias_hold_hours', String(cal.biasHoldHours), 'How long a learned bias is held before it fades'],
+    ['bias_half_life_hours', String(cal.biasHalfLifeHours), 'Fade after the hold'],
+    ['minimum_minutes', String(cal.minimumMinutes), 'Clamp'],
+    ['maximum_minutes', String(cal.maximumMinutes), 'Clamp'],
+    ['', '', ''],
+    ['method', 'far-start then jam-start', 'Ask Google for speed along the line from the far pin. First slow/jam is the queue tail. Time from there, then intercept + slope. Checkpoint.sg is the grey guide, not the teacher.'],
+  ];
+  sh.clear();
+  sh.getRange(1, 1, rows.length, 3).setValues(rows);
+  sh.getRange(1, 1, 1, 3).setFontWeight('bold');
+  sh.setFrozenRows(1);
+  sh.setColumnWidth(1, 220);
+  sh.setColumnWidth(2, 280);
+  sh.setColumnWidth(3, 520);
+  return 'wrote ' + rows.length + ' rows';
+}
+
 // ─── One-time setup ────────────────────────────────────────────────────────
 
 /** Renames the original tab, creates the TomTom tab, writes headers. Safe to re-run. */
@@ -1233,9 +1285,10 @@ function setupSheets() {
 
   ensureShadowFitTab(ss);
   Logger.log('Shadow Fit — ' + rebuildShadowFit());
+  Logger.log('Parameters — ' + writeParametersSheet());
 
   Logger.log('Sheets ready: "' + SHEET_GMAPS + '", "' + SHEET_TOMTOM
-             + '", "' + SHEET_MAPBOX + '", "' + SHEET_SHADOW + '"');
+             + '", "' + SHEET_MAPBOX + '", "' + SHEET_SHADOW + '", "' + SHEET_PARAMETERS + '"');
 }
 
 /** Creates a provider tab if absent and writes its headers. Idempotent. */

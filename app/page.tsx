@@ -2300,19 +2300,19 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
     id: "woodlands-bke-right",
     label: "A · BKE (right) → Flyover",
     instruction: "Right flyover lane",
-    waypoint: { latitude: 1.439328, longitude: 103.768422 },
+    waypoint: { latitude: 1.421730, longitude: 103.771179 },
   },
   {
     id: "woodlands-bke-left",
     label: "B · BKE (left) → Junction",
     instruction: "Left mainline lane",
-    waypoint: { latitude: 1.439356, longitude: 103.768285 },
+    waypoint: { latitude: 1.421730, longitude: 103.771179 },
   },
   {
     id: "woodlands-road-left",
     label: "C · Woodlands Road",
     instruction: "Left-turn feeder",
-    waypoint: { latitude: 1.440516, longitude: 103.768108 },
+    waypoint: { latitude: 1.426905, longitude: 103.763665 },
   },
   ],
   "my-sg": [

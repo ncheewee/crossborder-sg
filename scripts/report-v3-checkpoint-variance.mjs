@@ -46,9 +46,9 @@ const routeSets = [
     directionKey: "towardsJb",
     clearance: { latitude: 1.466582, longitude: 103.768091 },
     routes: [
-      { id: "A", sourceColumn: "SG-JB A | BKE Flyover", origin: { latitude: 1.439328, longitude: 103.768422 } },
-      { id: "B", sourceColumn: "SG-JB B | BKE Junction", origin: { latitude: 1.439356, longitude: 103.768285 } },
-      { id: "C", sourceColumn: "SG-JB C | Woodlands Rd", origin: { latitude: 1.440516, longitude: 103.768108 } },
+      { id: "A", sourceColumn: "SG-JB A | BKE Flyover", origin: { latitude: 1.421730, longitude: 103.771179 } },
+      { id: "B", sourceColumn: "SG-JB B | BKE Junction", origin: { latitude: 1.421730, longitude: 103.771179 } },
+      { id: "C", sourceColumn: "SG-JB C | Woodlands Rd", origin: { latitude: 1.426905, longitude: 103.763665 } },
     ],
   },
   {

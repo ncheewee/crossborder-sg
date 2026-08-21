@@ -9,19 +9,19 @@ const routes = [
     id: "woodlands-bke-right",
     label: "A · BKE flyover",
     instruction: "Right flyover lane",
-    origin: { latitude: 1.439328, longitude: 103.768422 },
+    origin: { latitude: 1.421730, longitude: 103.771179 },
   },
   {
     id: "woodlands-bke-left",
     label: "B · BKE mainline",
     instruction: "Left mainline lane",
-    origin: { latitude: 1.439356, longitude: 103.768285 },
+    origin: { latitude: 1.421730, longitude: 103.771179 },
   },
   {
     id: "woodlands-road-left",
     label: "C · Woodlands Rd",
     instruction: "Left-turn feeder",
-    origin: { latitude: 1.440516, longitude: 103.768108 },
+    origin: { latitude: 1.426905, longitude: 103.763665 },
   },
 ];
 
