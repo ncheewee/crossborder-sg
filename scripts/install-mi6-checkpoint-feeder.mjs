@@ -102,14 +102,26 @@ sg_tuas_crop="$crop_dir/sg-tuas.png"
 
 take_snap() {
   rm -f "$tmp_snap" "$latest"
-  if command -v su >/dev/null 2>&1; then
-    su -c "screencap -p $tmp_snap && cp $tmp_snap $latest && chmod 644 $latest" >/dev/null 2>&1 || true
+  now="$(date +%s)"
+  fresh="$(ls -t "$screenshot_dir"/*_com.tplusinteractive.checkpointsg.* 2>/dev/null | head -n 1 || true)"
+  if [ -n "$fresh" ] && [ -r "$fresh" ]; then
+    age="$(( now - $(stat -c %Y "$fresh") ))"
+    if [ "$age" -le 60 ]; then
+      cp "$fresh" "$latest" 2>/dev/null || true
+    fi
+  fi
+  if [ ! -s "$latest" ]; then
+    if command -v su >/dev/null 2>&1; then
+      su -c "screencap -p $tmp_snap && cp $tmp_snap $latest && chmod 644 $latest" >/dev/null 2>&1 || true
+    fi
   fi
   if [ ! -s "$latest" ]; then
     screencap -p "$latest" >/dev/null 2>&1 || true
   fi
   rm -f "$tmp_snap"
-  [ -s "$latest" ]
+  local size
+  size="$(stat -c %s "$latest" 2>/dev/null || echo 0)"
+  [ "$size" -gt 100000 ]
 }
 
 ranges_from_ocr() {
