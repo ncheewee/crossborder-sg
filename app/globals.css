@@ -874,18 +874,15 @@ button { font: inherit; }
 .v3-route-history-legend span {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
-.v3-route-history-legend span::before {
-  width: 12px;
-  border-top: 4px solid #0f766e;
-  content: "";
-}
-
-.v3-route-history-legend .comparison::before {
-  border-top-color: #64748b;
-  border-top-style: dotted;
+.v3-route-history-legend svg {
+  display: block;
+  width: 22px;
+  height: 10px;
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .v3-route-history-plot {
@@ -894,7 +891,7 @@ button { font: inherit; }
   height: 100%;
 }
 
-.v3-route-history svg {
+.v3-route-history-plot svg {
   display: block;
   width: 100%;
   height: 100%;
@@ -941,8 +938,8 @@ button { font: inherit; }
 
 .v3-route-history path.comparison {
   stroke: #64748b;
-  stroke-width: 2;
-  stroke-dasharray: 3 4;
+  stroke-width: 3.5;
+  stroke-dasharray: 8 7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }

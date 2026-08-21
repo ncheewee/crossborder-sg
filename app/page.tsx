@@ -1526,8 +1526,14 @@ function ApproachHistoryOverlay({
   return (
     <div className="v3-route-history" aria-label={`Route crossing time today compared with ${series.comparisonLabel}`}>
       <div className="v3-route-history-legend" aria-hidden="true">
-        <span className="today">Today</span>
-        <span className="comparison">{series.comparisonLabel}</span>
+        <span className="today">
+          <svg viewBox="0 0 18 8" aria-hidden="true"><path d="M1 4 H17" className="today" /></svg>
+          Today
+        </span>
+        <span className="comparison">
+          <svg viewBox="0 0 18 8" aria-hidden="true"><path d="M1 4 H17" className="comparison" /></svg>
+          {series.comparisonLabel}
+        </span>
       </div>
       <div className="v3-route-history-plot">
         <svg viewBox="0 0 300 140" preserveAspectRatio="none" aria-hidden="true">
