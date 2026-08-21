@@ -1388,6 +1388,15 @@ function logJamLengths(slotStr) {
   const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
   if (!key) return 'no GOOGLE_ROUTES_KEY';
   const ss = SpreadsheetApp.openById(SHEET_ID);
+  const gmaps = ss.getSheetByName(SHEET_GMAPS);
+  if (gmaps && gmaps.getLastRow() >= 2) {
+    const stamps = gmaps.getRange(2, COL_TIMESTAMP, gmaps.getLastRow() - 1, 1).getDisplayValues();
+    var found = false;
+    for (var i = 0; i < stamps.length; i++) {
+      if (String(stamps[i][0]).trim() === slotStr) found = true;
+    }
+    if (!found) slotStr = String(stamps[stamps.length - 1][0]).trim();
+  }
   const sh = ensureShadowFitTab(ss);
   const row = findOrCreateRow(sh, slotStr);
   const existingKm = sh.getRange(row, COL_JAM_SGJB_KM).getDisplayValue();
