@@ -58,8 +58,9 @@
 
 const SHEET_ID      = '1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo';
 const SHEET_GMAPS       = 'GMaps Scraped';
-const SHEET_SHADOW      = 'Shadow Fit';
-const SHEET_SHADOW_LEGACY = 'GMaps Adjusted';
+const SHEET_SHADOW      = 'Crossborder';
+const SHEET_SHADOW_LEGACY = 'Shadow Fit';
+const SHEET_SHADOW_LEGACY_2 = 'GMaps Adjusted';
 const SHEET_PARAMETERS  = 'Parameters';
 const SHEET_TOMTOM      = 'TomTom API';
 const SHEET_MAPBOX      = 'Mapbox API';
@@ -140,6 +141,23 @@ const COL_ROUTE_1   = 2;   // B
 const COL_FREEFLOW_1= 9;   // I on the TomTom/Mapbox tabs
 const COL_CAM_1     = 9;   // I on the cams tab
 
+// Crossborder extra columns after the seven route durations.
+const COL_JAM_SGJB_KM  = 9;  // I
+const COL_JAM_SGJB_MIN = 10; // J
+const COL_JAM_C_KM     = 11; // K
+const COL_JAM_C_MIN    = 12; // L
+const COL_JAM_JBSG_KM  = 13; // M
+const COL_JAM_JBSG_MIN = 14; // N
+const JAM_COL_COUNT    = 6;
+
+// Plaza reference for jam length: 0 km when the tail is at the checkpoint.
+const JAM_REF = { lat: 1.443307, lng: 103.767903 };
+const JAM_PROBES = [
+  { key: 'sg_jb', from: '1.421730,103.771179', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN },
+  { key: 'sg_jb_c', from: '1.426905,103.763665', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN },
+  { key: 'jb_sg', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN },
+];
+
 // L on the GMaps tab: one Source label for the whole row — Mi6, Mac, or API.
 const COL_GMAPS_SOURCE = 12; // L
 const SRC_MI6       = 'Mi6';
@@ -197,7 +215,8 @@ function logHour() {
     watchdog();
   }
 
-  Logger.log('Shadow Fit — ' + rebuildShadowFit());
+  Logger.log('Jam lengths — ' + logJamLengths(quarterStr));
+  Logger.log('Crossborder — ' + rebuildShadowFit());
 }
 
 // ─── Ingest endpoint for the Google Maps scraper ───────────────────────────
@@ -255,6 +274,12 @@ function doPost(e) {
     if (body.type === 'parameters-sync') {
       return jsonOut({ ok: true, result: writeParametersSheet() });
     }
+    if (body.type === 'jam-log') {
+      const slot = body.slot || Utilities.formatDate(floorToQuarter(new Date()), TZ, 'yyyy-MM-dd HH:mm');
+      const jam = logJamLengths(slot);
+      const rebuilt = rebuildShadowFit();
+      return jsonOut({ ok: true, result: jam + '; ' + rebuilt });
+    }
     if (body.type === 'checkpoint') {
       if (!Array.isArray(body.row) || body.row.length !== 9) {
         return jsonOut({ ok: false, error: 'row must be 9 cells' });
@@ -299,6 +324,7 @@ function doPost(e) {
     writeGmapsSource(sh, r, landed ? (body.source === 'mi6-maps' ? SRC_MI6 : SRC_MAC) : '');
 
     Logger.log('Ingest ' + body.slot + ' → row ' + r + ' : ' + row.join('/'));
+    logJamLengths(body.slot);
     rebuildShadowFit();
     return jsonOut({ ok: true, slot: body.slot, row: r, values: row });
 
@@ -1118,29 +1144,27 @@ function parseGmapsMinutes(value) {
 
 function ensureShadowFitTab(ss) {
   let sh = ss.getSheetByName(SHEET_SHADOW);
-  const legacy = ss.getSheetByName(SHEET_SHADOW_LEGACY);
-  if (!sh && legacy) {
-    legacy.setName(SHEET_SHADOW);
-    sh = legacy;
-    Logger.log('Renamed "' + SHEET_SHADOW_LEGACY + '" → "' + SHEET_SHADOW + '"');
+  if (!sh) {
+    const legacy = ss.getSheetByName(SHEET_SHADOW_LEGACY) || ss.getSheetByName(SHEET_SHADOW_LEGACY_2);
+    if (legacy) {
+      legacy.setName(SHEET_SHADOW);
+      sh = legacy;
+      Logger.log('Renamed to "' + SHEET_SHADOW + '"');
+    }
   }
   if (!sh) {
     sh = ss.insertSheet(SHEET_SHADOW);
     Logger.log('Created tab "' + SHEET_SHADOW + '"');
   }
-  const headers = ['Timestamp (SGT)'].concat(ROUTES.map(function (route) { return route.name; }));
+  const headers = ['Timestamp (SGT)']
+    .concat(ROUTES.map(function (route) { return route.name; }))
+    .concat(['SG-JB jam km', 'SG-JB jam-start min', 'SG-JB C jam km', 'SG-JB C jam-start min', 'JB-SG jam km', 'JB-SG jam-start min']);
   sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
   sh.setFrozenRows(1);
   sh.getRange(1, 1).setNote(
-    'Shadow fit - same pink line as the Telegram charts and the CrossBorder.sg app.\n'
-    + 'Per approach: intercept + slope x GMaps + Checkpoint-learned bias - 5 min.\n'
-    + 'Rewritten from GMaps Scraped + Checkpoint.sg. Do not put formulas here.'
+    'Crossborder — jam-start duration through intercept + slope. '
+    + 'Jam km is along-route length from the first slow/jam to the plaza at 1.443307, 103.767903 (0 if none).'
   );
-  if (sh.getMaxColumns() > headers.length) {
-    const extra = sh.getRange(1, headers.length + 1, Math.max(sh.getLastRow(), 1), sh.getMaxColumns() - headers.length);
-    extra.clearContent();
-    extra.clearNote();
-  }
   return sh;
 }
 
@@ -1156,6 +1180,7 @@ function rebuildShadowFit() {
   const gLast = gmaps.getLastRow();
   if (gLast < 2) return 'no GMaps rows';
   const gValues = gmaps.getRange(2, COL_TIMESTAMP, gLast - 1, 8).getDisplayValues();
+  const jamByStamp = readJamByStamp(shadow);
   const cpLast = checkpoint.getLastRow();
   const checkpointByMs = {};
   if (cpLast >= 2) {
@@ -1180,9 +1205,24 @@ function rebuildShadowFit() {
     const stamp = row[0];
     const at = sgtStampToMs(stamp);
     const minutes = row.slice(1, 8).map(parseGmapsMinutes);
+    const jam = jamByStamp[stamp] || ['', '', '', '', '', ''];
     if (at == null) {
-      out.push([stamp, '', '', '', '', '', '', '']);
+      out.push([stamp, '', '', '', '', '', '', ''].concat(jam));
       continue;
+    }
+    const sgAb = Number(jam[1]);
+    const sgC = Number(jam[3]);
+    const jbSg = Number(jam[5]);
+    if (isFinite(sgAb) && sgAb > 0) {
+      minutes[0] = sgAb;
+      minutes[1] = sgAb;
+    }
+    if (isFinite(sgC) && sgC > 0) minutes[2] = sgC;
+    if (isFinite(jbSg) && jbSg > 0) {
+      minutes[3] = jbSg;
+      minutes[4] = jbSg;
+      minutes[5] = jbSg;
+      minutes[6] = jbSg;
     }
     const sgBias = shadowEffectiveBias(sgState, at, SHADOW_CALIBRATION);
     const myBias = shadowEffectiveBias(myState, at, SHADOW_CALIBRATION);
@@ -1194,15 +1234,183 @@ function rebuildShadowFit() {
     const cp = checkpointByMs[at] || {};
     sgState = learnShadowBias(sgState, shadowMeanPositive(minutes.slice(0, 3)), cp.towardsJb, 'sg-my', at, sgBias, SHADOW_CALIBRATION);
     myState = learnShadowBias(myState, shadowMeanPositive(minutes.slice(3, 7)), cp.towardsSg, 'my-sg', at, myBias, SHADOW_CALIBRATION);
-    out.push([stamp].concat(fitted));
+    out.push([stamp].concat(fitted).concat(jam));
   }
 
-  shadow.getRange(2, 1, out.length, 8).setValues(out);
+  shadow.getRange(2, 1, out.length, 8 + JAM_COL_COUNT).setValues(out);
   const leftover = shadow.getLastRow() - (out.length + 1);
   if (leftover > 0) {
-    shadow.getRange(out.length + 2, 1, leftover, Math.max(shadow.getLastColumn(), 8)).clearContent();
+    shadow.getRange(out.length + 2, 1, leftover, 8 + JAM_COL_COUNT).clearContent();
   }
   return 'rewrote ' + out.length + ' rows';
+}
+
+function readJamByStamp(shadow) {
+  const map = {};
+  const last = shadow.getLastRow();
+  if (last < 2) return map;
+  const block = shadow.getRange(2, COL_TIMESTAMP, last - 1, 8 + JAM_COL_COUNT).getDisplayValues();
+  block.forEach(function (row) {
+    if (!row[0]) return;
+    map[row[0]] = row.slice(8, 8 + JAM_COL_COUNT);
+  });
+  return map;
+}
+
+function haversineKm(a, b) {
+  const toRad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toRad;
+  const dLng = (b.lng - a.lng) * toRad;
+  const s = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+    + Math.cos(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+function decodePolyline(encoded) {
+  const coords = [];
+  var index = 0;
+  var lat = 0;
+  var lng = 0;
+  while (index < encoded.length) {
+    for (var part = 0; part < 2; part++) {
+      var shift = 0;
+      var result = 0;
+      var byte;
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 31) << shift;
+        shift += 5;
+      } while (byte >= 32);
+      const delta = (result & 1) ? ~(result >> 1) : (result >> 1);
+      if (part === 0) lat += delta;
+      else lng += delta;
+    }
+    coords.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return coords;
+}
+
+function alongKm(points, fromIdx, toIdx) {
+  if (fromIdx >= toIdx || fromIdx < 0 || toIdx >= points.length) return 0;
+  var sum = 0;
+  for (var i = fromIdx; i < toIdx; i++) sum += haversineKm(points[i], points[i + 1]);
+  return sum;
+}
+
+function nearestIndex(points, ref) {
+  var best = 0;
+  var bestD = 1e9;
+  for (var i = 0; i < points.length; i++) {
+    const d = haversineKm(points[i], ref);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+function analyzeJam(routeBody) {
+  const route = routeBody && routeBody.routes && routeBody.routes[0];
+  if (!route) return null;
+  const live = Math.round(parseFloat(String(route.duration || '0').replace('s', '')) / 60);
+  const stat = route.staticDuration
+    ? Math.round(parseFloat(String(route.staticDuration).replace('s', '')) / 60)
+    : live;
+  const encoded = route.polyline && route.polyline.encodedPolyline;
+  if (!encoded) return { jamKm: 0, jamStartMin: live, live: live };
+  const points = decodePolyline(encoded);
+  if (points.length < 2) return { jamKm: 0, jamStartMin: live, live: live };
+  const intervals = (route.travelAdvisory && route.travelAdvisory.speedReadingIntervals) || [];
+  var jamIdx = -1;
+  for (var i = 0; i < intervals.length; i++) {
+    const speed = String(intervals[i].speed || '');
+    if (speed === 'SLOW' || speed === 'TRAFFIC_JAM') {
+      jamIdx = Number(intervals[i].startPolylinePointIndex || 0);
+      break;
+    }
+  }
+  const cpIdx = nearestIndex(points, JAM_REF);
+  const totalKm = alongKm(points, 0, points.length - 1);
+  if (jamIdx < 0 || jamIdx >= cpIdx) {
+    const remainKm = alongKm(points, cpIdx, points.length - 1);
+    const remainMin = totalKm > 0 ? Math.round(stat * remainKm / totalKm) : SHADOW_CALIBRATION.minimumMinutes;
+    return { jamKm: 0, jamStartMin: Math.max(SHADOW_CALIBRATION.minimumMinutes, remainMin), live: live };
+  }
+  const prefixKm = alongKm(points, 0, jamIdx);
+  const jamKm = alongKm(points, jamIdx, cpIdx);
+  const prefixStatic = totalKm > 0 ? stat * prefixKm / totalKm : 0;
+  const jamStartMin = Math.max(SHADOW_CALIBRATION.minimumMinutes, Math.round(live - prefixStatic));
+  return { jamKm: Math.round(jamKm * 100) / 100, jamStartMin: jamStartMin, live: live };
+}
+
+function fetchTrafficOnPolyline(fromStr, toStr, key) {
+  const from = fromStr.split(',').map(Number);
+  const to = toStr.split(',').map(Number);
+  const payload = {
+    origin: { location: { latLng: { latitude: from[0], longitude: from[1] } } },
+    destination: { location: { latLng: { latitude: to[0], longitude: to[1] } } },
+    travelMode: 'DRIVE',
+    routingPreference: 'TRAFFIC_AWARE',
+    polylineQuality: 'HIGH_QUALITY',
+    extraComputations: ['TRAFFIC_ON_POLYLINE'],
+  };
+  var lastStatus = 0;
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const resp = UrlFetchApp.fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+        method: 'post',
+        contentType: 'application/json',
+        headers: {
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.speedReadingIntervals',
+        },
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true,
+      });
+      lastStatus = resp.getResponseCode();
+      if (lastStatus === 200) return { status: 200, body: JSON.parse(resp.getContentText()) };
+      Logger.log('Jam polyline HTTP ' + lastStatus + ' — ' + resp.getContentText().slice(0, 200));
+      if (lastStatus === 429 || lastStatus === 503) {
+        Utilities.sleep(2500 * attempt);
+        continue;
+      }
+      return { status: lastStatus, body: null };
+    } catch (e) {
+      Logger.log('Jam polyline failed: ' + e);
+      Utilities.sleep(1500 * attempt);
+    }
+  }
+  return { status: lastStatus || 429, body: null };
+}
+
+function logJamLengths(slotStr) {
+  const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
+  if (!key) return 'no GOOGLE_ROUTES_KEY';
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ensureShadowFitTab(ss);
+  const row = findOrCreateRow(sh, slotStr);
+  const existingKm = sh.getRange(row, COL_JAM_SGJB_KM).getDisplayValue();
+  if (existingKm !== '' && !logJamLengths.force) return 'already filled ' + slotStr;
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('JAM_API_SLOT') === slotStr && !logJamLengths.force && !logHour.force) {
+    return 'already attempted ' + slotStr;
+  }
+  var hit429 = false;
+  JAM_PROBES.forEach(function (probe) {
+    if (hit429) return;
+    const fetched = fetchTrafficOnPolyline(probe.from, probe.to, key);
+    if (fetched.status === 429) hit429 = true;
+    const analyzed = analyzeJam(fetched.body);
+    if (analyzed) {
+      sh.getRange(row, probe.kmCol).setValue(analyzed.jamKm);
+      sh.getRange(row, probe.minCol).setValue(analyzed.jamStartMin);
+    }
+    Utilities.sleep(1200);
+  });
+  props.setProperty('JAM_API_SLOT', slotStr);
+  sh.getRange(row, COL_TIMESTAMP).setValue(slotStr);
+  return (hit429 ? '429 after filling ' : 'logged jam for ') + slotStr;
 }
 
 /** Canonical pins and shadow-fit model. Safe to re-run; replaces the tab contents. */
@@ -1222,6 +1430,8 @@ function writeParametersSheet() {
     ['sg_jb_a_origin', '1.421730, 103.771179', 'Far start on Bukit Timah Expy (PUB WH2). Shared with B.'],
     ['sg_jb_b_origin', '1.421730, 103.771179', 'Same far start as A. Mi6 copies A duration into B.'],
     ['sg_jb_c_origin', '1.426905, 103.763665', 'Far start on Woodlands Ave 3 into Woodlands Road'],
+    ['jam_ref', '1.443307, 103.767903', 'Plaza point. Jam km is along-route from first slow/jam to here; 0 if none.'],
+    ['crossborder_tab', 'Crossborder', 'Was Shadow Fit / GMaps Adjusted. Crossing minutes plus jam km.'],
     ['', '', ''],
     ['jb_sg_clearance', '1.4430746, 103.7683229', 'Past Singapore CIQ'],
     ['jb_sg_a_origin', '1.472085, 103.7651', 'Lingkaran Dalam S'],
