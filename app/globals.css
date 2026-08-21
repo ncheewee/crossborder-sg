@@ -879,7 +879,7 @@ button { font: inherit; }
 
 .v3-route-history-legend span::before {
   width: 12px;
-  border-top: 2px solid #0f766e;
+  border-top: 4px solid #0f766e;
   content: "";
 }
 
@@ -934,7 +934,7 @@ button { font: inherit; }
 
 .v3-route-history path.today {
   stroke: #0f766e;
-  stroke-width: 2.5;
+  stroke-width: 5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -947,8 +947,44 @@ button { font: inherit; }
   stroke-linejoin: round;
 }
 
-.v3-route-history .today-point {
-  fill: #0f766e;
+.v3-now-dot {
+  position: absolute;
+  z-index: 2;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #2563eb;
+  pointer-events: none;
+  animation: v3-now-blink 0.9s ease-in-out infinite;
+}
+
+.v3-now-dot::after {
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5);
+  content: "";
+  animation: v3-now-ring 1.35s ease-out infinite;
+}
+
+@keyframes v3-now-blink {
+  0%, 100% { opacity: 1; }
+  45% { opacity: 0.16; }
+}
+
+@keyframes v3-now-ring {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(37, 99, 235, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v3-now-dot,
+  .v3-now-dot::after {
+    animation: none;
+  }
 }
 
 .v3-route-actions {

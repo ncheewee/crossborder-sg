@@ -1456,6 +1456,11 @@ function ApproachHistoryOverlay({
   series: ApproachHistorySeries;
   scale: ApproachHistoryScale;
 }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const chart = useMemo(() => {
     const all = [...series.today, ...series.comparison];
     if (!all.length) return null;
@@ -1483,9 +1488,22 @@ function ApproachHistoryOverlay({
       }
       return commands.join(" ");
     };
-    const todayPoint = series.today.length === 1
-      ? { x: x(series.today[0].hour), y: y(series.today[0].minutes) }
+    const latestToday = series.today.at(-1) ?? null;
+    const nowParts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Singapore",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(nowMs));
+    const nowHour = (Number(nowParts.find((part) => part.type === "hour")?.value ?? 0) % 24)
+      + Number(nowParts.find((part) => part.type === "minute")?.value ?? 0) / 60;
+    const nowDotHour = latestToday ? Math.max(latestToday.hour, nowHour) : nowHour;
+    const nowDot = latestToday
+      ? { x: x(nowDotHour), y: y(latestToday.minutes) }
       : null;
+    const todayPoints = latestToday && nowDotHour > latestToday.hour + 1 / 120
+      ? [...series.today, { hour: nowDotHour, minutes: latestToday.minutes }]
+      : series.today;
     const timeZones = [
       { key: "green", low: low, high: Math.min(high, 40) },
       { key: "yellow", low: Math.max(low, 40), high: Math.min(high, 80) },
@@ -1496,13 +1514,13 @@ function ApproachHistoryOverlay({
       height: y(zone.low) - y(zone.high),
     }));
     return {
-      today: path(series.today),
+      today: path(todayPoints),
       comparison: path(series.comparison),
       yTicks: [high, Math.round((low + high) / 10) * 5, low].map((minutes) => ({ minutes, y: y(minutes) })),
-      todayPoint,
+      nowDot,
       timeZones,
     };
-  }, [scale, series]);
+  }, [nowMs, scale, series]);
 
   if (!chart) return null;
   return (
@@ -1521,8 +1539,14 @@ function ApproachHistoryOverlay({
           ))}
           {chart.comparison && <path d={chart.comparison} className="comparison" />}
           {chart.today && <path d={chart.today} className="today" />}
-          {chart.todayPoint && <circle cx={chart.todayPoint.x} cy={chart.todayPoint.y} r="3" className="today-point" />}
         </svg>
+        {chart.nowDot && (
+          <span
+            className="v3-now-dot"
+            style={{ left: `${(chart.nowDot.x / 300) * 100}%`, top: `${(chart.nowDot.y / 140) * 100}%` }}
+            aria-hidden="true"
+          />
+        )}
         <div className="v3-route-history-axis" aria-hidden="true">
           {chart.yTicks.map((tick) => (
             <span key={tick.minutes} style={{ top: `${(tick.y / 140) * 100}%` }}>{tick.minutes}m</span>
