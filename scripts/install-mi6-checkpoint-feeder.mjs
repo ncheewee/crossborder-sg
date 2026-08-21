@@ -90,41 +90,27 @@ if ! checkpoint_is_front; then
   exit 1
 fi
 
-mkdir -p "$crop_dir"
-rm -f "$tmp_snap" "$latest"
-if command -v su >/dev/null 2>&1; then
-  su -c "screencap -p $tmp_snap && cp $tmp_snap $latest && chmod 644 $latest" >/dev/null 2>&1 || true
-fi
-if [ ! -s "$latest" ]; then
-  screencap -p "$latest" >/dev/null 2>&1 || true
-fi
-rm -f "$tmp_snap"
-if [ ! -s "$latest" ]; then
-  printf '%s\\n' '{"ok":false,"error":"screencap_failed"}' > "$status_path"
-  exit 1
-fi
+# App in front can still be the splash. Wait for the time images, then
+# snap; retry a few times instead of OCRing a blank first frame.
+sleep 4
 
+mkdir -p "$crop_dir"
 jb_main_crop="$crop_dir/jb-main.png"
 jb_tuas_crop="$crop_dir/jb-tuas.png"
 sg_main_crop="$crop_dir/sg-main.png"
 sg_tuas_crop="$crop_dir/sg-tuas.png"
 
-# Checkpoint.sg renders each range at a stable position on the Mi6. Keep each
-# value in its own crop so a missed line can never shift Tuas into Woodlands.
-"$image_tool" "$latest" -crop 450x65+0+780 +repage -resize 400% \
-  -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$jb_main_crop"
-"$image_tool" "$latest" -crop 560x110+0+820 +repage -resize 400% \
-  -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$jb_tuas_crop"
-"$image_tool" "$latest" -crop 520x70+560+1390 +repage -resize 400% \
-  -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$sg_main_crop"
-"$image_tool" "$latest" -crop 520x75+560+1440 +repage -resize 400% \
-  -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$sg_tuas_crop"
-
-ocr_jb_main="$($PREFIX/bin/tesseract "$jb_main_crop" stdout --psm 7 2>/dev/null || true)"
-ocr_jb_tuas="$($PREFIX/bin/tesseract "$jb_tuas_crop" stdout --psm 7 2>/dev/null || true)"
-ocr_sg_main="$($PREFIX/bin/tesseract "$sg_main_crop" stdout --psm 7 2>/dev/null || true)"
-ocr_sg_tuas="$($PREFIX/bin/tesseract "$sg_tuas_crop" stdout --psm 7 2>/dev/null || true)"
-ocr="Woodlands JB:\n$ocr_jb_main\nTuas JB:\n$ocr_jb_tuas\nWoodlands SG:\n$ocr_sg_main\nTuas SG:\n$ocr_sg_tuas"
+take_snap() {
+  rm -f "$tmp_snap" "$latest"
+  if command -v su >/dev/null 2>&1; then
+    su -c "screencap -p $tmp_snap && cp $tmp_snap $latest && chmod 644 $latest" >/dev/null 2>&1 || true
+  fi
+  if [ ! -s "$latest" ]; then
+    screencap -p "$latest" >/dev/null 2>&1 || true
+  fi
+  rm -f "$tmp_snap"
+  [ -s "$latest" ]
+}
 
 ranges_from_ocr() {
   printf '%s\\n' "$1" \
@@ -134,10 +120,48 @@ ranges_from_ocr() {
     | awk -F- '$1 > 0 && $2 >= $1 && $2 <= 240 { print "[" $1 "," $2 "]" }'
 }
 
-woodlands_jb="$(ranges_from_ocr "$ocr_jb_main" | sed -n '1p' || true)"
-tuas_jb="$(ranges_from_ocr "$ocr_jb_tuas" | sed -n '1p' || true)"
-woodlands_sg="$(ranges_from_ocr "$ocr_sg_main" | sed -n '1p' || true)"
-tuas_sg="$(ranges_from_ocr "$ocr_sg_tuas" | sed -n '1p' || true)"
+woodlands_jb=null
+woodlands_sg=null
+tuas_jb=null
+tuas_sg=null
+ocr_jb_main=''
+ocr_jb_tuas=''
+ocr_sg_main=''
+ocr_sg_tuas=''
+ocr=''
+snap_try=0
+while [ "$snap_try" -lt 4 ]; do
+  if ! take_snap; then
+    printf '%s\\n' '{"ok":false,"error":"screencap_failed"}' > "$status_path"
+    exit 1
+  fi
+  "$image_tool" "$latest" -crop 450x65+0+780 +repage -resize 400% \
+    -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$jb_main_crop"
+  "$image_tool" "$latest" -crop 560x110+0+820 +repage -resize 400% \
+    -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$jb_tuas_crop"
+  "$image_tool" "$latest" -crop 520x70+560+1390 +repage -resize 400% \
+    -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$sg_main_crop"
+  "$image_tool" "$latest" -crop 520x75+560+1440 +repage -resize 400% \
+    -colorspace Gray -normalize -sharpen 0x1 -threshold 70% "$sg_tuas_crop"
+  ocr_jb_main="$($PREFIX/bin/tesseract "$jb_main_crop" stdout --psm 7 2>/dev/null || true)"
+  ocr_jb_tuas="$($PREFIX/bin/tesseract "$jb_tuas_crop" stdout --psm 7 2>/dev/null || true)"
+  ocr_sg_main="$($PREFIX/bin/tesseract "$sg_main_crop" stdout --psm 7 2>/dev/null || true)"
+  ocr_sg_tuas="$($PREFIX/bin/tesseract "$sg_tuas_crop" stdout --psm 7 2>/dev/null || true)"
+  ocr="Woodlands JB:\n$ocr_jb_main\nTuas JB:\n$ocr_jb_tuas\nWoodlands SG:\n$ocr_sg_main\nTuas SG:\n$ocr_sg_tuas"
+  woodlands_jb="$(ranges_from_ocr "$ocr_jb_main" | sed -n '1p' || true)"
+  tuas_jb="$(ranges_from_ocr "$ocr_jb_tuas" | sed -n '1p' || true)"
+  woodlands_sg="$(ranges_from_ocr "$ocr_sg_main" | sed -n '1p' || true)"
+  tuas_sg="$(ranges_from_ocr "$ocr_sg_tuas" | sed -n '1p' || true)"
+  [ -n "$woodlands_jb" ] || woodlands_jb=null
+  [ -n "$woodlands_sg" ] || woodlands_sg=null
+  [ -n "$tuas_jb" ] || tuas_jb=null
+  [ -n "$tuas_sg" ] || tuas_sg=null
+  if [ "$woodlands_jb" != null ] && [ "$woodlands_sg" != null ]; then
+    break
+  fi
+  snap_try="$(( snap_try + 1 ))"
+  sleep 3
+done
 
 [ -n "$woodlands_jb" ] || woodlands_jb=null
 [ -n "$woodlands_sg" ] || woodlands_sg=null
