@@ -1452,11 +1452,9 @@ function buildAdjustedRouteOptions(
 function ApproachHistoryOverlay({
   series,
   scale,
-  direction,
 }: {
   series: ApproachHistorySeries;
   scale: ApproachHistoryScale;
-  direction: Direction;
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -1526,7 +1524,7 @@ function ApproachHistoryOverlay({
 
   if (!chart) return null;
   return (
-    <div className={`v3-route-history ${direction === "sg-my" ? "towards-jb" : "towards-sg"}`} aria-label={`Route crossing time today compared with ${series.comparisonLabel}`}>
+    <div className="v3-route-history" aria-label={`Route crossing time today compared with ${series.comparisonLabel}`}>
       <div className="v3-route-history-legend" aria-hidden="true">
         <span className="today">
           <svg viewBox="0 0 18 8" aria-hidden="true"><path d="M1 4 H17" className="today" /></svg>
@@ -1845,7 +1843,7 @@ function V3WoodlandsApproach({
           {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
           </div>
           {routeHistory[selected.id] && (
-            <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} direction={travelDirection} />
+            <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
           )}
           {navigateMessage && <p className="v3-navigate-status error" role="alert">{navigateMessage}</p>}
           <div className="v3-route-actions">

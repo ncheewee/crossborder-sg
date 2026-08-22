@@ -931,16 +931,9 @@ button { font: inherit; }
 
 .v3-route-history path.today {
   stroke: #0f766e;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.v3-route-history.towards-jb path.today {
-  stroke-width: 3;
-}
-
-.v3-route-history.towards-sg path.today {
-  stroke-width: 2;
 }
 
 .v3-route-history path.comparison {
