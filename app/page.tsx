@@ -1449,6 +1449,71 @@ function buildAdjustedRouteOptions(
   })) as Record<ApproachId, ApproachRouteOption>;
 }
 
+function displaySmoothHistory(points: ApproachHistoryPoint[]): ApproachHistoryPoint[] {
+  if (points.length < 3) return points;
+  const values = points.map((point) => point.minutes);
+  const kernel = [1, 2, 3, 4, 3, 2, 1];
+  const radius = 3;
+  const smoothed = values.map((_, index) => {
+    let weighted = 0;
+    let weight = 0;
+    for (let offset = -radius; offset <= radius; offset += 1) {
+      const sample = values[Math.min(values.length - 1, Math.max(0, index + offset))];
+      const sampleWeight = kernel[offset + radius];
+      weighted += sample * sampleWeight;
+      weight += sampleWeight;
+    }
+    return weighted / weight;
+  });
+  return points.map((point, index) => ({ ...point, minutes: smoothed[index] }));
+}
+
+function monotoneHistoryPath(
+  points: ApproachHistoryPoint[],
+  x: (hour: number) => number,
+  y: (minutes: number) => number,
+) {
+  if (!points.length) return "";
+  const plotted = points.map((point) => ({ x: x(point.hour), y: y(point.minutes) }));
+  if (plotted.length === 1) return `M ${plotted[0].x.toFixed(1)} ${plotted[0].y.toFixed(1)}`;
+  if (plotted.length === 2) {
+    return `M ${plotted[0].x.toFixed(1)} ${plotted[0].y.toFixed(1)} L ${plotted[1].x.toFixed(1)} ${plotted[1].y.toFixed(1)}`;
+  }
+  const n = plotted.length;
+  const delta: number[] = [];
+  for (let index = 0; index < n - 1; index += 1) {
+    const dx = plotted[index + 1].x - plotted[index].x;
+    delta.push(Math.abs(dx) < 1e-6 ? 0 : (plotted[index + 1].y - plotted[index].y) / dx);
+  }
+  const slope = new Array(n).fill(0);
+  slope[0] = delta[0];
+  slope[n - 1] = delta[n - 2];
+  for (let index = 1; index < n - 1; index += 1) {
+    slope[index] = delta[index - 1] * delta[index] <= 0 ? 0 : (delta[index - 1] + delta[index]) / 2;
+  }
+  for (let index = 0; index < n - 1; index += 1) {
+    if (Math.abs(delta[index]) < 1e-6) {
+      slope[index] = 0;
+      slope[index + 1] = 0;
+      continue;
+    }
+    const alpha = slope[index] / delta[index];
+    const beta = slope[index + 1] / delta[index];
+    const sum = alpha * alpha + beta * beta;
+    if (sum > 9) {
+      const tau = 3 / Math.sqrt(sum);
+      slope[index] = tau * alpha * delta[index];
+      slope[index + 1] = tau * beta * delta[index];
+    }
+  }
+  let path = `M ${plotted[0].x.toFixed(1)} ${plotted[0].y.toFixed(1)}`;
+  for (let index = 0; index < n - 1; index += 1) {
+    const dx = (plotted[index + 1].x - plotted[index].x) / 3;
+    path += ` C ${(plotted[index].x + dx).toFixed(1)} ${(plotted[index].y + slope[index] * dx).toFixed(1)}, ${(plotted[index + 1].x - dx).toFixed(1)} ${(plotted[index + 1].y - slope[index + 1] * dx).toFixed(1)}, ${plotted[index + 1].x.toFixed(1)} ${plotted[index + 1].y.toFixed(1)}`;
+  }
+  return path;
+}
+
 function ApproachHistoryOverlay({
   series,
   scale,
@@ -1474,21 +1539,9 @@ function ApproachHistoryOverlay({
       const clampedMinutes = Math.max(low, Math.min(high, minutes));
       return plotBottom - (clampedMinutes - low) / (high - low) * (plotBottom - plotTop);
     };
-    const path = (points: ApproachHistoryPoint[]) => {
-      if (!points.length) return "";
-      if (points.length === 1) return `M ${x(points[0].hour).toFixed(1)} ${y(points[0].minutes).toFixed(1)}`;
-      const plotted = points.map((point) => ({ x: x(point.hour), y: y(point.minutes) }));
-      const commands = [`M ${plotted[0].x.toFixed(1)} ${plotted[0].y.toFixed(1)}`];
-      for (let index = 0; index < plotted.length - 1; index += 1) {
-        const p0 = plotted[Math.max(0, index - 1)];
-        const p1 = plotted[index];
-        const p2 = plotted[index + 1];
-        const p3 = plotted[Math.min(plotted.length - 1, index + 2)];
-        commands.push(`C ${(p1.x + (p2.x - p0.x) / 6).toFixed(1)} ${(p1.y + (p2.y - p0.y) / 6).toFixed(1)}, ${(p2.x - (p3.x - p1.x) / 6).toFixed(1)} ${(p2.y - (p3.y - p1.y) / 6).toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
-      }
-      return commands.join(" ");
-    };
-    const latestToday = series.today.at(-1) ?? null;
+    const today = displaySmoothHistory(series.today);
+    const comparison = displaySmoothHistory(series.comparison);
+    const latestToday = today.at(-1) ?? null;
     const nowParts = new Intl.DateTimeFormat("en-GB", {
       timeZone: "Asia/Singapore",
       hour: "2-digit",
@@ -1502,8 +1555,8 @@ function ApproachHistoryOverlay({
       ? { x: x(nowDotHour), y: y(latestToday.minutes) }
       : null;
     const todayPoints = latestToday && nowDotHour > latestToday.hour + 1 / 120
-      ? [...series.today, { hour: nowDotHour, minutes: latestToday.minutes }]
-      : series.today;
+      ? [...today, { hour: nowDotHour, minutes: latestToday.minutes }]
+      : today;
     const timeZones = [
       { key: "green", low: low, high: Math.min(high, 40) },
       { key: "yellow", low: Math.max(low, 40), high: Math.min(high, 80) },
@@ -1514,8 +1567,8 @@ function ApproachHistoryOverlay({
       height: y(zone.low) - y(zone.high),
     }));
     return {
-      today: path(todayPoints),
-      comparison: path(series.comparison),
+      today: monotoneHistoryPath(todayPoints, x, y),
+      comparison: monotoneHistoryPath(comparison, x, y),
       yTicks: [high, Math.round((low + high) / 10) * 5, low].map((minutes) => ({ minutes, y: y(minutes) })),
       nowDot,
       timeZones,
