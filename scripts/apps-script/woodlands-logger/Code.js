@@ -148,14 +148,17 @@ const COL_JAM_C_KM     = 11; // K
 const COL_JAM_C_MIN    = 12; // L
 const COL_JAM_JBSG_KM  = 13; // M
 const COL_JAM_JBSG_MIN = 14; // N
-const JAM_COL_COUNT    = 6;
+const COL_JAM_SGJB_START = 15; // O
+const COL_JAM_C_START    = 16; // P
+const COL_JAM_JBSG_START = 17; // Q
+const JAM_COL_COUNT    = 9;
 
 // Plaza reference for jam length: 0 km when the tail is at the checkpoint.
 const JAM_REF = { lat: 1.443307, lng: 103.767903 };
 const JAM_PROBES = [
-  { key: 'sg_jb', from: '1.421730,103.771179', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN },
-  { key: 'sg_jb_c', from: '1.426905,103.763665', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN },
-  { key: 'jb_sg', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN },
+  { key: 'sg_jb', from: '1.421730,103.771179', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN, startCol: COL_JAM_SGJB_START },
+  { key: 'sg_jb_c', from: '1.426905,103.763665', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN, startCol: COL_JAM_C_START },
+  { key: 'jb_sg', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_START },
 ];
 
 // L on the GMaps tab: one Source label for the whole row — Mi6, Mac, or API.
@@ -1160,7 +1163,7 @@ function ensureShadowFitTab(ss) {
   }
   const headers = ['Timestamp (SGT)']
     .concat(ROUTES.map(function (route) { return route.name; }))
-    .concat(['SG-JB jam km', 'SG-JB jam-start min', 'SG-JB C jam km', 'SG-JB C jam-start min', 'JB-SG jam km', 'JB-SG jam-start min']);
+    .concat(['SG-JB jam km', 'SG-JB jam-start min', 'SG-JB C jam km', 'SG-JB C jam-start min', 'JB-SG jam km', 'JB-SG jam-start min', 'SG-JB jam start', 'SG-JB C jam start', 'JB-SG jam start']);
   sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
   sh.setFrozenRows(1);
   sh.getRange(1, 1).setNote(
@@ -1320,9 +1323,9 @@ function analyzeJam(routeBody) {
     ? Math.round(parseFloat(String(route.staticDuration).replace('s', '')) / 60)
     : live;
   const encoded = route.polyline && route.polyline.encodedPolyline;
-  if (!encoded) return { jamKm: 0, jamStartMin: live, live: live };
+  if (!encoded) return { jamKm: 0, jamStartMin: live, live: live, startLat: null, startLng: null };
   const points = decodePolyline(encoded);
-  if (points.length < 2) return { jamKm: 0, jamStartMin: live, live: live };
+  if (points.length < 2) return { jamKm: 0, jamStartMin: live, live: live, startLat: null, startLng: null };
   const intervals = (route.travelAdvisory && route.travelAdvisory.speedReadingIntervals) || [];
   var jamIdx = -1;
   for (var i = 0; i < intervals.length; i++) {
@@ -1337,13 +1340,20 @@ function analyzeJam(routeBody) {
   if (jamIdx < 0 || jamIdx >= cpIdx) {
     const remainKm = alongKm(points, cpIdx, points.length - 1);
     const remainMin = totalKm > 0 ? Math.round(stat * remainKm / totalKm) : SHADOW_CALIBRATION.minimumMinutes;
-    return { jamKm: 0, jamStartMin: Math.max(SHADOW_CALIBRATION.minimumMinutes, remainMin), live: live };
+    return { jamKm: 0, jamStartMin: Math.max(SHADOW_CALIBRATION.minimumMinutes, remainMin), live: live, startLat: null, startLng: null };
   }
   const prefixKm = alongKm(points, 0, jamIdx);
   const jamKm = alongKm(points, jamIdx, cpIdx);
   const prefixStatic = totalKm > 0 ? stat * prefixKm / totalKm : 0;
   const jamStartMin = Math.max(SHADOW_CALIBRATION.minimumMinutes, Math.round(live - prefixStatic));
-  return { jamKm: Math.round(jamKm * 100) / 100, jamStartMin: jamStartMin, live: live };
+  const start = points[jamIdx] || null;
+  return {
+    jamKm: Math.round(jamKm * 100) / 100,
+    jamStartMin: jamStartMin,
+    live: live,
+    startLat: start ? start.lat : null,
+    startLng: start ? start.lng : null,
+  };
 }
 
 function fetchTrafficOnPolyline(fromStr, toStr, key) {
@@ -1416,6 +1426,11 @@ function logJamLengths(slotStr) {
     if (analyzed) {
       sh.getRange(row, probe.kmCol).setValue(analyzed.jamKm);
       sh.getRange(row, probe.minCol).setValue(analyzed.jamStartMin);
+      sh.getRange(row, probe.startCol).setValue(
+        analyzed.startLat != null && analyzed.startLng != null
+          ? analyzed.startLat + ',' + analyzed.startLng
+          : ''
+      );
     }
     Utilities.sleep(1200);
   });

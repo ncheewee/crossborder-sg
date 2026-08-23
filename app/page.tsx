@@ -124,11 +124,17 @@ type ApproachId =
   | "woodlands-ah2"
   | "woodlands-bukit-chagar"
   | "woodlands-jb-city-square";
+type ApproachJam = {
+  km: number | null;
+  start: Coordinate | null;
+};
 type ApproachRouteOption = {
   id: ApproachId;
   preApproachMinutes: number | null;
   crossingMinutes: number;
   totalMinutes: number;
+  jamKm: number | null;
+  jamStart: Coordinate | null;
 };
 type ApproachHistoryPoint = { hour: number; minutes: number };
 type ApproachHistorySeries = {
@@ -142,6 +148,7 @@ type AdjustedApproachTimes = Partial<Record<ApproachId, AdjustedApproachTime>>;
 type AdjustedApproachSheet = {
   history: Partial<Record<ApproachId, ApproachHistorySeries>>;
   latest: AdjustedApproachTimes;
+  jam: Partial<Record<ApproachId, ApproachJam>>;
 };
 type ApproachTripReport = {
   direction: Direction;
@@ -1206,6 +1213,7 @@ function V2CameraStrip({
 
 const gmapsSheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=0";
 const checkpointSheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=734892105";
+const crossborderSheetUrl = "https://docs.google.com/spreadsheets/d/1BMiLAjo9n-suZ080HRHtLGV2gNjcBJDidr_ZD8ruubo/export?format=csv&gid=94841451";
 const approachGmapsColumns: Record<ApproachId, string> = {
   "woodlands-bke-right": "SG-JB A | BKE Flyover",
   "woodlands-bke-left": "SG-JB B | BKE Junction",
@@ -1416,6 +1424,50 @@ function parseCalibratedApproachSheet(gmapsCsv: string, checkpointCsv: string): 
   return { history, latest };
 }
 
+function parseCoordinateCell(value: string): Coordinate | null {
+  const match = String(value ?? "").trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
+}
+
+function parseLatestJam(csv: string): Partial<Record<ApproachId, ApproachJam>> {
+  const { header: headerRow, rows } = normalizeApproachSheetRows(csv);
+  const timestampIndex = headerRow.indexOf("Timestamp (SGT)");
+  const sgAbKm = headerRow.indexOf("SG-JB jam km");
+  const sgCKm = headerRow.indexOf("SG-JB C jam km");
+  const jbSgKm = headerRow.indexOf("JB-SG jam km");
+  const sgAbStart = headerRow.indexOf("SG-JB jam start");
+  const sgCStart = headerRow.indexOf("SG-JB C jam start");
+  const jbSgStart = headerRow.indexOf("JB-SG jam start");
+  if (timestampIndex === -1 || sgAbKm === -1) return {};
+  const latest = [...rows].reverse().find((row) => {
+    const km = Number(row[sgAbKm]);
+    return Number.isFinite(km);
+  });
+  if (!latest) return {};
+  const jamFor = (kmIndex: number, startIndex: number): ApproachJam => {
+    const km = Number(latest[kmIndex]);
+    return {
+      km: Number.isFinite(km) ? km : null,
+      start: startIndex === -1 ? null : parseCoordinateCell(latest[startIndex] ?? ""),
+    };
+  };
+  const sgAb = jamFor(sgAbKm, sgAbStart);
+  const sgC = sgCKm === -1 ? sgAb : jamFor(sgCKm, sgCStart);
+  const jbSg = jbSgKm === -1 ? { km: null, start: null } : jamFor(jbSgKm, jbSgStart);
+  return {
+    "woodlands-bke-right": sgAb,
+    "woodlands-bke-left": sgAb,
+    "woodlands-road-left": sgC,
+    "woodlands-jln-lingkaran-dalam": jbSg,
+    "woodlands-ah2": jbSg,
+    "woodlands-bukit-chagar": jbSg,
+    "woodlands-jb-city-square": jbSg,
+  };
+}
+
 async function fetchSheetCsv(url: string, label: string) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`${label} returned ${response.status}`);
@@ -1423,16 +1475,19 @@ async function fetchSheetCsv(url: string, label: string) {
 }
 
 async function fetchAdjustedApproachSheet() {
-  const [gmapsCsv, checkpointCsv] = await Promise.all([
+  const [gmapsCsv, checkpointCsv, crossborderCsv] = await Promise.all([
     fetchSheetCsv(gmapsSheetUrl, "GMaps"),
     fetchSheetCsv(checkpointSheetUrl, "Checkpoint.sg"),
+    fetchSheetCsv(crossborderSheetUrl, "Crossborder").catch(() => ""),
   ]);
-  return parseCalibratedApproachSheet(gmapsCsv, checkpointCsv);
+  const parsed = parseCalibratedApproachSheet(gmapsCsv, checkpointCsv);
+  return { ...parsed, jam: crossborderCsv ? parseLatestJam(crossborderCsv) : {} };
 }
 
 function buildAdjustedRouteOptions(
   direction: Direction,
   latest: AdjustedApproachTimes,
+  jam: Partial<Record<ApproachId, ApproachJam>> = {},
   locationRoutes: ApproachRouteOption[] = [],
 ) {
   const locationById = Object.fromEntries(locationRoutes.map((route) => [route.id, route])) as Partial<Record<ApproachId, ApproachRouteOption>>;
@@ -1445,6 +1500,8 @@ function buildAdjustedRouteOptions(
       preApproachMinutes,
       crossingMinutes,
       totalMinutes: crossingMinutes + (preApproachMinutes ?? 0),
+      jamKm: jam[definition.id]?.km ?? null,
+      jamStart: jam[definition.id]?.start ?? null,
     }];
   })) as Record<ApproachId, ApproachRouteOption>;
 }
@@ -1690,8 +1747,9 @@ function PhotoZoom({ children }: { children: React.ReactNode }) {
     const stage = stageRef.current;
     if (!stage) return;
     const { scale, x, y } = transform.current;
-    stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
-    viewportRef.current?.classList.toggle("is-zoomed", scale > 1.01);
+    const zoomed = scale > 1.01;
+    stage.style.transform = zoomed ? `translate(${x}px, ${y}px) scale(${scale})` : "";
+    viewportRef.current?.classList.toggle("is-zoomed", zoomed);
   };
 
   const clamp = (next: { scale: number; x: number; y: number }) => {
@@ -1872,6 +1930,8 @@ function V3WoodlandsApproach({
         crossingMinutes: option?.crossingMinutes ?? null,
         preApproachMinutes: option?.preApproachMinutes ?? null,
         durationMinutes: option?.totalMinutes ?? null,
+        jamKm: option?.jamKm ?? null,
+        jamStart: option?.jamStart ?? null,
       };
     });
   }, [definitions, routeOptions]);
@@ -1903,7 +1963,7 @@ function V3WoodlandsApproach({
     setLocationMessage("");
     void fetchAdjustedApproachSheet().then((sheet) => {
       setRouteHistory(sheet.history);
-      displayRouteOptions(buildAdjustedRouteOptions(direction, sheet.latest), direction);
+      displayRouteOptions(buildAdjustedRouteOptions(direction, sheet.latest, sheet.jam), direction);
     }).catch((error) => {
       setRouteOptions({});
       setLocationState("error");
@@ -1922,7 +1982,12 @@ function V3WoodlandsApproach({
         setSideAlert(wrongSideCheckpointMessage(travelDirection));
         return;
       }
-      const url = googleMapsNavigationUrl(travelDirection, selected.id);
+      const plaza: Coordinate = travelDirection === "sg-my"
+        ? { latitude: 1.466582, longitude: 103.768091 }
+        : { latitude: 1.4430746, longitude: 103.7683229 };
+      const jamStart = selected.jamStart;
+      const destination = jamStart && (selected.jamKm ?? 0) > 0 ? jamStart : plaza;
+      const url = googleMapsNavigationUrl(coordinate, destination);
       const opened = window.open(url, "_blank");
       if (!opened) window.location.assign(url);
       setNavigateState("idle");
@@ -2094,7 +2159,12 @@ function V3WoodlandsApproach({
                     {isRecommended && <span className="v3-fastest-chip">FASTEST</span>}
                   </strong>
                 </span>
-                <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
+                <span className="v3-route-time-block">
+                  <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
+                  <small className="v3-jam-length">
+                    {route.jamKm == null ? "jam —" : route.jamKm > 0 ? `${route.jamKm.toFixed(route.jamKm >= 10 ? 0 : 1)} km jam` : "no jam"}
+                  </small>
+                </span>
               </button>
             );
           })}
@@ -2671,12 +2741,11 @@ function staticAssetUrl(asset: string) {
   return new URL(asset, document.baseURI).toString();
 }
 
-function googleMapsNavigationUrl(direction: Direction, approach: ApproachId) {
-  const definition = woodlandsApproachDefinitions[direction].find((item) => item.id === approach)
-    ?? woodlandsApproachDefinitions[direction][0];
-  const destination = direction === "sg-my" ? "1.466582,103.768091" : "1.4430746,103.7683229";
-  const waypoint = `${definition.waypoint.latitude},${definition.waypoint.longitude}`;
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving&waypoints=${encodeURIComponent(waypoint)}`;
+function googleMapsNavigationUrl(
+  origin: Coordinate,
+  destination: Coordinate,
+) {
+  return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(`${origin.latitude},${origin.longitude}`)}&destination=${encodeURIComponent(`${destination.latitude},${destination.longitude}`)}&travelmode=driving`;
 }
 
 function durationTone(minutes: number) {
@@ -2904,7 +2973,8 @@ export default function Home() {
     const root = document.documentElement;
     const fitCameras = () => {
       window.requestAnimationFrame(() => {
-        const viewportHeight = window.innerHeight;
+        const viewportHeight = document.querySelector<HTMLElement>(".photo-zoom-viewport")?.clientHeight
+          ?? window.innerHeight;
         const topbar = document.querySelector<HTMLElement>(".topbar");
         const topbarHeight = topbar?.getBoundingClientRect().height ?? 42;
         root.style.setProperty("--landing-visible-height", `${viewportHeight.toFixed(1)}px`);

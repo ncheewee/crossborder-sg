@@ -18,7 +18,7 @@
   --good-zone: rgba(22, 163, 74, 0.15);
   --amber-zone: rgba(245, 158, 11, 0.18);
   --error-band: rgba(55, 65, 81, 0.12);
-  --landing-visible-height: 100vh;
+  --landing-visible-height: 100dvh;
   --landing-topbar-height: 42px;
   --landing-summary-height: max(360px, 60vh);
 }
@@ -26,12 +26,15 @@
 * { box-sizing: border-box; }
 
 html {
+  height: 100%;
   scroll-behavior: smooth;
   background: var(--background);
 }
 
 body {
+  height: 100%;
   margin: 0;
+  overflow: hidden;
   background:
     radial-gradient(circle at 50% -10%, rgba(55, 65, 81, 0.09), transparent 28rem),
     var(--background);
@@ -47,7 +50,7 @@ button { font: inherit; }
 
 .photo-zoom-viewport {
   width: 100%;
-  height: 100dvh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -55,16 +58,19 @@ button { font: inherit; }
   width: 100%;
   height: 100%;
   transform-origin: 0 0;
-  will-change: transform;
 }
 
 .photo-zoom-viewport.is-zoomed {
   touch-action: none;
 }
 
+.photo-zoom-viewport.is-zoomed .photo-zoom-stage {
+  will-change: transform;
+}
+
 .app-shell {
   width: min(100%, 560px);
-  min-height: 100vh;
+  min-height: 100%;
   margin: 0 auto;
   padding: 0 14px 10px;
 }
@@ -73,6 +79,7 @@ button { font: inherit; }
   position: sticky;
   top: 0;
   z-index: 20;
+  flex: 0 0 42px;
   height: 42px;
   margin: 0 -14px;
   padding: 0 14px;
@@ -225,8 +232,10 @@ button { font: inherit; }
 
 .landing-shell {
   width: min(100%, 460px);
-  height: var(--landing-visible-height);
+  height: 100%;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   padding-bottom: 0;
 }
@@ -661,7 +670,9 @@ button { font: inherit; }
 .v3-landing {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  height: calc(var(--landing-visible-height) - var(--landing-topbar-height));
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
   gap: 8px;
   padding: 8px 0 calc(72px + env(safe-area-inset-bottom, 0px));
 }
@@ -1156,18 +1167,13 @@ button { font: inherit; }
 }
 
 .v3-route-list button.selected {
-  margin-inline: -8px;
-  width: calc(100% + 16px);
-  padding-inline: 8px;
-  background: #eef2f3;
+  background: transparent;
 }
 
 .v3-route-list button.recommended {
   background: transparent;
   box-shadow: none;
 }
-
-.v3-route-list button.recommended.selected { background: #eef2f3; }
 
 .v3-route-letter {
   display: grid;
@@ -1181,7 +1187,7 @@ button { font: inherit; }
   font-weight: 700;
 }
 
-.v3-route-list button.recommended .v3-route-letter {
+.v3-route-list button.selected .v3-route-letter {
   background: #0f766e;
   color: #ffffff;
 }
@@ -1189,7 +1195,7 @@ button { font: inherit; }
 .v3-route-copy { min-width: 0; }
 .v3-route-copy strong { display: flex; align-items: center; gap: 6px; overflow: hidden; color: var(--ink); font-size: 15px; font-weight: 650; white-space: nowrap; }
 .v3-route-copy strong > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.v3-route-list button.recommended .v3-route-copy strong { color: #0f766e; }
+.v3-route-list button.selected .v3-route-copy strong { color: #0f766e; }
 .v3-fastest-chip {
   flex: 0 0 auto;
   padding: 3px 5px;
@@ -1200,9 +1206,17 @@ button { font: inherit; }
   font-weight: 800;
   line-height: 1;
 }
+.v3-route-time-block {
+  display: grid;
+  justify-items: stretch;
+  align-content: center;
+  gap: 2px;
+  transform: translateY(-4px);
+}
+
 .v3-route-time {
   min-width: 70px;
-  min-height: 38px;
+  min-height: 34px;
   display: inline-grid;
   place-items: center;
   border-radius: 10px;
@@ -1210,6 +1224,15 @@ button { font: inherit; }
   font-size: 16px;
   font-weight: 750;
   white-space: nowrap;
+}
+
+.v3-jam-length {
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  text-align: center;
 }
 
 .v3-route-time.good { background: #15803d; }
