@@ -1468,7 +1468,7 @@ function displaySmoothHistory(points: ApproachHistoryPoint[]): ApproachHistoryPo
   return points.map((point, index) => ({ ...point, minutes: smoothed[index] }));
 }
 
-function routeRangeEnvelope(seriesList: ApproachHistoryPoint[][]): Array<{ hour: number; low: number; high: number }> {
+function routeRangeEnvelope(seriesList: ApproachHistoryPoint[][]): Array<{ hour: number; low: number; high: number; mid: number }> {
   const byHour = new Map<number, number[]>();
   for (const series of seriesList) {
     for (const point of series) {
@@ -1484,6 +1484,7 @@ function routeRangeEnvelope(seriesList: ApproachHistoryPoint[][]): Array<{ hour:
       hour,
       low: Math.min(...minutes),
       high: Math.max(...minutes),
+      mid: minutes.reduce((sum, value) => sum + value, 0) / minutes.length,
     }));
 }
 
@@ -1550,10 +1551,12 @@ function ApproachHistoryOverlay({
   series,
   scale,
   peerToday,
+  peerComparison,
 }: {
   series: ApproachHistorySeries;
   scale: ApproachHistoryScale;
   peerToday: ApproachHistoryPoint[][];
+  peerComparison: ApproachHistoryPoint[][];
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -1561,8 +1564,9 @@ function ApproachHistoryOverlay({
     return () => window.clearInterval(timer);
   }, []);
   const chart = useMemo(() => {
-    const all = [...series.today, ...series.comparison];
-    if (!all.length) return null;
+    const envelope = routeRangeEnvelope(peerToday.length ? peerToday : [series.today]);
+    const comparisonEnvelope = routeRangeEnvelope(peerComparison.length ? peerComparison : [series.comparison]);
+    if (!envelope.length && !comparisonEnvelope.length) return null;
     const { low, high } = scale;
     const plotLeft = 30;
     const plotRight = 292;
@@ -1573,9 +1577,8 @@ function ApproachHistoryOverlay({
       const clampedMinutes = Math.max(low, Math.min(high, minutes));
       return plotBottom - (clampedMinutes - low) / (high - low) * (plotBottom - plotTop);
     };
-    const today = displaySmoothHistory(series.today);
-    const comparison = displaySmoothHistory(series.comparison);
-    const envelope = routeRangeEnvelope(peerToday.length ? peerToday : [series.today]);
+    const today = displaySmoothHistory(envelope.map((point) => ({ hour: point.hour, minutes: point.mid })));
+    const comparison = displaySmoothHistory(comparisonEnvelope.map((point) => ({ hour: point.hour, minutes: point.mid })));
     const bandHigh = displaySmoothHistory(envelope.map((point) => ({ hour: point.hour, minutes: point.high })));
     const bandLow = displaySmoothHistory(envelope.map((point) => ({ hour: point.hour, minutes: point.low })));
     const latestToday = today.at(-1) ?? null;
@@ -1620,7 +1623,7 @@ function ApproachHistoryOverlay({
       nowDot,
       timeZones,
     };
-  }, [nowMs, scale, series]);
+  }, [nowMs, peerComparison, peerToday, scale, series]);
 
   if (!chart) return null;
   return (
@@ -1662,6 +1665,177 @@ function ApproachHistoryOverlay({
             <span key={tick.minutes} style={{ top: `${(tick.y / 140) * 100}%` }}>{tick.minutes}m</span>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PhotoZoom({ children }: { children: React.ReactNode }) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const transform = useRef({ scale: 1, x: 0, y: 0 });
+  const gesture = useRef<{
+    mode: "pinch" | "pan";
+    startScale: number;
+    startX: number;
+    startY: number;
+    startDistance: number;
+    startMidX: number;
+    startMidY: number;
+    startTouchX: number;
+    startTouchY: number;
+  } | null>(null);
+
+  const paint = () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const { scale, x, y } = transform.current;
+    stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    viewportRef.current?.classList.toggle("is-zoomed", scale > 1.01);
+  };
+
+  const clamp = (next: { scale: number; x: number; y: number }) => {
+    const viewport = viewportRef.current;
+    const width = viewport?.clientWidth ?? window.innerWidth;
+    const height = viewport?.clientHeight ?? window.innerHeight;
+    const scale = Math.min(4, Math.max(1, next.scale));
+    if (scale <= 1.01) return { scale: 1, x: 0, y: 0 };
+    const minX = width * (1 - scale);
+    const minY = height * (1 - scale);
+    return {
+      scale,
+      x: Math.min(0, Math.max(minX, next.x)),
+      y: Math.min(0, Math.max(minY, next.y)),
+    };
+  };
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const distance = (event: globalThis.TouchEvent) => {
+      const first = event.touches[0];
+      const second = event.touches[1];
+      if (!first || !second) return 0;
+      return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
+    };
+    const midpoint = (event: globalThis.TouchEvent) => {
+      const first = event.touches[0];
+      const second = event.touches[1];
+      if (!first || !second) return { x: first?.clientX ?? 0, y: first?.clientY ?? 0 };
+      return { x: (first.clientX + second.clientX) / 2, y: (first.clientY + second.clientY) / 2 };
+    };
+
+    const onStart = (event: globalThis.TouchEvent) => {
+      if (event.touches.length >= 2) {
+        const mid = midpoint(event);
+        gesture.current = {
+          mode: "pinch",
+          startScale: transform.current.scale,
+          startX: transform.current.x,
+          startY: transform.current.y,
+          startDistance: Math.max(1, distance(event)),
+          startMidX: mid.x,
+          startMidY: mid.y,
+          startTouchX: 0,
+          startTouchY: 0,
+        };
+        return;
+      }
+      if (event.touches.length === 1 && transform.current.scale > 1.01) {
+        gesture.current = {
+          mode: "pan",
+          startScale: transform.current.scale,
+          startX: transform.current.x,
+          startY: transform.current.y,
+          startDistance: 0,
+          startMidX: 0,
+          startMidY: 0,
+          startTouchX: event.touches[0].clientX,
+          startTouchY: event.touches[0].clientY,
+        };
+      }
+    };
+
+    const onMove = (event: globalThis.TouchEvent) => {
+      const active = gesture.current;
+      if (!active) return;
+      if (active.mode === "pinch" && event.touches.length >= 2) {
+        event.preventDefault();
+        const ratio = Math.max(1, distance(event)) / active.startDistance;
+        const nextScale = active.startScale * ratio;
+        const mid = midpoint(event);
+        const scaleRatio = nextScale / active.startScale;
+        transform.current = clamp({
+          scale: nextScale,
+          x: mid.x - active.startMidX * scaleRatio + active.startX * scaleRatio,
+          y: mid.y - active.startMidY * scaleRatio + active.startY * scaleRatio,
+        });
+        paint();
+        return;
+      }
+      if (active.mode === "pan" && event.touches.length === 1 && transform.current.scale > 1.01) {
+        event.preventDefault();
+        transform.current = clamp({
+          scale: transform.current.scale,
+          x: active.startX + event.touches[0].clientX - active.startTouchX,
+          y: active.startY + event.touches[0].clientY - active.startTouchY,
+        });
+        paint();
+      }
+    };
+
+    const onEnd = (event: globalThis.TouchEvent) => {
+      if (event.touches.length >= 2) {
+        const mid = midpoint(event);
+        gesture.current = {
+          mode: "pinch",
+          startScale: transform.current.scale,
+          startX: transform.current.x,
+          startY: transform.current.y,
+          startDistance: Math.max(1, distance(event)),
+          startMidX: mid.x,
+          startMidY: mid.y,
+          startTouchX: 0,
+          startTouchY: 0,
+        };
+        return;
+      }
+      if (event.touches.length === 1 && transform.current.scale > 1.01) {
+        gesture.current = {
+          mode: "pan",
+          startScale: transform.current.scale,
+          startX: transform.current.x,
+          startY: transform.current.y,
+          startDistance: 0,
+          startMidX: 0,
+          startMidY: 0,
+          startTouchX: event.touches[0].clientX,
+          startTouchY: event.touches[0].clientY,
+        };
+        return;
+      }
+      gesture.current = null;
+      transform.current = clamp(transform.current);
+      paint();
+    };
+
+    viewport.addEventListener("touchstart", onStart, { passive: true });
+    viewport.addEventListener("touchmove", onMove, { passive: false });
+    viewport.addEventListener("touchend", onEnd);
+    viewport.addEventListener("touchcancel", onEnd);
+    return () => {
+      viewport.removeEventListener("touchstart", onStart);
+      viewport.removeEventListener("touchmove", onMove);
+      viewport.removeEventListener("touchend", onEnd);
+      viewport.removeEventListener("touchcancel", onEnd);
+    };
+  }, []);
+
+  return (
+    <div className="photo-zoom-viewport" ref={viewportRef}>
+      <div className="photo-zoom-stage" ref={stageRef}>
+        {children}
       </div>
     </div>
   );
@@ -1951,6 +2125,7 @@ function V3WoodlandsApproach({
               series={routeHistory[selected.id]!}
               scale={routeHistoryScale}
               peerToday={definitions.map((definition) => routeHistory[definition.id]?.today ?? []).filter((points) => points.length > 0)}
+              peerComparison={definitions.map((definition) => routeHistory[definition.id]?.comparison ?? []).filter((points) => points.length > 0)}
             />
           )}
           {navigateMessage && <p className="v3-navigate-status error" role="alert">{navigateMessage}</p>}
@@ -2729,7 +2904,7 @@ export default function Home() {
     const root = document.documentElement;
     const fitCameras = () => {
       window.requestAnimationFrame(() => {
-        const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+        const viewportHeight = window.innerHeight;
         const topbar = document.querySelector<HTMLElement>(".topbar");
         const topbarHeight = topbar?.getBoundingClientRect().height ?? 42;
         root.style.setProperty("--landing-visible-height", `${viewportHeight.toFixed(1)}px`);
@@ -2741,10 +2916,8 @@ export default function Home() {
     fitCameras();
     window.setTimeout(fitCameras, 250);
     window.addEventListener("resize", fitCameras);
-    window.visualViewport?.addEventListener("resize", fitCameras);
     return () => {
       window.removeEventListener("resize", fitCameras);
-      window.visualViewport?.removeEventListener("resize", fitCameras);
     };
   }, [trafficByDirection]);
 
@@ -2939,6 +3112,14 @@ export default function Home() {
   }
 
   function handleTouchStart(event: TouchEvent<HTMLElement>) {
+    if (event.touches.length !== 1) {
+      pullStartY.current = null;
+      return;
+    }
+    if (document.querySelector(".photo-zoom-viewport.is-zoomed")) {
+      pullStartY.current = null;
+      return;
+    }
     if (window.scrollY <= 0) {
       pullStartY.current = event.touches[0]?.clientY ?? null;
     }
@@ -3015,6 +3196,7 @@ export default function Home() {
 
   if (isAuthConfigured && auth.status !== "ready") {
     return (
+      <PhotoZoom>
       <main className="app-shell login-shell">
         <section className="login-card" aria-labelledby="login-title">
           <a className="brand login-brand" href="#top" aria-label="CrossBorder.sg home">
@@ -3029,10 +3211,12 @@ export default function Home() {
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
       </main>
+      </PhotoZoom>
     );
   }
 
   return (
+    <PhotoZoom>
     <main className="app-shell landing-shell" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <header className="topbar">
         <div className="updated-line">
@@ -3052,5 +3236,6 @@ export default function Home() {
       <V3WoodlandsApproach submitApproachReport={submitApproachReport} />
 
     </main>
+    </PhotoZoom>
   );
 }

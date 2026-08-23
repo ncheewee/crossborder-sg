@@ -45,6 +45,23 @@ button,
 a { -webkit-tap-highlight-color: transparent; }
 button { font: inherit; }
 
+.photo-zoom-viewport {
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.photo-zoom-stage {
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.photo-zoom-viewport.is-zoomed {
+  touch-action: none;
+}
+
 .app-shell {
   width: min(100%, 560px);
   min-height: 100vh;
