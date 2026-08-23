@@ -8,6 +8,8 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
+const APP_VERSION = "v1.6";
+
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
 type ForecastWindow = "current" | "next";
@@ -1432,39 +1434,56 @@ function parseCoordinateCell(value: string): Coordinate | null {
   return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
 }
 
+function formatJamLength(km: number | null) {
+  if (km == null) return "jam —";
+  if (km <= 0) return "no jam";
+  const label = km >= 10 ? km.toFixed(1) : km.toFixed(2);
+  return `${label} km jam`;
+}
+
 function parseLatestJam(csv: string): Partial<Record<ApproachId, ApproachJam>> {
   const { header: headerRow, rows } = normalizeApproachSheetRows(csv);
   const timestampIndex = headerRow.indexOf("Timestamp (SGT)");
   const sgAbKm = headerRow.indexOf("SG-JB jam km");
   const sgCKm = headerRow.indexOf("SG-JB C jam km");
   const jbSgKm = headerRow.indexOf("JB-SG jam km");
+  const jbSgAKm = headerRow.indexOf("JB-SG A jam km");
+  const jbSgCKm = headerRow.indexOf("JB-SG C jam km");
+  const jbSgDKm = headerRow.indexOf("JB-SG D jam km");
   const sgAbStart = headerRow.indexOf("SG-JB jam start");
   const sgCStart = headerRow.indexOf("SG-JB C jam start");
   const jbSgStart = headerRow.indexOf("JB-SG jam start");
+  const jbSgAStart = headerRow.indexOf("JB-SG A jam start");
+  const jbSgCStart = headerRow.indexOf("JB-SG C jam start");
+  const jbSgDStart = headerRow.indexOf("JB-SG D jam start");
   if (timestampIndex === -1 || sgAbKm === -1) return {};
   const latest = [...rows].reverse().find((row) => {
     const km = Number(row[sgAbKm]);
-    return Number.isFinite(km);
+    const cKm = sgCKm === -1 ? NaN : Number(row[sgCKm]);
+    const jbKm = jbSgKm === -1 ? NaN : Number(row[jbSgKm]);
+    return Number.isFinite(km) || Number.isFinite(cKm) || Number.isFinite(jbKm);
   });
   if (!latest) return {};
-  const jamFor = (kmIndex: number, startIndex: number): ApproachJam => {
+  const jamFor = (kmIndex: number, startIndex: number, fallback?: ApproachJam): ApproachJam => {
+    if (kmIndex === -1) return fallback ?? { km: null, start: null };
     const km = Number(latest[kmIndex]);
+    if (!Number.isFinite(km)) return fallback ?? { km: null, start: null };
     return {
-      km: Number.isFinite(km) ? km : null,
-      start: startIndex === -1 ? null : parseCoordinateCell(latest[startIndex] ?? ""),
+      km,
+      start: startIndex === -1 ? fallback?.start ?? null : parseCoordinateCell(latest[startIndex] ?? "") ?? fallback?.start ?? null,
     };
   };
   const sgAb = jamFor(sgAbKm, sgAbStart);
-  const sgC = sgCKm === -1 ? sgAb : jamFor(sgCKm, sgCStart);
-  const jbSg = jbSgKm === -1 ? { km: null, start: null } : jamFor(jbSgKm, jbSgStart);
+  const sgC = jamFor(sgCKm, sgCStart, sgAb);
+  const jbSg = jamFor(jbSgKm, jbSgStart);
   return {
     "woodlands-bke-right": sgAb,
     "woodlands-bke-left": sgAb,
     "woodlands-road-left": sgC,
-    "woodlands-jln-lingkaran-dalam": jbSg,
+    "woodlands-jln-lingkaran-dalam": jamFor(jbSgAKm, jbSgAStart, jbSg),
     "woodlands-ah2": jbSg,
-    "woodlands-bukit-chagar": jbSg,
-    "woodlands-jb-city-square": jbSg,
+    "woodlands-bukit-chagar": jamFor(jbSgCKm, jbSgCStart, jbSg),
+    "woodlands-jb-city-square": jamFor(jbSgDKm, jbSgDStart, jbSg),
   };
 }
 
@@ -2162,7 +2181,7 @@ function V3WoodlandsApproach({
                 <span className="v3-route-time-block">
                   <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
                   <small className="v3-jam-length">
-                    {route.jamKm == null ? "jam —" : route.jamKm > 0 ? `${route.jamKm.toFixed(route.jamKm >= 10 ? 0 : 1)} km jam` : "no jam"}
+                    {formatJamLength(route.jamKm)}
                   </small>
                 </span>
               </button>
@@ -3276,7 +3295,7 @@ export default function Home() {
             <h1 id="login-title">Sign in to continue</h1>
           </div>
           <div id="google-signin-button" className="google-signin-slot" />
-          <p className="login-note">Codex V3 · 1.5</p>
+          <p className="login-note">{APP_VERSION}</p>
           {auth.status === "loading" && <p className="login-note">Verifying Google sign-in…</p>}
           {auth.status === "error" && <p className="login-error">{auth.message}</p>}
         </section>
@@ -3291,10 +3310,10 @@ export default function Home() {
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>
-          <small>Codex V3 · 1.5</small>
         </div>
         <a className="brand compact" href="#top" aria-label="CrossBorder.sg home">
           <span>CrossBorder<span>.sg</span></span>
+          <small className="app-version">{APP_VERSION}</small>
         </a>
         {auth.status === "ready" && (
           <button className="signout-button" type="button" onClick={signOut}>

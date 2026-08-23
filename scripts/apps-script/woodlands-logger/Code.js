@@ -151,14 +151,23 @@ const COL_JAM_JBSG_MIN = 14; // N
 const COL_JAM_SGJB_START = 15; // O
 const COL_JAM_C_START    = 16; // P
 const COL_JAM_JBSG_START = 17; // Q
-const JAM_COL_COUNT    = 9;
+const COL_JAM_JBSG_A_KM    = 18; // R
+const COL_JAM_JBSG_A_START = 19; // S
+const COL_JAM_JBSG_C_KM    = 20; // T
+const COL_JAM_JBSG_C_START = 21; // U
+const COL_JAM_JBSG_D_KM    = 22; // V
+const COL_JAM_JBSG_D_START = 23; // W
+const JAM_COL_COUNT    = 15;
 
 // Plaza reference for jam length: 0 km when the tail is at the checkpoint.
 const JAM_REF = { lat: 1.443307, lng: 103.767903 };
 const JAM_PROBES = [
   { key: 'sg_jb', from: '1.421730,103.771179', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN, startCol: COL_JAM_SGJB_START },
   { key: 'sg_jb_c', from: '1.426905,103.763665', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN, startCol: COL_JAM_C_START },
-  { key: 'jb_sg', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_START },
+  { key: 'jb_sg_a', from: '1.472085,103.7651', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_A_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_A_START },
+  { key: 'jb_sg_b', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_START },
+  { key: 'jb_sg_c', from: '1.467340,103.7658', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_C_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_C_START },
+  { key: 'jb_sg_d', from: '1.465356,103.7702', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_D_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_D_START },
 ];
 
 // L on the GMaps tab: one Source label for the whole row — Mi6, Mac, or API.
@@ -1163,7 +1172,12 @@ function ensureShadowFitTab(ss) {
   }
   const headers = ['Timestamp (SGT)']
     .concat(ROUTES.map(function (route) { return route.name; }))
-    .concat(['SG-JB jam km', 'SG-JB jam-start min', 'SG-JB C jam km', 'SG-JB C jam-start min', 'JB-SG jam km', 'JB-SG jam-start min', 'SG-JB jam start', 'SG-JB C jam start', 'JB-SG jam start']);
+    .concat([
+      'SG-JB jam km', 'SG-JB jam-start min', 'SG-JB C jam km', 'SG-JB C jam-start min',
+      'JB-SG jam km', 'JB-SG jam-start min',
+      'SG-JB jam start', 'SG-JB C jam start', 'JB-SG jam start',
+      'JB-SG A jam km', 'JB-SG A jam start', 'JB-SG C jam km', 'JB-SG C jam start', 'JB-SG D jam km', 'JB-SG D jam start',
+    ]);
   sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
   sh.setFrozenRows(1);
   sh.getRange(1, 1).setNote(
