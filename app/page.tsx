@@ -1468,6 +1468,38 @@ function displaySmoothHistory(points: ApproachHistoryPoint[]): ApproachHistoryPo
   return points.map((point, index) => ({ ...point, minutes: smoothed[index] }));
 }
 
+function routeRangeEnvelope(seriesList: ApproachHistoryPoint[][]): Array<{ hour: number; low: number; high: number }> {
+  const byHour = new Map<number, number[]>();
+  for (const series of seriesList) {
+    for (const point of series) {
+      const hour = Math.round(point.hour * 4) / 4;
+      const minutes = byHour.get(hour) ?? [];
+      minutes.push(point.minutes);
+      byHour.set(hour, minutes);
+    }
+  }
+  return [...byHour.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([hour, minutes]) => ({
+      hour,
+      low: Math.min(...minutes),
+      high: Math.max(...minutes),
+    }));
+}
+
+function monotoneHistoryArea(
+  high: ApproachHistoryPoint[],
+  low: ApproachHistoryPoint[],
+  x: (hour: number) => number,
+  y: (minutes: number) => number,
+) {
+  if (high.length < 2 || low.length < 2) return "";
+  const top = monotoneHistoryPath(high, x, y);
+  const bottom = monotoneHistoryPath([...low].reverse(), x, y);
+  if (!top || !bottom) return "";
+  return `${top} ${bottom.replace(/^M /, "L ")} Z`;
+}
+
 function monotoneHistoryPath(
   points: ApproachHistoryPoint[],
   x: (hour: number) => number,
@@ -1517,9 +1549,11 @@ function monotoneHistoryPath(
 function ApproachHistoryOverlay({
   series,
   scale,
+  peerToday,
 }: {
   series: ApproachHistorySeries;
   scale: ApproachHistoryScale;
+  peerToday: ApproachHistoryPoint[][];
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -1541,6 +1575,9 @@ function ApproachHistoryOverlay({
     };
     const today = displaySmoothHistory(series.today);
     const comparison = displaySmoothHistory(series.comparison);
+    const envelope = routeRangeEnvelope(peerToday.length ? peerToday : [series.today]);
+    const bandHigh = displaySmoothHistory(envelope.map((point) => ({ hour: point.hour, minutes: point.high })));
+    const bandLow = displaySmoothHistory(envelope.map((point) => ({ hour: point.hour, minutes: point.low })));
     const latestToday = today.at(-1) ?? null;
     const nowParts = new Intl.DateTimeFormat("en-GB", {
       timeZone: "Asia/Singapore",
@@ -1554,9 +1591,18 @@ function ApproachHistoryOverlay({
     const nowDot = latestToday
       ? { x: x(nowDotHour), y: y(latestToday.minutes) }
       : null;
-    const todayPoints = latestToday && nowDotHour > latestToday.hour + 1 / 120
-      ? [...today, { hour: nowDotHour, minutes: latestToday.minutes }]
+    const extendToNow = Boolean(latestToday && nowDotHour > latestToday.hour + 1 / 120);
+    const todayPoints = extendToNow
+      ? [...today, { hour: nowDotHour, minutes: latestToday!.minutes }]
       : today;
+    const lastBandHigh = bandHigh.at(-1);
+    const lastBandLow = bandLow.at(-1);
+    const bandHighPoints = extendToNow && lastBandHigh
+      ? [...bandHigh, { hour: nowDotHour, minutes: lastBandHigh.minutes }]
+      : bandHigh;
+    const bandLowPoints = extendToNow && lastBandLow
+      ? [...bandLow, { hour: nowDotHour, minutes: lastBandLow.minutes }]
+      : bandLow;
     const timeZones = [
       { key: "green", low: low, high: Math.min(high, 40) },
       { key: "yellow", low: Math.max(low, 40), high: Math.min(high, 80) },
@@ -1568,6 +1614,7 @@ function ApproachHistoryOverlay({
     }));
     return {
       today: monotoneHistoryPath(todayPoints, x, y),
+      todayBand: monotoneHistoryArea(bandHighPoints, bandLowPoints, x, y),
       comparison: monotoneHistoryPath(comparison, x, y),
       yTicks: [high, Math.round((low + high) / 10) * 5, low].map((minutes) => ({ minutes, y: y(minutes) })),
       nowDot,
@@ -1580,7 +1627,10 @@ function ApproachHistoryOverlay({
     <div className="v3-route-history" aria-label={`Route crossing time today compared with ${series.comparisonLabel}`}>
       <div className="v3-route-history-legend" aria-hidden="true">
         <span className="today">
-          <svg viewBox="0 0 18 8" aria-hidden="true"><path d="M1 4 H17" className="today" /></svg>
+          <svg viewBox="0 0 18 8" aria-hidden="true">
+            <path d="M1 1.5 H17 V6.5 H1 Z" className="today-band" />
+            <path d="M1 4 H17" className="today" />
+          </svg>
           Today
         </span>
         <span className="comparison">
@@ -1596,6 +1646,7 @@ function ApproachHistoryOverlay({
           {chart.yTicks.map((tick) => (
             <line key={tick.minutes} x1="30" x2="292" y1={tick.y} y2={tick.y} className="grid" />
           ))}
+          {chart.todayBand && <path d={chart.todayBand} className="today-band" />}
           {chart.comparison && <path d={chart.comparison} className="comparison" />}
           {chart.today && <path d={chart.today} className="today" />}
         </svg>
@@ -1896,7 +1947,11 @@ function V3WoodlandsApproach({
           {visualLoadingApproach !== selected.id && <span className="v3-road-chip">{selected.label.slice(4)}</span>}
           </div>
           {routeHistory[selected.id] && (
-            <ApproachHistoryOverlay series={routeHistory[selected.id]!} scale={routeHistoryScale} />
+            <ApproachHistoryOverlay
+              series={routeHistory[selected.id]!}
+              scale={routeHistoryScale}
+              peerToday={definitions.map((definition) => routeHistory[definition.id]?.today ?? []).filter((points) => points.length > 0)}
+            />
           )}
           {navigateMessage && <p className="v3-navigate-status error" role="alert">{navigateMessage}</p>}
           <div className="v3-route-actions">

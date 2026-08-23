@@ -929,6 +929,12 @@ button { font: inherit; }
 .v3-route-history .time-zone.yellow { fill: rgba(250, 204, 21, 0.16); }
 .v3-route-history .time-zone.red { fill: rgba(180, 35, 24, 0.09); }
 
+.v3-route-history path.today-band {
+  fill: #0f766e;
+  fill-opacity: 0.38;
+  stroke: none;
+}
+
 .v3-route-history path.today {
   stroke: #0f766e;
   stroke-width: 2;
@@ -938,8 +944,8 @@ button { font: inherit; }
 
 .v3-route-history path.comparison {
   stroke: #64748b;
-  stroke-width: 3.5;
-  stroke-dasharray: 8 7;
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
