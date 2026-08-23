@@ -506,6 +506,40 @@ async function appendCheckpointSheetRow(sheetRows, source, log, stampIso) {
   throw new Error(`Checkpoint.sg sheet web app did not return JSON: ${lastBody.slice(0, 160)}`);
 }
 
+function displaySmoothValues(values) {
+  if (values.length < 3) return values;
+  const kernel = [1, 2, 3, 4, 3, 2, 1];
+  const radius = 3;
+  return values.map((_, index) => {
+    let weighted = 0;
+    let weight = 0;
+    for (let offset = -radius; offset <= radius; offset += 1) {
+      const sample = values[Math.min(values.length - 1, Math.max(0, index + offset))];
+      const sampleWeight = kernel[offset + radius];
+      weighted += sample * sampleWeight;
+      weight += sampleWeight;
+    }
+    return weighted / weight;
+  });
+}
+
+function displaySmoothKey(rows, key) {
+  const values = rows.map((row) => row[key]);
+  const out = values.slice();
+  let start = 0;
+  while (start < values.length) {
+    while (start < values.length && !Number.isFinite(values[start])) start += 1;
+    let end = start;
+    while (end < values.length && Number.isFinite(values[end])) end += 1;
+    if (end - start >= 3) {
+      const smoothed = displaySmoothValues(values.slice(start, end));
+      for (let index = 0; index < smoothed.length; index += 1) out[start + index] = smoothed[index];
+    }
+    start = Math.max(end, start + 1);
+  }
+  return rows.map((row, index) => ({ ...row, [key]: out[index] }));
+}
+
 function chartSvg(route, rows) {
   const width = 1120;
   const height = 620;
@@ -513,6 +547,7 @@ function chartSvg(route, rows) {
   const values = rows.flatMap((row) => [
     row.oursMid, row.checkpointMid,
   ]).filter(Number.isFinite);
+  const plotted = displaySmoothKey(displaySmoothKey(rows, "oursMid"), "checkpointMid");
   const low = Math.max(0, Math.floor((Math.min(...values, 20) - 10) / 10) * 10);
   const high = Math.ceil((Math.max(...values, 90) + 10) / 10) * 10;
   const dayStart = new Date(rows.at(-1)?.capturedAt ?? Date.now());
@@ -574,7 +609,7 @@ function chartSvg(route, rows) {
     const runs = [];
     let run = [];
     let lastMs = null;
-    for (const row of rows) {
+    for (const row of plotted) {
       if (!Number.isFinite(row[key]) || !include(row)) {
         if (run.length) runs.push(run);
         run = [];
@@ -602,7 +637,7 @@ function chartSvg(route, rows) {
     return `<line x1="${tickX}" x2="${tickX}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="#e4e8ec"/><text x="${tickX}" y="${height - 24}" text-anchor="middle" fill="#56616d" font-size="18">${label}</text>`;
   }).join("");
   const pointMarker = (key, color, radius) => {
-    const latest = rows.slice().reverse().find((row) => Number.isFinite(row[key]));
+    const latest = plotted.slice().reverse().find((row) => Number.isFinite(row[key]));
     if (!latest) return "";
     const markerY = y(latest[key]);
     if (markerY < margin.top || markerY > height - margin.bottom) return "";
