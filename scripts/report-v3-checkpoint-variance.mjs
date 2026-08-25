@@ -336,14 +336,16 @@ function sourceRange(route, source) {
 
 function sourcePoint(route, source, record) {
   if (!record?.readings || !record.capturedAt) return null;
-  const range = sourceRange(route, { ...source, ...record });
-  if (!range) return null;
+  const values = route.routes
+    .map((item) => record.readings[`${item.sourceColumn}${source.suffix}`])
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (values.length < Math.min(2, route.routes.length)) return null;
   return {
     capturedAt: record.capturedAt,
     label: route.label,
-    oursLow: range[0],
-    oursHigh: range[1],
-    oursMid: midpoint(range),
+    oursLow: Math.min(...values),
+    oursHigh: Math.max(...values),
+    oursMid: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
   };
 }
 
@@ -545,9 +547,15 @@ function chartSvg(route, rows) {
   const height = 620;
   const margin = { top: 94, right: 60, bottom: 70, left: 76 };
   const values = rows.flatMap((row) => [
-    row.oursMid, row.checkpointMid,
+    row.oursLow, row.oursMid, row.oursHigh, row.checkpointMid,
   ]).filter(Number.isFinite);
-  const plotted = displaySmoothKey(displaySmoothKey(rows, "oursMid"), "checkpointMid");
+  const plotted = displaySmoothKey(
+    displaySmoothKey(
+      displaySmoothKey(displaySmoothKey(rows, "oursMid"), "checkpointMid"),
+      "oursLow",
+    ),
+    "oursHigh",
+  );
   const low = Math.max(0, Math.floor((Math.min(...values, 20) - 10) / 10) * 10);
   const high = Math.ceil((Math.max(...values, 90) + 10) / 10) * 10;
   const dayStart = new Date(rows.at(-1)?.capturedAt ?? Date.now());
@@ -627,6 +635,34 @@ function chartSvg(route, rows) {
     if (run.length) runs.push(run);
     return runs.map(monotonePath).join(" ");
   };
+  const ribbon = () => {
+    const runs = [];
+    let highRun = [];
+    let lowRun = [];
+    const flush = () => {
+      if (highRun.length >= 2 && lowRun.length >= 2) {
+        const top = monotonePath(highRun);
+        const bottom = monotonePath(lowRun.slice().reverse());
+        if (top && bottom) runs.push(`${top} ${bottom.replace(/^M/, "L")} Z`);
+      }
+      highRun = [];
+      lowRun = [];
+    };
+    let lastMs = null;
+    for (const row of plotted) {
+      const ms = new Date(row.capturedAt).getTime();
+      if (!Number.isFinite(row.oursHigh) || !Number.isFinite(row.oursLow) || (lastMs !== null && ms - lastMs > 60 * 60 * 1000)) {
+        flush();
+        lastMs = Number.isFinite(row.oursHigh) && Number.isFinite(row.oursLow) ? ms : null;
+        if (!Number.isFinite(row.oursHigh) || !Number.isFinite(row.oursLow)) continue;
+      }
+      highRun.push({ x: x(row), y: y(row.oursHigh) });
+      lowRun.push({ x: x(row), y: y(row.oursLow) });
+      lastMs = ms;
+    }
+    flush();
+    return runs.join(" ");
+  };
   const grids = Array.from({ length: (high - low) / 15 + 1 }, (_, index) => low + index * 15)
     .filter((value) => value <= high)
     .map((value) => `<line x1="${margin.left}" x2="${width - margin.right}" y1="${y(value)}" y2="${y(value)}" stroke="#d7dde2"/><text x="${margin.left - 14}" y="${y(value) + 5}" text-anchor="end" fill="#56616d" font-size="20">${value}m</text>`)
@@ -658,12 +694,14 @@ function chartSvg(route, rows) {
     <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Crossborder vs Checkpoint.sg · ${singaporeDate}</text>
     ${grids}
     ${hourTicks}
+    <path d="${ribbon()}" fill="#d0008f" fill-opacity="0.22" stroke="none"/>
     <path d="${line("oursMid")}" fill="none" stroke="#d0008f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="${line("checkpointMid")}" fill="none" stroke="#64748b" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="12 10"/>
     ${dots}
-    <rect x="${legendX - 12}" y="${legendY - 18}" width="320" height="58" rx="10" fill="#ffffff" fill-opacity="0.9"/>
+    <rect x="${legendX - 12}" y="${legendY - 18}" width="390" height="58" rx="10" fill="#ffffff" fill-opacity="0.9"/>
+    <rect x="${legendX}" y="${legendY - 7}" width="22" height="14" rx="3" fill="#d0008f" fill-opacity="0.22"/>
     ${legendItem(legendX, legendY, "Crossborder", "#d0008f")}
-    ${legendItem(legendX + 160, legendY, "Checkpoint.sg", "#64748b", "8 6")}
+    ${legendItem(legendX + 190, legendY, "Checkpoint.sg", "#64748b", "8 6")}
   </svg>`;
 }
 

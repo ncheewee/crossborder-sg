@@ -1441,6 +1441,13 @@ function formatJamLength(km: number | null) {
   return `${label} km jam`;
 }
 
+function parseOptionalNumber(value: string | undefined) {
+  const text = String(value ?? "").trim();
+  if (text === "") return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+}
+
 function parseLatestJam(csv: string): Partial<Record<ApproachId, ApproachJam>> {
   const { header: headerRow, rows } = normalizeApproachSheetRows(csv);
   const timestampIndex = headerRow.indexOf("Timestamp (SGT)");
@@ -1456,18 +1463,32 @@ function parseLatestJam(csv: string): Partial<Record<ApproachId, ApproachJam>> {
   const jbSgAStart = headerRow.indexOf("JB-SG A jam start");
   const jbSgCStart = headerRow.indexOf("JB-SG C jam start");
   const jbSgDStart = headerRow.indexOf("JB-SG D jam start");
-  if (timestampIndex === -1 || sgAbKm === -1) return {};
+  const durationIndexes = [
+    headerRow.indexOf("SG-JB A | BKE Flyover"),
+    headerRow.indexOf("SG-JB B | BKE Junction"),
+    headerRow.indexOf("SG-JB C | Woodlands Rd"),
+    headerRow.indexOf("JB-SG A | Lingkaran Dalam S"),
+    headerRow.indexOf("JB-SG B | AH2"),
+    headerRow.indexOf("JB-SG C | Bukit Chagar"),
+    headerRow.indexOf("JB-SG D | Lingkaran Dalam N"),
+  ].filter((index) => index !== -1);
+  const jamKmIndexes = [sgAbKm, sgCKm, jbSgKm, jbSgAKm, jbSgCKm, jbSgDKm].filter((index) => index !== -1);
+  if (timestampIndex === -1 || jamKmIndexes.length === 0) return {};
+  const latestDuration = [...rows].reverse().find((row) => (
+    durationIndexes.some((index) => parseOptionalNumber(row[index]) != null)
+  ));
+  const latestAt = parseSingaporeSheetTime(latestDuration?.[timestampIndex] ?? "")?.at ?? Date.now();
+  const jamHoldMs = 3 * 60 * 60 * 1000;
   const latest = [...rows].reverse().find((row) => {
-    const km = Number(row[sgAbKm]);
-    const cKm = sgCKm === -1 ? NaN : Number(row[sgCKm]);
-    const jbKm = jbSgKm === -1 ? NaN : Number(row[jbSgKm]);
-    return Number.isFinite(km) || Number.isFinite(cKm) || Number.isFinite(jbKm);
+    if (!jamKmIndexes.some((index) => parseOptionalNumber(row[index]) != null)) return false;
+    const at = parseSingaporeSheetTime(row[timestampIndex] ?? "")?.at;
+    return at != null && latestAt - at <= jamHoldMs;
   });
   if (!latest) return {};
   const jamFor = (kmIndex: number, startIndex: number, fallback?: ApproachJam): ApproachJam => {
     if (kmIndex === -1) return fallback ?? { km: null, start: null };
-    const km = Number(latest[kmIndex]);
-    if (!Number.isFinite(km)) return fallback ?? { km: null, start: null };
+    const km = parseOptionalNumber(latest[kmIndex]);
+    if (km == null) return fallback ?? { km: null, start: null };
     return {
       km,
       start: startIndex === -1 ? fallback?.start ?? null : parseCoordinateCell(latest[startIndex] ?? "") ?? fallback?.start ?? null,

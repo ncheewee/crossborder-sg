@@ -164,10 +164,7 @@ const JAM_REF = { lat: 1.443307, lng: 103.767903 };
 const JAM_PROBES = [
   { key: 'sg_jb', from: '1.421730,103.771179', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN, startCol: COL_JAM_SGJB_START },
   { key: 'sg_jb_c', from: '1.426905,103.763665', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN, startCol: COL_JAM_C_START },
-  { key: 'jb_sg_a', from: '1.472085,103.7651', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_A_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_A_START },
   { key: 'jb_sg_b', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_START },
-  { key: 'jb_sg_c', from: '1.467340,103.7658', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_C_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_C_START },
-  { key: 'jb_sg_d', from: '1.465356,103.7702', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_D_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_D_START },
 ];
 
 // L on the GMaps tab: one Source label for the whole row — Mi6, Mac, or API.
