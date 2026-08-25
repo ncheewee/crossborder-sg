@@ -1767,10 +1767,17 @@ function ApproachHistoryOverlay({
   );
 }
 
-function PhotoZoom({ children }: { children: React.ReactNode }) {
+function PhotoZoom({
+  children,
+  onRefresh,
+}: {
+  children: React.ReactNode;
+  onRefresh?: () => void;
+}) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const transform = useRef({ scale: 1, x: 0, y: 0 });
+  const pullStartY = useRef<number | null>(null);
   const gesture = useRef<{
     mode: "pinch" | "pan";
     startScale: number;
@@ -1826,6 +1833,7 @@ function PhotoZoom({ children }: { children: React.ReactNode }) {
 
     const onStart = (event: globalThis.TouchEvent) => {
       if (event.touches.length >= 2) {
+        pullStartY.current = null;
         const mid = midpoint(event);
         gesture.current = {
           mode: "pinch",
@@ -1839,6 +1847,9 @@ function PhotoZoom({ children }: { children: React.ReactNode }) {
           startTouchY: 0,
         };
         return;
+      }
+      if (event.touches.length === 1 && transform.current.scale <= 1.01) {
+        pullStartY.current = event.touches[0].clientY;
       }
       if (event.touches.length === 1 && transform.current.scale > 1.01) {
         gesture.current = {
@@ -1884,6 +1895,11 @@ function PhotoZoom({ children }: { children: React.ReactNode }) {
     };
 
     const onEnd = (event: globalThis.TouchEvent) => {
+      if (event.touches.length === 0 && pullStartY.current != null && transform.current.scale <= 1.01) {
+        const endY = event.changedTouches[0]?.clientY ?? pullStartY.current;
+        if (endY - pullStartY.current > 86) onRefresh?.();
+        pullStartY.current = null;
+      }
       if (event.touches.length >= 2) {
         const mid = midpoint(event);
         gesture.current = {
@@ -2056,6 +2072,12 @@ function V3WoodlandsApproach({
   useEffect(() => {
     loadCrossingRoutes("sg-my");
   }, []);
+
+  useEffect(() => {
+    const reload = () => loadCrossingRoutes(travelDirection);
+    window.addEventListener("crossborder-refresh", reload);
+    return () => window.removeEventListener("crossborder-refresh", reload);
+  }, [travelDirection]);
 
   useEffect(() => {
     const preloadTimer = window.setTimeout(() => {
@@ -2841,7 +2863,6 @@ export default function Home() {
   const [addressLocation, setAddressLocation] = useState<{ label: string; coordinate: Coordinate; precision: string } | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [locationInput, setLocationInput] = useState("");
-  const pullStartY = useRef<number | null>(null);
   const hasLiveTraffic = useRef(false);
   const isAuthConfigured = Boolean(googleClientId());
 
@@ -3219,32 +3240,7 @@ export default function Home() {
 
   function refresh() {
     void loadTraffic();
-  }
-
-  function handleTouchStart(event: TouchEvent<HTMLElement>) {
-    if (event.touches.length !== 1) {
-      pullStartY.current = null;
-      return;
-    }
-    if (document.querySelector(".photo-zoom-viewport.is-zoomed")) {
-      pullStartY.current = null;
-      return;
-    }
-    if (window.scrollY <= 0) {
-      pullStartY.current = event.touches[0]?.clientY ?? null;
-    }
-  }
-
-  function handleTouchEnd(event: TouchEvent<HTMLElement>) {
-    if (pullStartY.current == null || refreshing) {
-      pullStartY.current = null;
-      return;
-    }
-    const endY = event.changedTouches[0]?.clientY ?? pullStartY.current;
-    if (endY - pullStartY.current > 86) {
-      refresh();
-    }
-    pullStartY.current = null;
+    window.dispatchEvent(new Event("crossborder-refresh"));
   }
 
   function detectLocation() {
@@ -3326,8 +3322,8 @@ export default function Home() {
   }
 
   return (
-    <PhotoZoom>
-    <main className="app-shell landing-shell" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+    <PhotoZoom onRefresh={refresh}>
+    <main className="app-shell landing-shell">
       <header className="topbar">
         <div className="updated-line">
           <span>{refreshing ? "Updating…" : `Last updated ${lastChecked}`}</span>

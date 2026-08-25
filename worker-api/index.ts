@@ -900,7 +900,6 @@ async function handleTraffic(request: Request, env: Env, user: AuthUser | null =
   const direction = parseDirection(url.searchParams.get("direction"));
   const now = new Date();
   const sql = neon(env.DATABASE_URL);
-  if (user) await recordAuthEvent(sql, user, `traffic:${direction}`, request);
 
   try {
     const sourceResponse = await fetch(SOURCE_URL, {
@@ -934,17 +933,6 @@ async function handleTraffic(request: Request, env: Env, user: AuthUser | null =
       checkpoints.map(async (checkpoint) => {
         const forecast = buildForecast(checkpoint, direction, now, cameras[checkpoint]);
         const wait = estimateWait(checkpoint, direction, now, cameras[checkpoint]);
-        await saveObservation(sql, {
-          observedAt: now.toISOString(),
-          direction,
-          checkpoint,
-          sourceUpdatedAt: cameras[checkpoint].updatedAt,
-          cameraId: cameras[checkpoint].cameraId,
-          imageUrl: cameras[checkpoint].imageUrl,
-          estimatedWaitMinutes: wait,
-          forecast30Minutes: forecast[1]?.predicted ?? null,
-          method: "historical-baseline-v2+official-camera-freshness",
-        });
         const rows = await loadHistory(sql, direction, checkpoint, since);
         const reports = await loadTravelerReports(sql, direction, checkpoint, reportSince);
         return [checkpoint, { rows, reports, forecast, wait }] as const;
