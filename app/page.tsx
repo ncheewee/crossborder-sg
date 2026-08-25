@@ -1448,63 +1448,75 @@ function parseOptionalNumber(value: string | undefined) {
   return Number.isFinite(number) ? number : null;
 }
 
+function headerIndex(headerRow: string[], ...names: string[]) {
+  for (const name of names) {
+    const index = headerRow.indexOf(name);
+    if (index !== -1) return index;
+  }
+  return -1;
+}
+
 function parseLatestJam(csv: string): Partial<Record<ApproachId, ApproachJam>> {
   const { header: headerRow, rows } = normalizeApproachSheetRows(csv);
-  const timestampIndex = headerRow.indexOf("Timestamp (SGT)");
-  const sgAbKm = headerRow.indexOf("SG-JB jam km");
-  const sgCKm = headerRow.indexOf("SG-JB C jam km");
-  const jbSgKm = headerRow.indexOf("JB-SG jam km");
-  const jbSgAKm = headerRow.indexOf("JB-SG A jam km");
-  const jbSgCKm = headerRow.indexOf("JB-SG C jam km");
-  const jbSgDKm = headerRow.indexOf("JB-SG D jam km");
-  const sgAbStart = headerRow.indexOf("SG-JB jam start");
-  const sgCStart = headerRow.indexOf("SG-JB C jam start");
-  const jbSgStart = headerRow.indexOf("JB-SG jam start");
-  const jbSgAStart = headerRow.indexOf("JB-SG A jam start");
-  const jbSgCStart = headerRow.indexOf("JB-SG C jam start");
-  const jbSgDStart = headerRow.indexOf("JB-SG D jam start");
+  const timestampIndex = headerIndex(headerRow, "Timestamp (SGT)");
+  const sgAKm = headerIndex(headerRow, "SG-JB A jam km", "SG-JB A/B jam km", "SG-JB jam km");
+  const sgBKm = headerIndex(headerRow, "SG-JB B jam km");
+  const sgCKm = headerIndex(headerRow, "SG-JB C jam km");
+  const jbSgKm = headerIndex(headerRow, "JB-SG jam km", "JB-SG A-D jam km", "JB-SG A–D jam km");
+  const jbSgAKm = headerIndex(headerRow, "JB-SG A jam km");
+  const jbSgCKm = headerIndex(headerRow, "JB-SG C jam km");
+  const jbSgDKm = headerIndex(headerRow, "JB-SG D jam km");
+  const sgAStart = headerIndex(headerRow, "SG-JB A jam start", "SG-JB jam start");
+  const sgBStart = headerIndex(headerRow, "SG-JB B jam start");
+  const sgCStart = headerIndex(headerRow, "SG-JB C jam start");
+  const jbSgStart = headerIndex(headerRow, "JB-SG jam start");
+  const jbSgAStart = headerIndex(headerRow, "JB-SG A jam start");
+  const jbSgCStart = headerIndex(headerRow, "JB-SG C jam start");
+  const jbSgDStart = headerIndex(headerRow, "JB-SG D jam start");
   const durationIndexes = [
-    headerRow.indexOf("SG-JB A | BKE Flyover"),
-    headerRow.indexOf("SG-JB B | BKE Junction"),
-    headerRow.indexOf("SG-JB C | Woodlands Rd"),
-    headerRow.indexOf("JB-SG A | Lingkaran Dalam S"),
-    headerRow.indexOf("JB-SG B | AH2"),
-    headerRow.indexOf("JB-SG C | Bukit Chagar"),
-    headerRow.indexOf("JB-SG D | Lingkaran Dalam N"),
+    headerIndex(headerRow, "SG-JB A | BKE Flyover"),
+    headerIndex(headerRow, "SG-JB B | BKE Junction"),
+    headerIndex(headerRow, "SG-JB C | Woodlands Rd"),
+    headerIndex(headerRow, "JB-SG A | Lingkaran Dalam S"),
+    headerIndex(headerRow, "JB-SG B | AH2"),
+    headerIndex(headerRow, "JB-SG C | Bukit Chagar"),
+    headerIndex(headerRow, "JB-SG D | Lingkaran Dalam N"),
   ].filter((index) => index !== -1);
-  const jamKmIndexes = [sgAbKm, sgCKm, jbSgKm, jbSgAKm, jbSgCKm, jbSgDKm].filter((index) => index !== -1);
-  if (timestampIndex === -1 || jamKmIndexes.length === 0) return {};
+  if (timestampIndex === -1) return {};
   const latestDuration = [...rows].reverse().find((row) => (
     durationIndexes.some((index) => parseOptionalNumber(row[index]) != null)
   ));
   const latestAt = parseSingaporeSheetTime(latestDuration?.[timestampIndex] ?? "")?.at ?? Date.now();
   const jamHoldMs = 3 * 60 * 60 * 1000;
-  const latest = [...rows].reverse().find((row) => {
-    if (!jamKmIndexes.some((index) => parseOptionalNumber(row[index]) != null)) return false;
-    const at = parseSingaporeSheetTime(row[timestampIndex] ?? "")?.at;
-    return at != null && latestAt - at <= jamHoldMs;
-  });
-  if (!latest) return {};
-  const jamFor = (kmIndex: number, startIndex: number, fallback?: ApproachJam): ApproachJam => {
-    if (kmIndex === -1) return fallback ?? { km: null, start: null };
-    const km = parseOptionalNumber(latest[kmIndex]);
-    if (km == null) return fallback ?? { km: null, start: null };
-    return {
-      km,
-      start: startIndex === -1 ? fallback?.start ?? null : parseCoordinateCell(latest[startIndex] ?? "") ?? fallback?.start ?? null,
-    };
+  const jamFor = (kmIndex: number, startIndex: number): ApproachJam => {
+    if (kmIndex === -1) return { km: null, start: null };
+    for (const row of [...rows].reverse()) {
+      const at = parseSingaporeSheetTime(row[timestampIndex] ?? "")?.at;
+      if (at == null || latestAt - at > jamHoldMs) continue;
+      const km = parseOptionalNumber(row[kmIndex]);
+      if (km == null) continue;
+      return {
+        km,
+        start: startIndex === -1 ? null : parseCoordinateCell(row[startIndex] ?? ""),
+      };
+    }
+    return { km: null, start: null };
   };
-  const sgAb = jamFor(sgAbKm, sgAbStart);
-  const sgC = jamFor(sgCKm, sgCStart, sgAb);
+  const sgA = jamFor(sgAKm, sgAStart);
+  const sgB = jamFor(sgBKm, sgBStart);
+  const sgC = jamFor(sgCKm, sgCStart);
   const jbSg = jamFor(jbSgKm, jbSgStart);
+  const jbSgA = jamFor(jbSgAKm, jbSgAStart);
+  const jbSgC = jamFor(jbSgCKm, jbSgCStart);
+  const jbSgD = jamFor(jbSgDKm, jbSgDStart);
   return {
-    "woodlands-bke-right": sgAb,
-    "woodlands-bke-left": sgAb,
+    "woodlands-bke-right": sgA,
+    "woodlands-bke-left": sgB.km != null ? sgB : sgA,
     "woodlands-road-left": sgC,
-    "woodlands-jln-lingkaran-dalam": jamFor(jbSgAKm, jbSgAStart, jbSg),
+    "woodlands-jln-lingkaran-dalam": jbSgA.km != null ? jbSgA : jbSg,
     "woodlands-ah2": jbSg,
-    "woodlands-bukit-chagar": jamFor(jbSgCKm, jbSgCStart, jbSg),
-    "woodlands-jb-city-square": jamFor(jbSgDKm, jbSgDStart, jbSg),
+    "woodlands-bukit-chagar": jbSgC.km != null ? jbSgC : jbSg,
+    "woodlands-jb-city-square": jbSgD.km != null ? jbSgD : jbSg,
   };
 }
 

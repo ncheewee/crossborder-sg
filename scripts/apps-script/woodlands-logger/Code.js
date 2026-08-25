@@ -142,11 +142,11 @@ const COL_FREEFLOW_1= 9;   // I on the TomTom/Mapbox tabs
 const COL_CAM_1     = 9;   // I on the cams tab
 
 // Crossborder extra columns after the seven route durations.
-const COL_JAM_SGJB_KM  = 9;  // I
-const COL_JAM_SGJB_MIN = 10; // J
-const COL_JAM_C_KM     = 11; // K
-const COL_JAM_C_MIN    = 12; // L
-const COL_JAM_JBSG_KM  = 13; // M
+const COL_JAM_SGJB_KM  = 9;  // I  SG-JB A
+const COL_JAM_SGJB_MIN = 10; // J  SG-JB A
+const COL_JAM_C_KM     = 11; // K  SG-JB C
+const COL_JAM_C_MIN    = 12; // L  SG-JB C
+const COL_JAM_JBSG_KM  = 13; // M  JB-SG (To Singapore)
 const COL_JAM_JBSG_MIN = 14; // N
 const COL_JAM_SGJB_START = 15; // O
 const COL_JAM_C_START    = 16; // P
@@ -157,7 +157,10 @@ const COL_JAM_JBSG_C_KM    = 20; // T
 const COL_JAM_JBSG_C_START = 21; // U
 const COL_JAM_JBSG_D_KM    = 22; // V
 const COL_JAM_JBSG_D_START = 23; // W
-const JAM_COL_COUNT    = 15;
+const COL_JAM_SGJB_B_KM    = 24; // X  SG-JB B (same pin as A)
+const COL_JAM_SGJB_B_MIN   = 25; // Y
+const COL_JAM_SGJB_B_START = 26; // Z
+const JAM_COL_COUNT    = 18;
 
 // Plaza reference for jam length: 0 km when the tail is at the checkpoint.
 const JAM_REF = { lat: 1.443307, lng: 103.767903 };
@@ -1170,10 +1173,11 @@ function ensureShadowFitTab(ss) {
   const headers = ['Timestamp (SGT)']
     .concat(ROUTES.map(function (route) { return route.name; }))
     .concat([
-      'SG-JB jam km', 'SG-JB jam-start min', 'SG-JB C jam km', 'SG-JB C jam-start min',
+      'SG-JB A jam km', 'SG-JB A jam-start min', 'SG-JB C jam km', 'SG-JB C jam-start min',
       'JB-SG jam km', 'JB-SG jam-start min',
-      'SG-JB jam start', 'SG-JB C jam start', 'JB-SG jam start',
+      'SG-JB A jam start', 'SG-JB C jam start', 'JB-SG jam start',
       'JB-SG A jam km', 'JB-SG A jam start', 'JB-SG C jam km', 'JB-SG C jam start', 'JB-SG D jam km', 'JB-SG D jam start',
+      'SG-JB B jam km', 'SG-JB B jam-start min', 'SG-JB B jam start',
     ]);
   sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
   sh.setFrozenRows(1);
@@ -1221,7 +1225,9 @@ function rebuildShadowFit() {
     const stamp = row[0];
     const at = sgtStampToMs(stamp);
     const minutes = row.slice(1, 8).map(parseGmapsMinutes);
-    const jam = jamByStamp[stamp] || ['', '', '', '', '', ''];
+    const jam = (jamByStamp[stamp] || []).slice();
+    while (jam.length < JAM_COL_COUNT) jam.push('');
+    if (jam.length > JAM_COL_COUNT) jam.length = JAM_COL_COUNT;
     if (at == null) {
       out.push([stamp, '', '', '', '', '', '', ''].concat(jam));
       continue;
@@ -1422,17 +1428,27 @@ function logJamLengths(slotStr) {
   }
   const sh = ensureShadowFitTab(ss);
   const row = findOrCreateRow(sh, slotStr);
-  const existingKm = sh.getRange(row, COL_JAM_SGJB_KM).getDisplayValue();
-  if (existingKm !== '' && !logJamLengths.force) return 'already filled ' + slotStr;
-  const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('JAM_API_SLOT') === slotStr && !logJamLengths.force && !logHour.force) {
-    return 'already attempted ' + slotStr;
+  var missing = 0;
+  JAM_PROBES.forEach(function (probe) {
+    if (String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() === '') missing += 1;
+  });
+  if (missing === 0 && !logJamLengths.force) {
+    copySgJbAJamToB(sh, row);
+    return 'already filled ' + slotStr;
   }
   var hit429 = false;
+  var filled = 0;
   JAM_PROBES.forEach(function (probe) {
     if (hit429) return;
+    if (!logJamLengths.force && String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() !== '') {
+      filled += 1;
+      return;
+    }
     const fetched = fetchTrafficOnPolyline(probe.from, probe.to, key);
-    if (fetched.status === 429) hit429 = true;
+    if (fetched.status === 429) {
+      hit429 = true;
+      return;
+    }
     const analyzed = analyzeJam(fetched.body);
     if (analyzed) {
       sh.getRange(row, probe.kmCol).setValue(analyzed.jamKm);
@@ -1442,12 +1458,21 @@ function logJamLengths(slotStr) {
           ? analyzed.startLat + ',' + analyzed.startLng
           : ''
       );
+      filled += 1;
     }
     Utilities.sleep(1200);
   });
-  props.setProperty('JAM_API_SLOT', slotStr);
+  copySgJbAJamToB(sh, row);
   sh.getRange(row, COL_TIMESTAMP).setValue(slotStr);
-  return (hit429 ? '429 after filling ' : 'logged jam for ') + slotStr;
+  return (hit429 ? '429 after filling ' : 'logged jam for ') + slotStr + ' (' + filled + '/' + JAM_PROBES.length + ')';
+}
+
+function copySgJbAJamToB(sh, row) {
+  const km = sh.getRange(row, COL_JAM_SGJB_KM).getDisplayValue();
+  if (String(km || '').trim() === '') return;
+  sh.getRange(row, COL_JAM_SGJB_B_KM).setValue(sh.getRange(row, COL_JAM_SGJB_KM).getValue());
+  sh.getRange(row, COL_JAM_SGJB_B_MIN).setValue(sh.getRange(row, COL_JAM_SGJB_MIN).getValue());
+  sh.getRange(row, COL_JAM_SGJB_B_START).setValue(sh.getRange(row, COL_JAM_SGJB_START).getValue());
 }
 
 /** Canonical pins and shadow-fit model. Safe to re-run; replaces the tab contents. */
