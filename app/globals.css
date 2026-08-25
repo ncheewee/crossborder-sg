@@ -27,8 +27,15 @@
 
 html {
   height: 100%;
+  min-height: 100dvh;
   scroll-behavior: smooth;
   background: var(--background);
+}
+
+html, body, #root {
+  height: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
 }
 
 body {
@@ -49,6 +56,7 @@ a { -webkit-tap-highlight-color: transparent; }
 button { font: inherit; }
 
 .photo-zoom-viewport {
+  position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -58,6 +66,49 @@ button { font: inherit; }
   width: 100%;
   height: 100%;
   transform-origin: 0 0;
+}
+
+.pull-refresh-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 8;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.pull-refresh-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 10px;
+  color: #171717;
+  transform-origin: 50% 50%;
+}
+
+.pull-refresh-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pull-refresh-icon.is-armed {
+  color: #0f766e;
+}
+
+.pull-refresh-icon.is-refreshing {
+  animation: spin 0.8s linear infinite;
 }
 
 .photo-zoom-viewport.is-zoomed {

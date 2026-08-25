@@ -8,7 +8,7 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
-const APP_VERSION = "v1.6";
+const APP_VERSION = "v1.7";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -1788,8 +1788,15 @@ function PhotoZoom({
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const indicatorRef = useRef<HTMLDivElement | null>(null);
+  const iconRef = useRef<HTMLDivElement | null>(null);
   const transform = useRef({ scale: 1, x: 0, y: 0 });
   const pullStartY = useRef<number | null>(null);
+  const pullY = useRef(0);
+  const pulling = useRef(false);
+  const refreshing = useRef(false);
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
   const gesture = useRef<{
     mode: "pinch" | "pan";
     startScale: number;
@@ -1802,13 +1809,40 @@ function PhotoZoom({
     startTouchY: number;
   } | null>(null);
 
+  const paintPull = () => {
+    const y = pullY.current;
+    const stage = stageRef.current;
+    if (stage && transform.current.scale <= 1.01) {
+      stage.style.transition = pulling.current ? "none" : "transform 0.28s ease";
+      stage.style.transform = y > 0.5 ? `translateY(${y}px)` : "";
+    }
+    if (indicatorRef.current) {
+      indicatorRef.current.style.height = `${y}px`;
+      indicatorRef.current.style.opacity = String(Math.min(1, y / 28));
+    }
+    if (iconRef.current) {
+      iconRef.current.classList.toggle("is-refreshing", refreshing.current);
+      iconRef.current.classList.toggle("is-armed", !refreshing.current && y >= 56);
+      if (refreshing.current) {
+        iconRef.current.style.transform = "";
+      } else {
+        iconRef.current.style.transform = `rotate(${Math.min(180, (y / 56) * 180)}deg)`;
+      }
+    }
+  };
+
   const paint = () => {
     const stage = stageRef.current;
     if (!stage) return;
     const { scale, x, y } = transform.current;
     const zoomed = scale > 1.01;
-    stage.style.transform = zoomed ? `translate(${x}px, ${y}px) scale(${scale})` : "";
     viewportRef.current?.classList.toggle("is-zoomed", zoomed);
+    if (zoomed) {
+      stage.style.transition = "none";
+      stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+      return;
+    }
+    paintPull();
   };
 
   const clamp = (next: { scale: number; x: number; y: number }) => {
@@ -1842,10 +1876,46 @@ function PhotoZoom({
       if (!first || !second) return { x: first?.clientX ?? 0, y: first?.clientY ?? 0 };
       return { x: (first.clientX + second.clientX) / 2, y: (first.clientY + second.clientY) / 2 };
     };
+    const hasScrollRoom = (target: EventTarget | null) => {
+      let node = target instanceof Element ? target : null;
+      while (node && node !== viewport) {
+        const overflowY = window.getComputedStyle(node).overflowY;
+        if ((overflowY === "auto" || overflowY === "scroll") && node.scrollTop > 1) return true;
+        node = node.parentElement;
+      }
+      return false;
+    };
+    const resetPull = (animate: boolean) => {
+      pulling.current = false;
+      pullStartY.current = null;
+      if (!animate) {
+        pullY.current = 0;
+        paintPull();
+        return;
+      }
+      pullY.current = 0;
+      paintPull();
+    };
+    const releaseRefresh = () => {
+      if (refreshing.current) return;
+      refreshing.current = true;
+      pulling.current = false;
+      pullStartY.current = null;
+      pullY.current = 56;
+      paintPull();
+      onRefreshRef.current?.();
+      window.setTimeout(() => {
+        refreshing.current = false;
+        pullY.current = 0;
+        paintPull();
+      }, 900);
+    };
 
     const onStart = (event: globalThis.TouchEvent) => {
       if (event.touches.length >= 2) {
         pullStartY.current = null;
+        pulling.current = false;
+        if (!refreshing.current) pullY.current = 0;
         const mid = midpoint(event);
         gesture.current = {
           mode: "pinch",
@@ -1860,8 +1930,11 @@ function PhotoZoom({
         };
         return;
       }
-      if (event.touches.length === 1 && transform.current.scale <= 1.01) {
-        pullStartY.current = event.touches[0].clientY;
+      if (event.touches.length === 1 && transform.current.scale <= 1.01 && !refreshing.current) {
+        if (!hasScrollRoom(event.target)) {
+          pullStartY.current = event.touches[0].clientY;
+          pulling.current = true;
+        }
       }
       if (event.touches.length === 1 && transform.current.scale > 1.01) {
         gesture.current = {
@@ -1880,8 +1953,7 @@ function PhotoZoom({
 
     const onMove = (event: globalThis.TouchEvent) => {
       const active = gesture.current;
-      if (!active) return;
-      if (active.mode === "pinch" && event.touches.length >= 2) {
+      if (active?.mode === "pinch" && event.touches.length >= 2) {
         event.preventDefault();
         const ratio = Math.max(1, distance(event)) / active.startDistance;
         const nextScale = active.startScale * ratio;
@@ -1895,7 +1967,7 @@ function PhotoZoom({
         paint();
         return;
       }
-      if (active.mode === "pan" && event.touches.length === 1 && transform.current.scale > 1.01) {
+      if (active?.mode === "pan" && event.touches.length === 1 && transform.current.scale > 1.01) {
         event.preventDefault();
         transform.current = clamp({
           scale: transform.current.scale,
@@ -1903,14 +1975,26 @@ function PhotoZoom({
           y: active.startY + event.touches[0].clientY - active.startTouchY,
         });
         paint();
+        return;
+      }
+      if (
+        pulling.current
+        && pullStartY.current != null
+        && event.touches.length === 1
+        && transform.current.scale <= 1.01
+        && !refreshing.current
+      ) {
+        const raw = event.touches[0].clientY - pullStartY.current;
+        if (raw > 10) event.preventDefault();
+        pullY.current = raw > 0 ? Math.min(160, raw * 0.65) : 0;
+        paintPull();
       }
     };
 
     const onEnd = (event: globalThis.TouchEvent) => {
-      if (event.touches.length === 0 && pullStartY.current != null && transform.current.scale <= 1.01) {
-        const endY = event.changedTouches[0]?.clientY ?? pullStartY.current;
-        if (endY - pullStartY.current > 86) onRefresh?.();
-        pullStartY.current = null;
+      if (event.touches.length === 0 && pulling.current && transform.current.scale <= 1.01) {
+        if (pullY.current >= 56) releaseRefresh();
+        else resetPull(true);
       }
       if (event.touches.length >= 2) {
         const mid = midpoint(event);
@@ -1960,6 +2044,14 @@ function PhotoZoom({
 
   return (
     <div className="photo-zoom-viewport" ref={viewportRef}>
+      <div className="pull-refresh-layer" ref={indicatorRef} aria-hidden="true">
+        <div className="pull-refresh-icon" ref={iconRef}>
+          <svg viewBox="0 0 24 24">
+            <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+            <path d="M20 4v6h-6" />
+          </svg>
+        </div>
+      </div>
       <div className="photo-zoom-stage" ref={stageRef}>
         {children}
       </div>
@@ -3066,8 +3158,12 @@ export default function Home() {
     fitCameras();
     window.setTimeout(fitCameras, 250);
     window.addEventListener("resize", fitCameras);
+    window.addEventListener("pageshow", fitCameras);
+    document.addEventListener("visibilitychange", fitCameras);
     return () => {
       window.removeEventListener("resize", fitCameras);
+      window.removeEventListener("pageshow", fitCameras);
+      document.removeEventListener("visibilitychange", fitCameras);
     };
   }, [trafficByDirection]);
 

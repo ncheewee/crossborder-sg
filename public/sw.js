@@ -1,5 +1,7 @@
-const CACHE_NAME = "crossborder-sg-v5";
+const CACHE_NAME = "crossborder-sg-v6";
 const SHELL_ASSETS = [
+  "/crossborder-sg/",
+  "/crossborder-sg/index.html",
   "/crossborder-sg/icon.svg",
   "/crossborder-sg/icon-192.png",
   "/crossborder-sg/icon-512.png",
@@ -9,6 +11,20 @@ const SHELL_ASSETS = [
   "/crossborder-sg/tuas.jpg",
   "/crossborder-sg/woodlands.jpg"
 ];
+
+function putIfOk(request, response) {
+  if (!response || !response.ok) return response;
+  const clone = response.clone();
+  caches.open(CACHE_NAME).then((cache) => {
+    cache.put(request, clone);
+    const url = new URL(request.url);
+    if (url.pathname === "/crossborder-sg/" || url.pathname.endsWith("/index.html")) {
+      cache.put("/crossborder-sg/index.html", response.clone());
+      cache.put("/crossborder-sg/", response.clone());
+    }
+  });
+  return response;
+}
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") {
@@ -21,6 +37,7 @@ self.addEventListener("install", (event) => {
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(SHELL_ASSETS))
       .then(() => self.skipWaiting())
+      .catch(() => self.skipWaiting())
   );
 });
 
@@ -45,33 +62,36 @@ self.addEventListener("fetch", (event) => {
 
   if (!isAppRequest) return;
 
-  if (request.mode === "navigate" || url.pathname.endsWith("/index.html") || url.pathname === "/crossborder-sg/") {
-    event.respondWith(
-      fetch(request, { cache: "no-store" }).then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        return response;
-      }).catch(() => caches.match(request).then((cached) => cached ?? caches.match("/crossborder-sg/index.html")))
-    );
+  if (request.mode === "navigate" || url.pathname.endsWith("/index.html") || url.pathname === "/crossborder-sg/" || url.pathname === "/crossborder-sg") {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(request) || await cache.match("/crossborder-sg/index.html") || await cache.match("/crossborder-sg/");
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1200);
+        const response = await fetch(request, { cache: "no-store", signal: controller.signal });
+        clearTimeout(timer);
+        if (response.ok) return putIfOk(request, response);
+      } catch (_) {
+        // Use the last good shell so reopen is never a blank page.
+      }
+      if (cached) return cached;
+      return fetch(request);
+    })());
     return;
   }
 
   if (["script", "style", "worker"].includes(request.destination) || /\.(?:js|css)$/i.test(url.pathname)) {
     event.respondWith(
-      fetch(request, { cache: "no-store" }).then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        return response;
-      }).catch(() => caches.match(request))
+      caches.match(request).then((cached) => {
+        const networked = fetch(request).then((response) => putIfOk(request, response)).catch(() => cached);
+        return cached || networked;
+      })
     );
     return;
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => cached ?? fetch(request).then((response) => {
-      const clone = response.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-      return response;
-    }))
+    caches.match(request).then((cached) => cached ?? fetch(request).then((response) => putIfOk(request, response)))
   );
 });

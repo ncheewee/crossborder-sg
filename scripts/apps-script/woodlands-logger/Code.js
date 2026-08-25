@@ -165,8 +165,10 @@ const JAM_COL_COUNT    = 18;
 // Plaza reference for jam length: 0 km when the tail is at the checkpoint.
 const JAM_REF = { lat: 1.443307, lng: 103.767903 };
 const JAM_PROBES = [
-  { key: 'sg_jb', from: '1.429984,103.769289', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN, startCol: COL_JAM_SGJB_START },
-  { key: 'sg_jb_c', from: '1.428949,103.761972', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN, startCol: COL_JAM_C_START },
+  // SG-JB jam-start must stay on Woodlands Rd (~103.768). Route C feeds in from
+  // Ave 3 to the west; first-SLOW on that feeder is free-flowing in Maps.
+  { key: 'sg_jb', from: '1.429984,103.769289', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN, startCol: COL_JAM_SGJB_START, maxLngDelta: 0.0035 },
+  { key: 'sg_jb_c', from: '1.428949,103.761972', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN, startCol: COL_JAM_C_START, maxLngDelta: 0.0035 },
   { key: 'jb_sg_b', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_START },
 ];
 
@@ -1183,7 +1185,8 @@ function ensureShadowFitTab(ss) {
   sh.setFrozenRows(1);
   sh.getRange(1, 1).setNote(
     'Crossborder — jam-start duration through intercept + slope. '
-    + 'Jam km is along-route length from the first slow/jam to the plaza at 1.443307, 103.767903 (0 if none).'
+    + 'Jam km is the plaza-road queue: contiguous slow/jam reaching 1.443307, 103.767903, '
+    + 'not an earlier feeder slowdown (0 if none).'
   );
   return sh;
 }
@@ -1332,7 +1335,29 @@ function nearestIndex(points, ref) {
   return best;
 }
 
-function analyzeJam(routeBody) {
+function isJamSpeed(speed) {
+  return speed === 'SLOW' || speed === 'TRAFFIC_JAM';
+}
+
+function speedsAlong(points, intervals) {
+  const speeds = [];
+  for (var i = 0; i < points.length; i++) speeds.push('NORMAL');
+  for (var n = 0; n < intervals.length; n++) {
+    const interval = intervals[n];
+    const start = Number(interval.startPolylinePointIndex || 0);
+    const end = interval.endPolylinePointIndex == null
+      ? start + 1
+      : Number(interval.endPolylinePointIndex);
+    const speed = String(interval.speed || 'NORMAL');
+    const from = Math.max(0, start);
+    const to = Math.min(points.length, Math.max(start + 1, end));
+    for (var i = from; i < to; i++) speeds[i] = speed;
+  }
+  return speeds;
+}
+
+function analyzeJam(routeBody, probe) {
+  probe = probe || {};
   const route = routeBody && routeBody.routes && routeBody.routes[0];
   if (!route) return null;
   const live = Math.round(parseFloat(String(route.duration || '0').replace('s', '')) / 60);
@@ -1344,21 +1369,59 @@ function analyzeJam(routeBody) {
   const points = decodePolyline(encoded);
   if (points.length < 2) return { jamKm: 0, jamStartMin: live, live: live, startLat: null, startLng: null };
   const intervals = (route.travelAdvisory && route.travelAdvisory.speedReadingIntervals) || [];
-  var jamIdx = -1;
-  for (var i = 0; i < intervals.length; i++) {
-    const speed = String(intervals[i].speed || '');
-    if (speed === 'SLOW' || speed === 'TRAFFIC_JAM') {
-      jamIdx = Number(intervals[i].startPolylinePointIndex || 0);
-      break;
-    }
-  }
+  const speeds = speedsAlong(points, intervals);
   const cpIdx = nearestIndex(points, JAM_REF);
+  const maxLngDelta = probe.maxLngDelta;
   const totalKm = alongKm(points, 0, points.length - 1);
-  if (jamIdx < 0 || jamIdx >= cpIdx) {
+  const noJam = function () {
     const remainKm = alongKm(points, cpIdx, points.length - 1);
     const remainMin = totalKm > 0 ? Math.round(stat * remainKm / totalKm) : SHADOW_CALIBRATION.minimumMinutes;
     return { jamKm: 0, jamStartMin: Math.max(SHADOW_CALIBRATION.minimumMinutes, remainMin), live: live, startLat: null, startLng: null };
+  };
+  const onCorridor = function (idx) {
+    if (maxLngDelta == null) return true;
+    return Math.abs(points[idx].lng - JAM_REF.lng) <= maxLngDelta;
+  };
+
+  // Start of the queue that actually reaches the plaza, not the first slow
+  // patch on a feeder (Route C / Ave 3). Walk back from the plaza.
+  var lastJam = -1;
+  for (var i = 0; i < cpIdx; i++) {
+    if (isJamSpeed(speeds[i]) && onCorridor(i)) lastJam = i;
   }
+  if (lastJam < 0) return noJam();
+
+  var jamIdx = lastJam;
+  var cursor = lastJam;
+  const gapKm = 0.25;
+  while (cursor > 0) {
+    cursor -= 1;
+    if (!onCorridor(cursor)) break;
+    if (isJamSpeed(speeds[cursor])) {
+      jamIdx = cursor;
+      continue;
+    }
+    var look = cursor;
+    var found = -1;
+    while (look > 0 && alongKm(points, look, jamIdx) < gapKm) {
+      look -= 1;
+      if (!onCorridor(look)) break;
+      if (isJamSpeed(speeds[look])) {
+        found = look;
+        break;
+      }
+    }
+    if (found < 0) break;
+    jamIdx = found;
+    cursor = found;
+  }
+
+  // Sit a little inside the queue so Maps colours the 2nd leg from the stop.
+  const nudgeKm = 0.08;
+  var nudged = jamIdx;
+  while (nudged < lastJam && alongKm(points, jamIdx, nudged + 1) < nudgeKm) nudged += 1;
+  jamIdx = nudged;
+
   const prefixKm = alongKm(points, 0, jamIdx);
   const jamKm = alongKm(points, jamIdx, cpIdx);
   const prefixStatic = totalKm > 0 ? stat * prefixKm / totalKm : 0;
@@ -1428,9 +1491,16 @@ function logJamLengths(slotStr) {
   }
   const sh = ensureShadowFitTab(ss);
   const row = findOrCreateRow(sh, slotStr);
+  const jamStartOffCorridor = function (probe) {
+    if (probe.maxLngDelta == null) return false;
+    const raw = String(sh.getRange(row, probe.startCol).getDisplayValue() || '').trim();
+    if (!raw) return false;
+    const lng = Number(String(raw.split(',')[1] || '').trim());
+    return isFinite(lng) && Math.abs(lng - JAM_REF.lng) > probe.maxLngDelta;
+  };
   var missing = 0;
   JAM_PROBES.forEach(function (probe) {
-    if (String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() === '') missing += 1;
+    if (String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() === '' || jamStartOffCorridor(probe)) missing += 1;
   });
   if (missing === 0 && !logJamLengths.force) {
     copySgJbAJamToB(sh, row);
@@ -1440,7 +1510,7 @@ function logJamLengths(slotStr) {
   var filled = 0;
   JAM_PROBES.forEach(function (probe) {
     if (hit429) return;
-    if (!logJamLengths.force && String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() !== '') {
+    if (!logJamLengths.force && String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() !== '' && !jamStartOffCorridor(probe)) {
       filled += 1;
       return;
     }
@@ -1449,7 +1519,7 @@ function logJamLengths(slotStr) {
       hit429 = true;
       return;
     }
-    const analyzed = analyzeJam(fetched.body);
+    const analyzed = analyzeJam(fetched.body, probe);
     if (analyzed) {
       sh.getRange(row, probe.kmCol).setValue(analyzed.jamKm);
       sh.getRange(row, probe.minCol).setValue(analyzed.jamStartMin);
@@ -1667,6 +1737,19 @@ function pad(v, n) {
   var s = String(v);
   while (s.length < n) s += ' ';
   return s;
+}
+
+/** Overwrite this quarter's jam km/start so a detector fix is visible immediately. */
+function refreshJamLengthsNow() {
+  logJamLengths.force = true;
+  try {
+    const quarterStr = Utilities.formatDate(floorToQuarter(new Date()), TZ, 'yyyy-MM-dd HH:mm');
+    const result = logJamLengths(quarterStr);
+    SpreadsheetApp.flush();
+    return result;
+  } finally {
+    logJamLengths.force = false;
+  }
 }
 
 /**
