@@ -127,9 +127,9 @@ const CAMS = [
 // Column order here defines B–H on both tabs. Do not reorder without also
 // updating the Chrome scraping task, which writes B–H positionally.
 const ROUTES = [
-  { col: 'B', name: 'SG-JB A | BKE Flyover',        from: '1.421730,103.771179',  to: '1.466582,103.768091'   },
-  { col: 'C', name: 'SG-JB B | BKE Junction',       from: '1.421730,103.771179',  to: '1.466582,103.768091'   },
-  { col: 'D', name: 'SG-JB C | Woodlands Rd',       from: '1.426905,103.763665',  to: '1.466582,103.768091'   },
+  { col: 'B', name: 'SG-JB A | BKE Flyover',        from: '1.429984,103.769289',  to: '1.466582,103.768091'   },
+  { col: 'C', name: 'SG-JB B | BKE Junction',       from: '1.429984,103.769289',  to: '1.466582,103.768091'   },
+  { col: 'D', name: 'SG-JB C | Woodlands Rd',       from: '1.428949,103.761972',  to: '1.466582,103.768091'   },
   { col: 'E', name: 'JB-SG A | Lingkaran Dalam S',  from: '1.472085,103.7651',    to: '1.4430746,103.7683229' },
   { col: 'F', name: 'JB-SG B | AH2',                from: '1.482406,103.7832',    to: '1.4430746,103.7683229' },
   { col: 'G', name: 'JB-SG C | Bukit Chagar',       from: '1.467340,103.7658',    to: '1.4430746,103.7683229' },
@@ -165,8 +165,8 @@ const JAM_COL_COUNT    = 18;
 // Plaza reference for jam length: 0 km when the tail is at the checkpoint.
 const JAM_REF = { lat: 1.443307, lng: 103.767903 };
 const JAM_PROBES = [
-  { key: 'sg_jb', from: '1.421730,103.771179', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN, startCol: COL_JAM_SGJB_START },
-  { key: 'sg_jb_c', from: '1.426905,103.763665', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN, startCol: COL_JAM_C_START },
+  { key: 'sg_jb', from: '1.429984,103.769289', to: '1.466582,103.768091', kmCol: COL_JAM_SGJB_KM, minCol: COL_JAM_SGJB_MIN, startCol: COL_JAM_SGJB_START },
+  { key: 'sg_jb_c', from: '1.428949,103.761972', to: '1.466582,103.768091', kmCol: COL_JAM_C_KM, minCol: COL_JAM_C_MIN, startCol: COL_JAM_C_START },
   { key: 'jb_sg_b', from: '1.482406,103.7832', to: '1.4430746,103.7683229', kmCol: COL_JAM_JBSG_KM, minCol: COL_JAM_JBSG_MIN, startCol: COL_JAM_JBSG_START },
 ];
 
@@ -1489,9 +1489,9 @@ function writeParametersSheet() {
     ['updated_sgt', stamp, 'Rewritten when pins or model change'],
     ['', '', ''],
     ['sg_jb_clearance', '1.466582, 103.768091', 'Past Malaysian CIQ'],
-    ['sg_jb_a_origin', '1.421730, 103.771179', 'Far start on Bukit Timah Expy (PUB WH2). Shared with B.'],
-    ['sg_jb_b_origin', '1.421730, 103.771179', 'Same far start as A. Mi6 copies A duration into B.'],
-    ['sg_jb_c_origin', '1.426905, 103.763665', 'Far start on Woodlands Ave 3 into Woodlands Road'],
+    ['sg_jb_a_origin', '1.429984, 103.769289', 'Closer BTE start so Maps keeps the intended A approach. Shared with B.'],
+    ['sg_jb_b_origin', '1.429984, 103.769289', 'Same start as A. Mi6 copies A duration into B.'],
+    ['sg_jb_c_origin', '1.428949, 103.761972', 'Closer Woodlands Rd start so Maps keeps the intended C approach'],
     ['jam_ref', '1.443307, 103.767903', 'Plaza point. Jam km is along-route from first slow/jam to here; 0 if none.'],
     ['crossborder_tab', 'Crossborder', 'Was Shadow Fit / GMaps Adjusted. Crossing minutes plus jam km.'],
     ['', '', ''],

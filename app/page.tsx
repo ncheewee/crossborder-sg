@@ -2053,9 +2053,8 @@ function V3WoodlandsApproach({
       const plaza: Coordinate = travelDirection === "sg-my"
         ? { latitude: 1.466582, longitude: 103.768091 }
         : { latitude: 1.4430746, longitude: 103.7683229 };
-      const jamStart = selected.jamStart;
-      const destination = jamStart && (selected.jamKm ?? 0) > 0 ? jamStart : plaza;
-      const url = googleMapsNavigationUrl(coordinate, destination);
+      const jamStart = selected.jamStart && (selected.jamKm ?? 0) > 0 ? selected.jamStart : null;
+      const url = googleMapsNavigationUrl(coordinate, plaza, jamStart);
       const opened = window.open(url, "_blank");
       if (!opened) window.location.assign(url);
       setNavigateState("idle");
@@ -2757,19 +2756,19 @@ const woodlandsApproachDefinitions: Record<Direction, Array<{
     id: "woodlands-bke-right",
     label: "A · BKE (right) → Flyover",
     instruction: "Right flyover lane",
-    waypoint: { latitude: 1.421730, longitude: 103.771179 },
+    waypoint: { latitude: 1.429984, longitude: 103.769289 },
   },
   {
     id: "woodlands-bke-left",
     label: "B · BKE (left) → Junction",
     instruction: "Left mainline lane",
-    waypoint: { latitude: 1.421730, longitude: 103.771179 },
+    waypoint: { latitude: 1.429984, longitude: 103.769289 },
   },
   {
     id: "woodlands-road-left",
     label: "C · Woodlands Road",
     instruction: "Left-turn feeder",
-    waypoint: { latitude: 1.426905, longitude: 103.763665 },
+    waypoint: { latitude: 1.428949, longitude: 103.761972 },
   },
   ],
   "my-sg": [
@@ -2818,8 +2817,16 @@ function staticAssetUrl(asset: string) {
 function googleMapsNavigationUrl(
   origin: Coordinate,
   destination: Coordinate,
+  waypoint: Coordinate | null = null,
 ) {
-  return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(`${origin.latitude},${origin.longitude}`)}&destination=${encodeURIComponent(`${destination.latitude},${destination.longitude}`)}&travelmode=driving`;
+  const params = new URLSearchParams({
+    api: "1",
+    origin: `${origin.latitude},${origin.longitude}`,
+    destination: `${destination.latitude},${destination.longitude}`,
+    travelmode: "driving",
+  });
+  if (waypoint) params.set("waypoints", `${waypoint.latitude},${waypoint.longitude}`);
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
 function durationTone(minutes: number) {

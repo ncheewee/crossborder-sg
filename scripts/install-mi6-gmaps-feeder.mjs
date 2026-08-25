@@ -127,9 +127,9 @@ quarter="$(( 10#\$minute / 15 * 15 ))"
 slot="$(printf '%s %s:%02d' "\$day" "\$hour" "\$quarter")"
 
 # Same order as the Claude scrape / Apps Script ROUTES array.
-v1="$(read_route 'https://www.google.com/maps/dir/1.421730,103.771179/1.466582,103.768091/data=!4m2!4m1!3e0')"
+v1="$(read_route 'https://www.google.com/maps/dir/1.429984,103.769289/1.466582,103.768091/data=!4m2!4m1!3e0')"
 v2="$v1"
-v3="$(read_route 'https://www.google.com/maps/dir/1.426905,103.763665/1.466582,103.768091/data=!4m2!4m1!3e0')"
+v3="$(read_route 'https://www.google.com/maps/dir/1.428949,103.761972/1.466582,103.768091/data=!4m2!4m1!3e0')"
 v4="$(read_route 'https://www.google.com/maps/dir/1.472085,103.7651/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
 v5="$(read_route 'https://www.google.com/maps/dir/1.482406,103.7832/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
 v6="$(read_route 'https://www.google.com/maps/dir/1.467340,103.7658/1.4430746,103.7683229/data=!4m2!4m1!3e0')"
