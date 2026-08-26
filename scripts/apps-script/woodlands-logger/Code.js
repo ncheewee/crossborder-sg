@@ -229,7 +229,12 @@ function logHour() {
     watchdog();
   }
 
-  Logger.log('Jam lengths — ' + logJamLengths(quarterStr));
+  try {
+    Logger.log('Jam lengths — ' + logJamLengths(quarterStr));
+  } catch (jamErr) {
+    Logger.log('Jam lengths crashed — ' + jamErr);
+  }
+  SpreadsheetApp.flush();
   Logger.log('Crossborder — ' + rebuildShadowFit());
 }
 
@@ -1463,7 +1468,8 @@ function fetchTrafficOnPolyline(fromStr, toStr, key) {
       lastStatus = resp.getResponseCode();
       if (lastStatus === 200) return { status: 200, body: JSON.parse(resp.getContentText()) };
       Logger.log('Jam polyline HTTP ' + lastStatus + ' — ' + resp.getContentText().slice(0, 200));
-      if (lastStatus === 429 || lastStatus === 503) {
+      if (lastStatus === 429) return { status: 429, body: null };
+      if (lastStatus === 503) {
         Utilities.sleep(2500 * attempt);
         continue;
       }
@@ -1477,30 +1483,28 @@ function fetchTrafficOnPolyline(fromStr, toStr, key) {
 }
 
 function logJamLengths(slotStr) {
+  try {
+    return fillJamLengths(slotStr);
+  } catch (e) {
+    Logger.log('Jam lengths failed: ' + e + '\n' + (e.stack || ''));
+    return 'jam error: ' + String(e);
+  }
+}
+
+function fillJamLengths(slotStr) {
   const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
   if (!key) return 'no GOOGLE_ROUTES_KEY';
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const gmaps = ss.getSheetByName(SHEET_GMAPS);
-  if (gmaps && gmaps.getLastRow() >= 2) {
-    const stamps = gmaps.getRange(2, COL_TIMESTAMP, gmaps.getLastRow() - 1, 1).getDisplayValues();
-    var found = false;
-    for (var i = 0; i < stamps.length; i++) {
-      if (String(stamps[i][0]).trim() === slotStr) found = true;
-    }
-    if (!found) slotStr = String(stamps[stamps.length - 1][0]).trim();
+  const props = PropertiesService.getScriptProperties();
+  const backoffUntil = Number(props.getProperty('JAM_429_UNTIL') || '0');
+  if (!logJamLengths.force && Date.now() < backoffUntil) {
+    return 'backing off 429 until ' + Utilities.formatDate(new Date(backoffUntil), TZ, 'HH:mm');
   }
+  const ss = SpreadsheetApp.openById(SHEET_ID);
   const sh = ensureShadowFitTab(ss);
   const row = findOrCreateRow(sh, slotStr);
-  const jamStartOffCorridor = function (probe) {
-    if (probe.maxLngDelta == null) return false;
-    const raw = String(sh.getRange(row, probe.startCol).getDisplayValue() || '').trim();
-    if (!raw) return false;
-    const lng = Number(String(raw.split(',')[1] || '').trim());
-    return isFinite(lng) && Math.abs(lng - JAM_REF.lng) > probe.maxLngDelta;
-  };
   var missing = 0;
   JAM_PROBES.forEach(function (probe) {
-    if (String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() === '' || jamStartOffCorridor(probe)) missing += 1;
+    if (String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() === '') missing += 1;
   });
   if (missing === 0 && !logJamLengths.force) {
     copySgJbAJamToB(sh, row);
@@ -1510,17 +1514,27 @@ function logJamLengths(slotStr) {
   var filled = 0;
   JAM_PROBES.forEach(function (probe) {
     if (hit429) return;
-    if (!logJamLengths.force && String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() !== '' && !jamStartOffCorridor(probe)) {
+    if (!logJamLengths.force && String(sh.getRange(row, probe.kmCol).getDisplayValue() || '').trim() !== '') {
       filled += 1;
       return;
     }
-    const fetched = fetchTrafficOnPolyline(probe.from, probe.to, key);
-    if (fetched.status === 429) {
-      hit429 = true;
-      return;
-    }
-    const analyzed = analyzeJam(fetched.body, probe);
-    if (analyzed) {
+    try {
+      const fetched = fetchTrafficOnPolyline(probe.from, probe.to, key);
+      if (fetched.status === 429) {
+        hit429 = true;
+        props.setProperty('JAM_429_UNTIL', String(Date.now() + 15 * 60 * 1000));
+        Logger.log('Jam probe ' + probe.key + ' HTTP 429 — backing off 15 min');
+        return;
+      }
+      if (fetched.status !== 200) {
+        Logger.log('Jam probe ' + probe.key + ' HTTP ' + fetched.status);
+        return;
+      }
+      const analyzed = analyzeJam(fetched.body, probe);
+      if (!analyzed) {
+        Logger.log('Jam probe ' + probe.key + ' returned no route');
+        return;
+      }
       sh.getRange(row, probe.kmCol).setValue(analyzed.jamKm);
       sh.getRange(row, probe.minCol).setValue(analyzed.jamStartMin);
       sh.getRange(row, probe.startCol).setValue(
@@ -1529,11 +1543,14 @@ function logJamLengths(slotStr) {
           : ''
       );
       filled += 1;
+    } catch (probeErr) {
+      Logger.log('Jam probe ' + probe.key + ' failed: ' + probeErr);
     }
-    Utilities.sleep(1200);
+    Utilities.sleep(800);
   });
   copySgJbAJamToB(sh, row);
-  sh.getRange(row, COL_TIMESTAMP).setValue(slotStr);
+  sh.getRange(row, COL_TIMESTAMP).setNumberFormat('@').setValue(slotStr);
+  SpreadsheetApp.flush();
   return (hit429 ? '429 after filling ' : 'logged jam for ') + slotStr + ' (' + filled + '/' + JAM_PROBES.length + ')';
 }
 
