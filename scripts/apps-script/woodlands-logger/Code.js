@@ -50,6 +50,11 @@
  *   5. Run  testRun()       — one full logging cycle, bypasses the time gate
  *   6. Run  setupTrigger()  — installs the 15-minute polling trigger
  *
+ * logHour every 15 min: TomTom/Mapbox, jam (3 Routes probes), Checkpoint if
+ * that slot is empty, GMaps Routes only if Mi6 missed the previous slot.
+ * Crossborder rebuilds only when something actually wrote. Mi6 ingest writes
+ * GMaps times and rebuilds Crossborder, but does not call Routes.
+ *
  * Already ran setup for TomTom only? Just re-run setupSheets() — it is
  * idempotent and will add the Mapbox tab without touching existing data.
  */
@@ -181,61 +186,75 @@ const SRC_API       = 'API';
 // ─── Main hourly job ───────────────────────────────────────────────────────
 
 function logHour() {
-  const now = new Date();
+  ensureFifteenMinutePoll();
 
-  // Checkpoint.sg is independent of the Google hourly gates. Pull every poll
-  // and upsert into the capture's 15-minute slot.
-  Logger.log('GMaps source columns — ' + collapseGmapsSourceColumns());
-  paintExistingGmapsSources();
-  paintExistingCheckpointSources();
+  const now = new Date();
+  const minute = Number(Utilities.formatDate(now, TZ, 'm'));
+  const hourSlot = Utilities.formatDate(roundToHour(now), TZ, 'yyyy-MM-dd HH:00');
+  const quarter = floorToQuarter(now);
+  const quarterStr = Utilities.formatDate(quarter, TZ, 'yyyy-MM-dd HH:mm');
+  const prevStr = Utilities.formatDate(new Date(quarter.getTime() - 15 * 60 * 1000), TZ, 'yyyy-MM-dd HH:mm');
+  var wrote = false;
+
+  if (logHour.force) {
+    Logger.log('GMaps source columns — ' + collapseGmapsSourceColumns());
+    paintExistingGmapsSources();
+    paintExistingCheckpointSources();
+  }
+
   const checkpointSheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
   if (checkpointSheet && checkpointNeedsCleanup(checkpointSheet)) {
     Logger.log('Checkpoint.sg cleanup — ' + cleanupCheckpointSheet());
   }
-  Logger.log('Checkpoint.sg — ' + logCheckpoint());
 
-  const minute     = Number(Utilities.formatDate(now, TZ, 'm'));
-  const hourSlot   = Utilities.formatDate(roundToHour(now), TZ, 'yyyy-MM-dd HH:00');
-  const quarter    = floorToQuarter(now);
-  const quarterStr = Utilities.formatDate(quarter, TZ, 'yyyy-MM-dd HH:mm');
+  if (logHour.force || !checkpointSlotFilled(quarterStr)) {
+    const cp = logCheckpoint();
+    Logger.log('Checkpoint.sg — ' + cp);
+    if (/appended:|upgraded:/.test(String(cp))) wrote = true;
+  } else {
+    Logger.log('Checkpoint.sg — already filled ' + quarterStr);
+  }
 
-  // TomTom/Mapbox/GMaps: one API pass per 15-minute slot. Skip if that slot
-  // is full so the 5-minute poll does not burn quota 3×. GMaps prefers a
-  // Maps reading (Mi6, or Claude scrape when the Mac is on). Routes only
-  // fills empty cells.
   if (logHour.force
       || !providerSlotFilled(SHEET_TOMTOM, quarterStr)
       || !providerSlotFilled(SHEET_MAPBOX, quarterStr)) {
     const tomtom = logTomTom(quarterStr);
     const mapbox = logMapbox(quarterStr);
-    const cams   = (CAMS_ENABLED && (minute >= TARGET_MINUTE || logHour.force))
+    const cams = (CAMS_ENABLED && (minute >= TARGET_MINUTE || logHour.force))
       ? logCameras(roundToHour(now), hourSlot)
       : 'paused';
     Logger.log('Slot ' + quarterStr + ' | TomTom: ' + tomtom
                + ' | Mapbox: ' + mapbox + ' | cams: ' + cams);
+    wrote = true;
   } else {
     Logger.log('Slot ' + quarterStr + ' | TomTom/Mapbox already filled');
   }
 
-  // Give Mi6 ~8 minutes to land Maps times before spending Routes quota.
-  const minuteOfQuarter = minute % 15;
-  if ((logHour.force || minuteOfQuarter >= 8) && !providerSlotFilled(SHEET_GMAPS, quarterStr)) {
-    Logger.log('GMaps ' + quarterStr + ' — ' + backfillGoogle(quarterStr));
+  // Routes for GMaps times only if Mi6 missed the previous quarter.
+  const gmapsTarget = logHour.force ? quarterStr : prevStr;
+  if (!providerSlotFilled(SHEET_GMAPS, gmapsTarget)) {
+    Logger.log('GMaps fallback ' + gmapsTarget + ' — ' + backfillGoogle(gmapsTarget));
+    wrote = true;
   }
 
-  // Late window: give the hourly Chrome scrape one last chance on the :00 row.
-  if (FALLBACK_MINUTE && minute >= FALLBACK_MINUTE && !logHour.force) {
-    Logger.log('Fallback window — ' + backfillGoogle(hourSlot));
-    watchdog();
+  if (logHour.force || minute >= 45) {
+    Logger.log('Watchdog — ' + watchdog());
   }
 
   try {
-    Logger.log('Jam lengths — ' + logJamLengths(quarterStr));
+    const jam = logJamLengths(quarterStr);
+    Logger.log('Jam lengths — ' + jam);
+    if (/^logged jam/.test(String(jam)) || /\([1-9]\/\d+\)/.test(String(jam))) wrote = true;
   } catch (jamErr) {
     Logger.log('Jam lengths crashed — ' + jamErr);
   }
-  SpreadsheetApp.flush();
-  Logger.log('Crossborder — ' + rebuildShadowFit());
+
+  if (wrote || logHour.force) {
+    SpreadsheetApp.flush();
+    Logger.log('Crossborder — ' + rebuildShadowFit());
+  } else {
+    Logger.log('Crossborder — skipped (nothing new)');
+  }
 }
 
 // ─── Ingest endpoint for the Google Maps scraper ───────────────────────────
@@ -345,7 +364,6 @@ function doPost(e) {
     writeGmapsSource(sh, r, landed ? (body.source === 'mi6-maps' ? SRC_MI6 : SRC_MAC) : '');
 
     Logger.log('Ingest ' + body.slot + ' → row ' + r + ' : ' + row.join('/'));
-    logJamLengths(body.slot);
     rebuildShadowFit();
     return jsonOut({ ok: true, slot: body.slot, row: r, values: row });
 
@@ -1065,6 +1083,20 @@ function floorToQuarter(d) {
   return new Date(Math.floor(d.getTime() / 900000) * 900000);
 }
 
+function checkpointSlotFilled(slotStr) {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
+  if (!sh) return false;
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return false;
+  const rows = sh.getRange(2, 1, lastRow - 1, 8).getDisplayValues();
+  for (var i = rows.length - 1; i >= 0; i--) {
+    if (quarterSlot(rows[i][0]) !== slotStr) continue;
+    if (String(rows[i][7] || '').trim() === 'unavailable') continue;
+    return String(rows[i][1] || '').trim() !== '' && String(rows[i][4] || '').trim() !== '';
+  }
+  return false;
+}
+
 function providerSlotFilled(tabName, slotStr) {
   const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(tabName);
   if (!sh) return false;
@@ -1665,23 +1697,21 @@ function ensureProviderTab(ss, name, baselineLabel) {
   return sh;
 }
 
+function ensureFifteenMinutePoll() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('LOG_POLL_MINUTES') === '15') return;
+  setupTrigger();
+}
+
 function setupTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     const f = t.getHandlerFunction();
     if (f === 'logHour' || f === 'purgeOld') ScriptApp.deleteTrigger(t);
   });
 
-  // Apps Script cannot schedule "at :50 every hour" — everyHours() lands on an
-  // arbitrary offset and nearMinute() is not honoured for it. So poll and let
-  // the gates in logHour() decide what runs.
-  //
-  // 5-minute polling (not 15) because we now need TWO windows per hour: the
-  // main provider run at :45–:54 and the Google fallback + watchdog at :55+.
-  // A 15-minute poll can only land once in that span. The extra firings are
-  // sub-millisecond no-ops.
-  ScriptApp.newTrigger('logHour').timeBased().everyMinutes(5).create();
-  Logger.log('Polling trigger installed: TomTom/Mapbox every 15 min, Google fallback + watchdog after :'
-             + FALLBACK_MINUTE + '.');
+  ScriptApp.newTrigger('logHour').timeBased().everyMinutes(15).create();
+  PropertiesService.getScriptProperties().setProperty('LOG_POLL_MINUTES', '15');
+  Logger.log('Polling trigger installed: 15 min — TomTom/Mapbox, jam, Checkpoint-if-empty, GMaps Routes only if Mi6 missed the previous slot.');
 
   if (RETENTION_DAYS > 0) {
     ScriptApp.newTrigger('purgeOld').timeBased().everyDays(1).atHour(4).create();
