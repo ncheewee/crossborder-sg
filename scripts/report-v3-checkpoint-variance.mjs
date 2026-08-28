@@ -649,6 +649,7 @@ function chartSvg(route, rows) {
       lowRun = [];
     };
     let lastMs = null;
+    const pad = 5;
     for (const row of plotted) {
       const ms = new Date(row.capturedAt).getTime();
       if (!Number.isFinite(row.oursHigh) || !Number.isFinite(row.oursLow) || (lastMs !== null && ms - lastMs > 60 * 60 * 1000)) {
@@ -656,8 +657,8 @@ function chartSvg(route, rows) {
         lastMs = Number.isFinite(row.oursHigh) && Number.isFinite(row.oursLow) ? ms : null;
         if (!Number.isFinite(row.oursHigh) || !Number.isFinite(row.oursLow)) continue;
       }
-      highRun.push({ x: x(row), y: y(row.oursHigh) });
-      lowRun.push({ x: x(row), y: y(row.oursLow) });
+      highRun.push({ x: x(row), y: y(row.oursHigh) - pad });
+      lowRun.push({ x: x(row), y: y(row.oursLow) + pad });
       lastMs = ms;
     }
     flush();
@@ -694,12 +695,12 @@ function chartSvg(route, rows) {
     <text x="${margin.left}" y="72" fill="#52606d" font-size="20" font-family="Arial, sans-serif">Crossborder vs Checkpoint.sg · ${singaporeDate}</text>
     ${grids}
     ${hourTicks}
-    <path d="${ribbon()}" fill="#d0008f" fill-opacity="0.22" stroke="none"/>
-    <path d="${line("oursMid")}" fill="none" stroke="#d0008f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${ribbon()}" fill="#d0008f" fill-opacity="0.38" stroke="none"/>
+    <path d="${line("oursMid")}" fill="none" stroke="#d0008f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="${line("checkpointMid")}" fill="none" stroke="#64748b" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="12 10"/>
     ${dots}
     <rect x="${legendX - 12}" y="${legendY - 18}" width="390" height="58" rx="10" fill="#ffffff" fill-opacity="0.9"/>
-    <rect x="${legendX}" y="${legendY - 7}" width="22" height="14" rx="3" fill="#d0008f" fill-opacity="0.22"/>
+    <rect x="${legendX}" y="${legendY - 7}" width="22" height="14" rx="3" fill="#d0008f" fill-opacity="0.38"/>
     ${legendItem(legendX, legendY, "Crossborder", "#d0008f")}
     ${legendItem(legendX + 190, legendY, "Checkpoint.sg", "#64748b", "8 6")}
   </svg>`;
