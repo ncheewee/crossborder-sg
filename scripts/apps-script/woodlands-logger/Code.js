@@ -1275,17 +1275,6 @@ function rebuildShadowFit() {
     const sgAb = Number(jam[1]);
     const sgC = Number(jam[3]);
     const jbSg = Number(jam[5]);
-    if (isFinite(sgAb) && sgAb > 0) {
-      minutes[0] = sgAb;
-      minutes[1] = sgAb;
-    }
-    if (isFinite(sgC) && sgC > 0) minutes[2] = sgC;
-    if (isFinite(jbSg) && jbSg > 0) {
-      minutes[3] = jbSg;
-      minutes[4] = jbSg;
-      minutes[5] = jbSg;
-      minutes[6] = jbSg;
-    }
     const sgBias = shadowEffectiveBias(sgState, at, SHADOW_CALIBRATION);
     const myBias = shadowEffectiveBias(myState, at, SHADOW_CALIBRATION);
     const fitted = minutes.map(function (value, index) {
@@ -1293,6 +1282,11 @@ function rebuildShadowFit() {
       const direction = index < 3 ? 'sg-my' : 'my-sg';
       return shadowMinutesForSource(value, direction, direction === 'sg-my' ? sgBias : myBias, SHADOW_CALIBRATION);
     });
+    // Jam-start is the centre of the ribbon. Keep each route's offset so
+    // JB-SG A–D are not flattened to one line.
+    recenterFittedOnJam(fitted, [0, 1], sgAb, sgBias, 'sg-my');
+    recenterFittedOnJam(fitted, [2], sgC, sgBias, 'sg-my');
+    recenterFittedOnJam(fitted, [3, 4, 5, 6], jbSg, myBias, 'my-sg');
     const cp = checkpointByMs[at] || {};
     sgState = learnShadowBias(sgState, shadowMeanPositive(minutes.slice(0, 3)), cp.towardsJb, 'sg-my', at, sgBias, SHADOW_CALIBRATION);
     myState = learnShadowBias(myState, shadowMeanPositive(minutes.slice(3, 7)), cp.towardsSg, 'my-sg', at, myBias, SHADOW_CALIBRATION);
@@ -1305,6 +1299,32 @@ function rebuildShadowFit() {
     shadow.getRange(out.length + 2, 1, leftover, 8 + JAM_COL_COUNT).clearContent();
   }
   return 'rewrote ' + out.length + ' rows';
+}
+
+function recenterFittedOnJam(fitted, indexes, jamMin, bias, direction) {
+  if (!(isFinite(jamMin) && jamMin > 0)) return;
+  const jamFitted = shadowMinutesForSource(jamMin, direction, bias, SHADOW_CALIBRATION);
+  const present = [];
+  indexes.forEach(function (idx) {
+    const value = Number(fitted[idx]);
+    if (isFinite(value) && value > 0) present.push(value);
+  });
+  if (!present.length) {
+    indexes.forEach(function (idx) { fitted[idx] = jamFitted; });
+    return;
+  }
+  const mean = present.reduce(function (sum, value) { return sum + value; }, 0) / present.length;
+  indexes.forEach(function (idx) {
+    const value = Number(fitted[idx]);
+    if (!isFinite(value) || value <= 0) {
+      fitted[idx] = jamFitted;
+      return;
+    }
+    fitted[idx] = Math.max(
+      SHADOW_CALIBRATION.minimumMinutes,
+      Math.round(jamFitted + (value - mean)),
+    );
+  });
 }
 
 function readJamByStamp(shadow) {
