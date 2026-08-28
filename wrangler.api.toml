@@ -13,5 +13,4 @@ AUTH_REQUIRED = "true"
 # ALLOWED_EMAILS = "you@gmail.com"
 # ALLOWED_DOMAINS = "yourdomain.com"
 
-[triggers]
-crons = ["*/5 * * * *"]
+# No cron. Traffic snapshots were waking Neon every 5 minutes.

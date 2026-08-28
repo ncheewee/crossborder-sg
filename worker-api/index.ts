@@ -895,11 +895,10 @@ async function saveObservation(
   }
 }
 
-async function handleTraffic(request: Request, env: Env, user: AuthUser | null = null) {
+async function handleTraffic(request: Request, env: Env, _user: AuthUser | null = null) {
   const url = new URL(request.url);
   const direction = parseDirection(url.searchParams.get("direction"));
   const now = new Date();
-  const sql = neon(env.DATABASE_URL);
 
   try {
     const sourceResponse = await fetch(SOURCE_URL, {
@@ -926,18 +925,12 @@ async function handleTraffic(request: Request, env: Env, user: AuthUser | null =
       Tuas: relatedCamerasFor("Tuas", item.cameras),
     };
     const recommendation = createRecommendation(direction, now, cameras);
-    const since = new Date(now.getTime() - 7 * 24 * 60 * 60000).toISOString();
-    const reportSince = new Date(now.getTime() - 24 * 60 * 60000).toISOString();
 
-    const historyEntries = await Promise.all(
-      checkpoints.map(async (checkpoint) => {
-        const forecast = buildForecast(checkpoint, direction, now, cameras[checkpoint]);
-        const wait = estimateWait(checkpoint, direction, now, cameras[checkpoint]);
-        const rows = await loadHistory(sql, direction, checkpoint, since);
-        const reports = await loadTravelerReports(sql, direction, checkpoint, reportSince);
-        return [checkpoint, { rows, reports, forecast, wait }] as const;
-      }),
-    );
+    const historyEntries = checkpoints.map((checkpoint) => {
+      const forecast = buildForecast(checkpoint, direction, now, cameras[checkpoint]);
+      const wait = estimateWait(checkpoint, direction, now, cameras[checkpoint]);
+      return [checkpoint, { rows: [] as TrafficObservationRow[], reports: [] as TravelerReportRow[], forecast, wait }] as const;
+    });
     const history = Object.fromEntries(historyEntries) as Record<
       Checkpoint,
       {
@@ -1416,11 +1409,7 @@ export default {
     return json(env, { error: "not_found" }, { status: 404 });
   },
 
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    const origin = "https://worker.internal";
-    ctx.waitUntil(Promise.all([
-      handleTraffic(new Request(`${origin}/api/traffic?direction=sg-my`), env),
-      handleTraffic(new Request(`${origin}/api/traffic?direction=my-sg`), env),
-    ]).then(() => undefined));
+  async scheduled(_event: ScheduledEvent, _env: Env, _ctx: ExecutionContext) {
+    return;
   },
 };

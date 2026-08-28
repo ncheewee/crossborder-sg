@@ -8,7 +8,7 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
-const APP_VERSION = "v1.8";
+const APP_VERSION = "v1.9";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -3032,10 +3032,11 @@ export default function Home() {
   }, [auth.status, completeGoogleSignIn, isAuthConfigured]);
 
   useEffect(() => {
-    window.setTimeout(() => {
-      void loadTraffic();
-    }, 0);
-  }, [loadTraffic]);
+    setLastChecked(new Intl.DateTimeFormat("en-SG", {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date()));
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;

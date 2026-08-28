@@ -1,8 +1,7 @@
 name: Collect checkpoint observations
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  # Disabled: this woke Neon every 5 minutes. Woodlands times come from sheets.
   workflow_dispatch:
 
 permissions:
