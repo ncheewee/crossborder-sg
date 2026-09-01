@@ -320,6 +320,27 @@ function doPost(e) {
       const rebuilt = rebuildShadowFit();
       return jsonOut({ ok: true, result: jam + '; ' + rebuilt });
     }
+    if (body.type === 'checkpoint-capture') {
+      const readings = body.readings && body.readings.woodlands;
+      const jb = readings && readings.towardsJb;
+      const sg = readings && readings.towardsSg;
+      if (!validCheckpointRange(jb) || !validCheckpointRange(sg)) {
+        return jsonOut({ ok: false, error: 'woodlands towardsJb and towardsSg ranges required' });
+      }
+      const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
+      if (!sh) return jsonOut({ ok: false, error: 'tab "' + SHEET_CHECKPOINT + '" not found' });
+      const capturedAt = body.capturedAt ? new Date(body.capturedAt) : new Date();
+      const slot = Utilities.formatDate(floorToQuarter(isNaN(capturedAt.getTime()) ? new Date() : capturedAt), TZ, 'yyyy-MM-dd HH:mm');
+      const result = appendCheckpointRow(sh, [
+        slot,
+        jb[0], jb[1], midpoint(jb),
+        sg[0], sg[1], midpoint(sg),
+        'mi6-macrodroid',
+        'OK: Mi6 sheet ingest (no Neon).',
+      ]);
+      rebuildShadowFit();
+      return jsonOut({ ok: true, result: result });
+    }
     if (body.type === 'checkpoint') {
       if (!Array.isArray(body.row) || body.row.length !== 9) {
         return jsonOut({ ok: false, error: 'row must be 9 cells' });

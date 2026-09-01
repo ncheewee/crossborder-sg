@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 
 // MacroDroid must fire this script every 15 minutes (not hourly): open
 // Checkpoint.sg, wait for the times, then run this script. Do not take a
@@ -7,11 +7,36 @@ import { writeFile } from "node:fs/promises";
 // in front, then deletes it. The feeder does not schedule itself.
 const adb = process.env.ADB || "/opt/homebrew/share/android-commandlinetools/platform-tools/adb";
 const serial = process.env.ADB_SERIAL || "192.168.0.3:5555";
-const monitorKey = process.env.MONITOR_API_KEY;
 const apiBase = (process.env.CROSSBORDER_API_BASE || "https://crossborder-sg-api.ncheewee.workers.dev").replace(/\/$/, "");
+const webAppUrl = process.env.CHECKPOINT_SHEET_WEBAPP_URL
+  || "https://script.google.com/macros/s/AKfycbzamRGlMzJ8TLjfHPygtw01RU-NaK2TCyzq4iFRVjZRKL9JUef-SR3NSu8-skeGMJoA/exec";
 const localPath = "/private/tmp/crossborder-mi6-checkpoint-capture.sh";
 const devicePath = "/sdcard/Download/crossborder-mi6-checkpoint-capture.sh";
 
+async function loadEnvValue(name) {
+  if (process.env[name]) return process.env[name].trim();
+  const envFile = `${process.env.HOME}/Library/Application Support/CrossBorder.sg/competitor-telegram.env`;
+  try {
+    const text = await readFile(envFile, "utf8");
+    const match = text.match(new RegExp(`^${name}=['"]?([^'"\\n]+)`));
+    if (match) return match[1].trim();
+  } catch {}
+  return "";
+}
+
+async function loadIngestSecret() {
+  if (process.env.INGEST_SECRET) return process.env.INGEST_SECRET.trim();
+  const skill = await readFile(
+    "/Users/cheewee/Documents/Claude/Scheduled/woodlands-checkpoint-route-log/SKILL.md",
+    "utf8",
+  );
+  const match = skill.match(/SEC='([^']+)'/);
+  if (!match) throw new Error("INGEST_SECRET is not set and was not found in the scrape skill");
+  return match[1];
+}
+
+const monitorKey = await loadEnvValue("MONITOR_API_KEY");
+const ingestSecret = await loadIngestSecret();
 if (!monitorKey) throw new Error("MONITOR_API_KEY is required to install the Mi6 feeder");
 
 function run(command, args) {
@@ -28,6 +53,8 @@ set -eu
 
 api_url='${apiBase}/api/monitor/checkpoint'
 monitor_key='${monitorKey.replaceAll("'", "'\\''")}'
+sheet_url='${webAppUrl}'
+sheet_secret='${ingestSecret.replaceAll("'", "'\\''")}'
 screenshot_dir='/sdcard/DCIM/Screenshots'
 status_path='/sdcard/Download/crossborder-mi6-checkpoint-status.json'
 debug_path='/sdcard/Download/crossborder-mi6-checkpoint-debug.txt'
@@ -190,8 +217,10 @@ if [ "$woodlands_jb" = null ] || [ "$woodlands_sg" = null ]; then
 fi
 
 response="$(curl -sS --connect-timeout 20 --max-time 45 -H "X-Monitor-Key: $monitor_key" -H 'Content-Type: application/json' --data "$payload" "$api_url" 2>&1 || true)"
-printf '%s\\n' "$response" > "$status_path"
-case "$response" in
+sheet_payload="{\\"secret\\":\\"$sheet_secret\\",\\"type\\":\\"checkpoint-capture\\",\\"capturedAt\\":\\"$captured_at\\",\\"readings\\":{\\"woodlands\\":{\\"towardsJb\\":$woodlands_jb,\\"towardsSg\\":$woodlands_sg},\\"tuas\\":{\\"towardsJb\\":$tuas_jb,\\"towardsSg\\":$tuas_sg}}}"
+sheet_response="$(curl -sS --connect-timeout 20 --max-time 45 -H 'Content-Type: application/json' --data "$sheet_payload" "$sheet_url" 2>&1 || true)"
+printf 'worker=%s\\nsheet=%s\\n' "$response" "$sheet_response" > "$status_path"
+case "$response$sheet_response" in
   *'"ok":true'*) exit 0 ;;
   *) exit 1 ;;
 esac
