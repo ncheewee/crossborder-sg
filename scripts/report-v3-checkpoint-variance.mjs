@@ -334,6 +334,17 @@ function sourceRange(route, source) {
     : null;
 }
 
+function latestSourceForRoute(source, route) {
+  if (!source) return null;
+  if (sourceRange(route, source)) return source;
+  for (const record of [...(source.records ?? [])].reverse()) {
+    if (sourcePoint(route, source, record)) {
+      return { ...source, ...record };
+    }
+  }
+  return source;
+}
+
 function sourcePoint(route, source, record) {
   if (!record?.readings || !record.capturedAt) return null;
   const values = route.routes
@@ -757,7 +768,8 @@ const lastValidRows = await lastValidCrossBorderRows();
 const rows = [];
 for (const route of routeSets) {
   const lastValid = lastValidRows.get(route.label);
-  const oursRange = sourceRange(route, sources.ours) ?? (
+  const oursForRoute = latestSourceForRoute(sources.ours, route);
+  const oursRange = sourceRange(route, oursForRoute) ?? (
     Number(lastValid?.oursLow) > 0 && Number(lastValid?.oursHigh) > 0
       ? [Number(lastValid.oursLow), Number(lastValid.oursHigh)]
       : null
@@ -769,7 +781,7 @@ for (const route of routeSets) {
     label: route.label,
     directionKey: route.directionKey,
     routeCount: route.routes.length,
-    routeDataCapturedAt: sourceRange(route, sources.ours) ? sources.ours.capturedAt : lastValid.capturedAt,
+    routeDataCapturedAt: sourceRange(route, oursForRoute) ? oursForRoute.capturedAt : lastValid.capturedAt,
     oursLow: oursRange[0],
     oursHigh: oursRange[1],
     oursMid: midpoint(oursRange),
