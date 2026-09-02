@@ -15,6 +15,7 @@ const timingSources = [
     id: "ours",
     label: "Crossborder",
     url: process.env.CROSSBORDER_SHEET_URL || `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=94841451`,
+    fallbackUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Crossborder`,
     suffix: "",
   },
 ];
@@ -289,18 +290,49 @@ function parseCsv(text) {
 }
 
 function parseSingaporeTimestamp(value) {
-  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})$/);
+  const match = String(value ?? "").trim().match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::\d{2})?/);
   if (!match) return null;
   const [, year, month, day, hour, minute] = match;
   return new Date(`${year}-${month}-${day}T${hour.padStart(2, "0")}:${minute}:00+08:00`).toISOString();
 }
 
+function isGmapsHeader(header) {
+  return header.includes("Source") || header.some((key) => String(key).startsWith("Cam "));
+}
+
+async function fetchCsv(url, label) {
+  const response = await fetch(url, { headers: { Accept: "text/csv" } });
+  if (!response.ok) throw new Error(`${label} sheet returned ${response.status}`);
+  return parseCsv(await response.text());
+}
+
 async function loadTimingSource(source) {
-  const response = await fetch(source.url, { headers: { Accept: "text/csv" } });
-  if (!response.ok) throw new Error(`${source.label} sheet returned ${response.status}`);
-  const [header = [], ...data] = parseCsv(await response.text());
+  let [header = [], ...data] = await fetchCsv(source.url, source.label);
+  if (isGmapsHeader(header) && source.fallbackUrl) {
+    console.warn(`${source.label} export was the GMaps tab; retrying the Crossborder tab by name.`);
+    [header, ...data] = await fetchCsv(source.fallbackUrl, source.label);
+  }
+  if (isGmapsHeader(header)) {
+    throw new Error(`${source.label} CSV is the GMaps tab, not Crossborder`);
+  }
   const timestampIndex = header.indexOf("Timestamp (SGT)");
   if (timestampIndex === -1 || data.length === 0) throw new Error(`${source.label} sheet has no timestamped readings`);
+  const stampMissing = data.filter((row) => !parseSingaporeTimestamp(row[timestampIndex])).length;
+  if (stampMissing) {
+    try {
+      const [, ...gmapsRows] = await fetchCsv(`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=0`, "GMaps stamps");
+      if (gmapsRows.length === data.length) {
+        data = data.map((row, index) => {
+          if (parseSingaporeTimestamp(row[timestampIndex])) return row;
+          const copy = row.slice();
+          copy[timestampIndex] = gmapsRows[index]?.[0] ?? copy[timestampIndex];
+          return copy;
+        });
+      }
+    } catch (error) {
+      console.warn(`Could not backfill Crossborder timestamps from GMaps: ${error.message}`);
+    }
+  }
   const requiredColumns = routeSets.flatMap((route) => route.routes.map((item) => `${item.sourceColumn}${source.suffix}`));
   const records = data.map((row) => {
     const capturedAt = parseSingaporeTimestamp(row[timestampIndex]);
@@ -317,6 +349,8 @@ async function loadTimingSource(source) {
   });
   const latest = records.at(-1);
   if (!latest) throw new Error(`${source.label} sheet has no complete positive route reading`);
+  const sample = latest.readings["SG-JB A | BKE Flyover"];
+  console.log(`${source.label} latest ${latest.capturedAt} SG-JB A=${sample}`);
   return {
     ...source,
     ...latest,
