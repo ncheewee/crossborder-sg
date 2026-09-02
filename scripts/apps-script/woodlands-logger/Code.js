@@ -50,9 +50,10 @@
  *   5. Run  testRun()       — one full logging cycle, bypasses the time gate
  *   6. Run  setupTrigger()  — installs the 15-minute polling trigger
  *
- * logHour every 15 min: TomTom/Mapbox, jam (3 Routes probes), Checkpoint if
- * that slot is empty, GMaps Routes only if Mi6 missed the previous slot.
- * Crossborder rebuilds only when something actually wrote. Mi6 ingest writes
+ * logHour every 15 min: TomTom/Mapbox, Checkpoint if that slot is empty,
+ * GMaps Routes only if Mi6/Mac missed this slot. Jam: 3 Routes probes on
+ * :00/:30; :15/:45 inherit the last jam-start and scale km/min with GMaps
+ * time change. Crossborder rebuilds when something wrote. Ingest writes
  * GMaps times and rebuilds Crossborder, but does not call Routes.
  *
  * Already ran setup for TomTom only? Just re-run setupSheets() — it is
@@ -165,7 +166,10 @@ const COL_JAM_JBSG_D_START = 23; // W
 const COL_JAM_SGJB_B_KM    = 24; // X  SG-JB B (same pin as A)
 const COL_JAM_SGJB_B_MIN   = 25; // Y
 const COL_JAM_SGJB_B_START = 26; // Z
+const COL_JAM_SOURCE       = 27; // AA  API vs guess
 const JAM_COL_COUNT    = 18;
+const COLOR_JAM_API    = '#0f766e';
+const COLOR_JAM_GUESS  = '#94a3b8';
 
 // Plaza reference for jam length: 0 km when the tail is at the checkpoint.
 const JAM_REF = { lat: 1.443307, lng: 103.767903 };
@@ -193,7 +197,6 @@ function logHour() {
   const hourSlot = Utilities.formatDate(roundToHour(now), TZ, 'yyyy-MM-dd HH:00');
   const quarter = floorToQuarter(now);
   const quarterStr = Utilities.formatDate(quarter, TZ, 'yyyy-MM-dd HH:mm');
-  const prevStr = Utilities.formatDate(new Date(quarter.getTime() - 15 * 60 * 1000), TZ, 'yyyy-MM-dd HH:mm');
   var wrote = false;
 
   if (logHour.force) {
@@ -205,6 +208,19 @@ function logHour() {
   const checkpointSheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_CHECKPOINT);
   if (checkpointSheet && checkpointNeedsCleanup(checkpointSheet)) {
     Logger.log('Checkpoint.sg cleanup — ' + cleanupCheckpointSheet());
+  }
+
+  // GMaps first so this slot gets times even if later steps fail.
+  if (!providerSlotFilled(SHEET_GMAPS, quarterStr)) {
+    if (routesBackoffActive() && !logHour.force) {
+      Logger.log('GMaps fallback backing off 429');
+    } else {
+      const gmapsResult = backfillGoogle(quarterStr);
+      Logger.log('GMaps fallback ' + quarterStr + ' — ' + gmapsResult);
+      if (/backfilled |429 after /.test(String(gmapsResult))) wrote = true;
+    }
+  } else {
+    Logger.log('GMaps fallback — Mi6 already filled ' + quarterStr);
   }
 
   if (logHour.force || !checkpointSlotFilled(quarterStr)) {
@@ -230,13 +246,6 @@ function logHour() {
     Logger.log('Slot ' + quarterStr + ' | TomTom/Mapbox already filled');
   }
 
-  // Routes for GMaps times only if Mi6 missed the previous quarter.
-  const gmapsTarget = logHour.force ? quarterStr : prevStr;
-  if (!providerSlotFilled(SHEET_GMAPS, gmapsTarget)) {
-    Logger.log('GMaps fallback ' + gmapsTarget + ' — ' + backfillGoogle(gmapsTarget));
-    wrote = true;
-  }
-
   if (logHour.force || minute >= 45) {
     Logger.log('Watchdog — ' + watchdog());
   }
@@ -244,7 +253,7 @@ function logHour() {
   try {
     const jam = logJamLengths(quarterStr);
     Logger.log('Jam lengths — ' + jam);
-    if (/^logged jam/.test(String(jam)) || /\([1-9]\/\d+\)/.test(String(jam))) wrote = true;
+    if (/logged jam|guessed jam|\([1-9]\/\d+\)/.test(String(jam))) wrote = true;
   } catch (jamErr) {
     Logger.log('Jam lengths crashed — ' + jamErr);
   }
@@ -297,6 +306,19 @@ function doPost(e) {
       if (!body.key) return jsonOut({ ok: false, error: 'key required' });
       PropertiesService.getScriptProperties().setProperty('MONITOR_API_KEY', String(body.key));
       return jsonOut({ ok: true, setup: 'MONITOR_API_KEY' });
+    }
+    if (body.type === 'logger-health') {
+      return jsonOut({ ok: true, health: loggerHealth() });
+    }
+    if (body.type === 'log-hour') {
+      logHour.force = !!body.force;
+      try {
+        logHour();
+        SpreadsheetApp.flush();
+      } finally {
+        logHour.force = false;
+      }
+      return jsonOut({ ok: true, ran: true });
     }
     if (body.type === 'checkpoint-sync') {
       const result = logCheckpoint();
@@ -552,13 +574,27 @@ function collapseGmapsSourceColumns() {
   return 'collapsed ' + Math.max(0, lastRow - 1) + ' rows';
 }
 
+function routesBackoffActive() {
+  const props = PropertiesService.getScriptProperties();
+  const until = Math.max(
+    Number(props.getProperty('ROUTES_429_UNTIL') || 0),
+    Number(props.getProperty('JAM_429_UNTIL') || 0),
+  );
+  return Date.now() < until;
+}
+
+function markRoutesBackoff() {
+  const until = String(Date.now() + 15 * 60 * 1000);
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('ROUTES_429_UNTIL', until);
+  props.setProperty('JAM_429_UNTIL', until);
+}
+
 function backfillGoogle(slotStr) {
   const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
   if (!key) return 'no GOOGLE_ROUTES_KEY — fallback disabled';
-
-  const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('GMAPS_API_SLOT') === slotStr && !logHour.force) {
-    return 'already attempted ' + slotStr;
+  if (routesBackoffActive() && !logHour.force) {
+    return 'backing off 429';
   }
 
   const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_GMAPS);
@@ -591,7 +627,7 @@ function backfillGoogle(slotStr) {
     if (result.status === 429) hit429 = true;
     Utilities.sleep(1200);
   });
-  props.setProperty('GMAPS_API_SLOT', slotStr);
+  if (hit429) markRoutesBackoff();
 
   const stillEmpty = out.every(function (v) { return v === '' || v === null || v === 'ERR'; });
   if (stillEmpty && created) {
@@ -646,7 +682,8 @@ function fetchGoogleRoute(route, key) {
       }
       Logger.log('Routes ' + route.name + ': HTTP ' + lastStatus
                  + ' — ' + resp.getContentText().slice(0, 200));
-      if (lastStatus === 429 || lastStatus === 503) {
+      if (lastStatus === 429) return { mins: 'ERR', status: 429 };
+      if (lastStatus === 503) {
         Utilities.sleep(2500 * attempt);
         continue;
       }
@@ -1238,6 +1275,7 @@ function ensureShadowFitTab(ss) {
       'SG-JB A jam start', 'SG-JB C jam start', 'JB-SG jam start',
       'JB-SG A jam km', 'JB-SG A jam start', 'JB-SG C jam km', 'JB-SG C jam start', 'JB-SG D jam km', 'JB-SG D jam start',
       'SG-JB B jam km', 'SG-JB B jam-start min', 'SG-JB B jam start',
+      'Jam src',
     ]);
   sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
   sh.setFrozenRows(1);
@@ -1262,6 +1300,7 @@ function rebuildShadowFit() {
   if (gLast < 2) return 'no GMaps rows';
   const gValues = gmaps.getRange(2, COL_TIMESTAMP, gLast - 1, 8).getDisplayValues();
   const jamByStamp = readJamByStamp(shadow);
+  const jamSrcByStamp = readJamSrcByStamp(shadow);
   const cpLast = checkpoint.getLastRow();
   const checkpointByMs = {};
   if (cpLast >= 2) {
@@ -1278,6 +1317,11 @@ function rebuildShadowFit() {
     });
   }
 
+  const minutesByStamp = {};
+  gValues.forEach(function (row) {
+    minutesByStamp[row[0]] = row.slice(1, 8).map(parseGmapsMinutes);
+  });
+
   let sgState = createShadowBiasState();
   let myState = createShadowBiasState();
   const out = [];
@@ -1286,11 +1330,15 @@ function rebuildShadowFit() {
     const stamp = row[0];
     const at = sgtStampToMs(stamp);
     const minutes = row.slice(1, 8).map(parseGmapsMinutes);
-    const jam = (jamByStamp[stamp] || []).slice();
+    var jam = (jamByStamp[stamp] || []).slice();
     while (jam.length < JAM_COL_COUNT) jam.push('');
     if (jam.length > JAM_COL_COUNT) jam.length = JAM_COL_COUNT;
+    const prevSrc = String(jamSrcByStamp[stamp] || '').toLowerCase();
+    const hadApi = prevSrc === 'api' || (!prevSrc && jamHasMeasured(jam) && isJamProbeSlot(stamp));
+    jam = carryJamGuess(jam, stamp, minutes, jamByStamp, minutesByStamp);
+    const jamSrc = jamHasMeasured(jam) ? (hadApi ? 'API' : 'guess') : '';
     if (at == null) {
-      out.push([stamp, '', '', '', '', '', '', ''].concat(jam));
+      out.push([stamp, '', '', '', '', '', '', ''].concat(jam).concat([jamSrc]));
       continue;
     }
     const sgAb = Number(jam[1]);
@@ -1311,14 +1359,16 @@ function rebuildShadowFit() {
     const cp = checkpointByMs[at] || {};
     sgState = learnShadowBias(sgState, shadowMeanPositive(minutes.slice(0, 3)), cp.towardsJb, 'sg-my', at, sgBias, SHADOW_CALIBRATION);
     myState = learnShadowBias(myState, shadowMeanPositive(minutes.slice(3, 7)), cp.towardsSg, 'my-sg', at, myBias, SHADOW_CALIBRATION);
-    out.push([stamp].concat(fitted).concat(jam));
+    out.push([stamp].concat(fitted).concat(jam).concat([jamSrc]));
   }
 
-  shadow.getRange(2, 1, out.length, 8 + JAM_COL_COUNT).setValues(out);
+  const outWidth = 8 + JAM_COL_COUNT + 1;
+  shadow.getRange(2, 1, out.length, outWidth).setValues(out);
   const leftover = shadow.getLastRow() - (out.length + 1);
   if (leftover > 0) {
-    shadow.getRange(out.length + 2, 1, leftover, 8 + JAM_COL_COUNT).clearContent();
+    shadow.getRange(out.length + 2, 1, leftover, outWidth).clearContent();
   }
+  paintJamFonts(shadow, out.length + 1);
   return 'rewrote ' + out.length + ' rows';
 }
 
@@ -1358,6 +1408,40 @@ function readJamByStamp(shadow) {
     map[row[0]] = row.slice(8, 8 + JAM_COL_COUNT);
   });
   return map;
+}
+
+function readJamSrcByStamp(shadow) {
+  const map = {};
+  const last = shadow.getLastRow();
+  if (last < 2 || shadow.getLastColumn() < COL_JAM_SOURCE) return map;
+  const stamps = shadow.getRange(2, COL_TIMESTAMP, last - 1, 1).getDisplayValues();
+  const src = shadow.getRange(2, COL_JAM_SOURCE, last - 1, 1).getDisplayValues();
+  for (var i = 0; i < stamps.length; i++) {
+    if (stamps[i][0]) map[String(stamps[i][0]).trim()] = String(src[i][0] || '').trim();
+  }
+  return map;
+}
+
+function paintJamFonts(sh, lastRow) {
+  if (lastRow < 2) return;
+  const n = lastRow - 1;
+  const src = sh.getRange(2, COL_JAM_SOURCE, n, 1).getDisplayValues();
+  const apiA1 = [];
+  const guessA1 = [];
+  for (var i = 0; i < src.length; i++) {
+    const row = i + 2;
+    const value = String(src[i][0] || '').toLowerCase();
+    const range = 'I' + row + ':AA' + row;
+    if (value === 'api') apiA1.push(range);
+    else if (value === 'guess') guessA1.push(range);
+  }
+  function colorRanges(a1, color) {
+    for (var i = 0; i < a1.length; i += 80) {
+      sh.getRangeList(a1.slice(i, i + 80)).setFontColor(color);
+    }
+  }
+  colorRanges(apiA1, COLOR_JAM_API);
+  colorRanges(guessA1, COLOR_JAM_GUESS);
 }
 
 function haversineKm(a, b) {
@@ -1564,7 +1648,104 @@ function logJamLengths(slotStr) {
   }
 }
 
+function isJamProbeSlot(slotStr) {
+  const mm = Number(String(slotStr || '').slice(-2));
+  return mm === 0 || mm === 30;
+}
+
+function previousQuarterStamp(slotStr) {
+  const at = sgtStampToMs(slotStr);
+  if (at == null) return '';
+  return Utilities.formatDate(new Date(at - 15 * 60 * 1000), TZ, 'yyyy-MM-dd HH:mm');
+}
+
+function jamHasMeasured(jam) {
+  if (!jam || !jam.length) return false;
+  return String(jam[0] || '').trim() !== ''
+    || String(jam[2] || '').trim() !== ''
+    || String(jam[4] || '').trim() !== '';
+}
+
+function clampedTimeRatio(prevMinutes, minutes, indexes) {
+  var sum = 0;
+  var n = 0;
+  indexes.forEach(function (i) {
+    const a = Number(prevMinutes && prevMinutes[i]);
+    const b = Number(minutes && minutes[i]);
+    if (a > 0 && b > 0) {
+      sum += b / a;
+      n += 1;
+    }
+  });
+  var scale = n ? sum / n : 1;
+  if (!isFinite(scale) || scale <= 0) scale = 1;
+  return Math.max(0.6, Math.min(1.5, scale));
+}
+
+function scaleJamCarry(prevJam, prevMinutes, minutes) {
+  const out = prevJam.slice();
+  while (out.length < JAM_COL_COUNT) out.push('');
+  function scalePair(kmI, minI, startI, indexes) {
+    const scale = clampedTimeRatio(prevMinutes, minutes, indexes);
+    const km = Number(prevJam[kmI]);
+    const mins = Number(prevJam[minI]);
+    if (isFinite(km)) out[kmI] = Math.round(Math.max(0, km * scale) * 100) / 100;
+    if (isFinite(mins) && mins > 0) out[minI] = Math.max(0, Math.round(mins * scale));
+    else if (String(prevJam[minI] || '').trim() !== '') out[minI] = prevJam[minI];
+    out[startI] = prevJam[startI] || '';
+  }
+  scalePair(0, 1, 6, [0, 1]);
+  scalePair(2, 3, 7, [2]);
+  scalePair(4, 5, 8, [3, 4, 5, 6]);
+  out[15] = out[0];
+  out[16] = out[1];
+  out[17] = out[6];
+  return out;
+}
+
+function lastMeasuredJam(stamp, jamByStamp, maxBack) {
+  var s = stamp;
+  for (var i = 0; i < maxBack; i++) {
+    s = previousQuarterStamp(s);
+    if (!s) return null;
+    if (jamHasMeasured(jamByStamp[s])) return { stamp: s, jam: jamByStamp[s] };
+  }
+  return null;
+}
+
+function carryJamGuess(jam, stamp, minutes, jamByStamp, minutesByStamp) {
+  if (jamHasMeasured(jam)) return jam;
+  const found = lastMeasuredJam(stamp, jamByStamp, 8);
+  if (!found) return jam;
+  return scaleJamCarry(found.jam, minutesByStamp[found.stamp], minutes);
+}
+
+function guessJamLengths(slotStr) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const shadow = ensureShadowFitTab(ss);
+  const gmaps = ss.getSheetByName(SHEET_GMAPS);
+  if (!gmaps || gmaps.getLastRow() < 2) return 'guess skipped — no GMaps';
+  const jamByStamp = readJamByStamp(shadow);
+  if (jamHasMeasured(jamByStamp[slotStr])) return 'already filled ' + slotStr;
+  const gLast = gmaps.getLastRow();
+  const gValues = gmaps.getRange(2, COL_TIMESTAMP, gLast - 1, 8).getDisplayValues();
+  const minutesByStamp = {};
+  gValues.forEach(function (row) {
+    minutesByStamp[row[0]] = row.slice(1, 8).map(parseGmapsMinutes);
+  });
+  const guessed = carryJamGuess([], slotStr, minutesByStamp[slotStr] || [], jamByStamp, minutesByStamp);
+  if (!jamHasMeasured(guessed)) return 'guess skipped — no recent jam';
+  const row = findOrCreateRow(shadow, slotStr);
+  shadow.getRange(row, COL_JAM_SGJB_KM, 1, JAM_COL_COUNT).setValues([guessed]);
+  shadow.getRange(row, COL_JAM_SOURCE).setValue('guess');
+  copySgJbAJamToB(shadow, row);
+  return 'guessed jam for ' + slotStr;
+}
+
 function fillJamLengths(slotStr) {
+  if (!logJamLengths.force && !isJamProbeSlot(slotStr)) {
+    return guessJamLengths(slotStr);
+  }
   const key = PropertiesService.getScriptProperties().getProperty('GOOGLE_ROUTES_KEY');
   if (!key) return 'no GOOGLE_ROUTES_KEY';
   const props = PropertiesService.getScriptProperties();
@@ -1595,7 +1776,7 @@ function fillJamLengths(slotStr) {
       const fetched = fetchTrafficOnPolyline(probe.from, probe.to, key);
       if (fetched.status === 429) {
         hit429 = true;
-        props.setProperty('JAM_429_UNTIL', String(Date.now() + 15 * 60 * 1000));
+        markRoutesBackoff();
         Logger.log('Jam probe ' + probe.key + ' HTTP 429 — backing off 15 min');
         return;
       }
@@ -1623,7 +1804,9 @@ function fillJamLengths(slotStr) {
   });
   copySgJbAJamToB(sh, row);
   sh.getRange(row, COL_TIMESTAMP).setNumberFormat('@').setValue(slotStr);
+  if (filled > 0) sh.getRange(row, COL_JAM_SOURCE).setValue('API');
   SpreadsheetApp.flush();
+  if (hit429 && filled === 0) return '429 after filling 0/3 — ' + guessJamLengths(slotStr);
   return (hit429 ? '429 after filling ' : 'logged jam for ') + slotStr + ' (' + filled + '/' + JAM_PROBES.length + ')';
 }
 
@@ -1739,9 +1922,39 @@ function ensureProviderTab(ss, name, baselineLabel) {
 }
 
 function ensureFifteenMinutePoll() {
-  const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('LOG_POLL_MINUTES') === '15') return;
+  const hasLog = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'logHour';
+  });
+  if (hasLog) {
+    PropertiesService.getScriptProperties().setProperty('LOG_POLL_MINUTES', '15');
+    return;
+  }
   setupTrigger();
+}
+
+function loggerHealth() {
+  const props = PropertiesService.getScriptProperties();
+  const now = Date.now();
+  const before = ScriptApp.getProjectTriggers().map(function (t) {
+    return t.getHandlerFunction() + ':' + t.getEventType();
+  });
+  const hadLog = before.some(function (s) { return s.indexOf('logHour:') === 0; });
+  if (!hadLog) setupTrigger();
+  const until = Math.max(
+    Number(props.getProperty('ROUTES_429_UNTIL') || 0),
+    Number(props.getProperty('JAM_429_UNTIL') || 0),
+  );
+  return {
+    nowSgt: Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss'),
+    triggers: ScriptApp.getProjectTriggers().map(function (t) {
+      return t.getHandlerFunction() + ':' + t.getEventType();
+    }),
+    pollMinutes: props.getProperty('LOG_POLL_MINUTES'),
+    hasKey: !!props.getProperty('GOOGLE_ROUTES_KEY'),
+    backoffUntilSgt: until ? Utilities.formatDate(new Date(until), TZ, 'yyyy-MM-dd HH:mm:ss') : '',
+    backoffActive: now < until,
+    triggerReinstalled: !hadLog,
+  };
 }
 
 function setupTrigger() {
@@ -1752,7 +1965,7 @@ function setupTrigger() {
 
   ScriptApp.newTrigger('logHour').timeBased().everyMinutes(15).create();
   PropertiesService.getScriptProperties().setProperty('LOG_POLL_MINUTES', '15');
-  Logger.log('Polling trigger installed: 15 min — TomTom/Mapbox, jam, Checkpoint-if-empty, GMaps Routes only if Mi6 missed the previous slot.');
+  Logger.log('Polling trigger installed: 15 min — GMaps if empty, jam probes at :00/:30, guess at :15/:45.');
 
   if (RETENTION_DAYS > 0) {
     ScriptApp.newTrigger('purgeOld').timeBased().everyDays(1).atHour(4).create();

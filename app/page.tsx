@@ -8,7 +8,7 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
-const APP_VERSION = "v1.9";
+const APP_VERSION = "v1.10";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -129,6 +129,7 @@ type ApproachId =
 type ApproachJam = {
   km: number | null;
   start: Coordinate | null;
+  guessed?: boolean;
 };
 type ApproachRouteOption = {
   id: ApproachId;
@@ -137,6 +138,7 @@ type ApproachRouteOption = {
   totalMinutes: number;
   jamKm: number | null;
   jamStart: Coordinate | null;
+  jamGuessed?: boolean;
 };
 type ApproachHistoryPoint = { hour: number; minutes: number };
 type ApproachHistorySeries = {
@@ -1473,6 +1475,7 @@ function parseLatestJam(csv: string): Partial<Record<ApproachId, ApproachJam>> {
   const jbSgAStart = headerIndex(headerRow, "JB-SG A jam start");
   const jbSgCStart = headerIndex(headerRow, "JB-SG C jam start");
   const jbSgDStart = headerIndex(headerRow, "JB-SG D jam start");
+  const jamSrcIndex = headerIndex(headerRow, "Jam src");
   const durationIndexes = [
     headerIndex(headerRow, "SG-JB A | BKE Flyover"),
     headerIndex(headerRow, "SG-JB B | BKE Junction"),
@@ -1495,9 +1498,13 @@ function parseLatestJam(csv: string): Partial<Record<ApproachId, ApproachJam>> {
       if (at == null || latestAt - at > jamHoldMs) continue;
       const km = parseOptionalNumber(row[kmIndex]);
       if (km == null) continue;
+      const src = String(row[jamSrcIndex] ?? "").trim().toLowerCase();
+      const stamp = String(row[timestampIndex] ?? "");
+      const guessed = src === "guess" || (src !== "api" && /:(15|45)$/.test(stamp));
       return {
         km,
         start: startIndex === -1 ? null : parseCoordinateCell(row[startIndex] ?? ""),
+        guessed,
       };
     }
     return { km: null, start: null };
@@ -1554,6 +1561,7 @@ function buildAdjustedRouteOptions(
       totalMinutes: crossingMinutes + (preApproachMinutes ?? 0),
       jamKm: jam[definition.id]?.km ?? null,
       jamStart: jam[definition.id]?.start ?? null,
+      jamGuessed: jam[definition.id]?.guessed ?? false,
     }];
   })) as Record<ApproachId, ApproachRouteOption>;
 }
@@ -1988,6 +1996,7 @@ function V3WoodlandsApproach({
         durationMinutes: option?.totalMinutes ?? null,
         jamKm: option?.jamKm ?? null,
         jamStart: option?.jamStart ?? null,
+        jamGuessed: option?.jamGuessed ?? false,
       };
     });
   }, [definitions, routeOptions]);
@@ -2222,7 +2231,7 @@ function V3WoodlandsApproach({
                 </span>
                 <span className="v3-route-time-block">
                   <span className={`v3-route-time ${durationTone(route.durationMinutes)}`}>{route.durationMinutes} min</span>
-                  <small className="v3-jam-length">
+                  <small className={`v3-jam-length${route.jamGuessed ? " guessed" : ""}`}>
                     {formatJamLength(route.jamKm)}
                   </small>
                 </span>
