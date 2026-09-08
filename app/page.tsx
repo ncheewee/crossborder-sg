@@ -8,7 +8,7 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
-const APP_VERSION = "v1.10";
+const APP_VERSION = "v1.11";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -1286,7 +1286,7 @@ function normalizeApproachSheetRows(csv: string) {
 }
 
 function parseSingaporeSheetTime(value: string) {
-  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})$/);
+  const match = String(value ?? "").trim().match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::\d{2})?/);
   if (!match) return null;
   const [, year, month, day, hour, minute] = match;
   return {
@@ -1327,6 +1327,58 @@ function quarterSlotMs(at: number) {
 function meanPositive(values: Array<number | null>) {
   const finite = values.filter((value): value is number => Number.isFinite(value) && value > 0);
   return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : null;
+}
+
+function parseApproachTimesFromCsv(csv: string): AdjustedApproachSheet {
+  const { header, rows } = normalizeApproachSheetRows(csv);
+  const timestampIndex = header.indexOf("Timestamp (SGT)");
+  if (timestampIndex === -1) throw new Error("Times sheet is missing its timestamp column.");
+  if (header.includes("Source") || header.some((key) => String(key).startsWith("Cam "))) {
+    throw new Error("Times sheet resolved to GMaps, not Crossborder");
+  }
+  const now = new Date();
+  const comparisonDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const todayKey = singaporeDateKey(now);
+  const comparisonKey = singaporeDateKey(comparisonDate);
+  const comparisonLabel = `Last ${new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Singapore",
+    weekday: "short",
+  }).format(comparisonDate)}`;
+  const columnIndex = Object.fromEntries(
+    Object.entries(approachGmapsColumns).map(([approachId, column]) => [approachId, header.indexOf(column)]),
+  ) as Record<ApproachId, number>;
+  const historyBuckets = Object.fromEntries(
+    Object.keys(approachGmapsColumns).map((approachId) => [approachId, {
+      today: new Map<number, ApproachHistoryPoint>(),
+      comparison: new Map<number, ApproachHistoryPoint>(),
+    }]),
+  ) as Record<ApproachId, { today: Map<number, ApproachHistoryPoint>; comparison: Map<number, ApproachHistoryPoint> }>;
+  const latest: AdjustedApproachTimes = {};
+
+  for (const row of rows) {
+    const time = parseSingaporeSheetTime(row[timestampIndex] ?? "");
+    if (!time) continue;
+    for (const approachId of Object.keys(approachGmapsColumns) as ApproachId[]) {
+      const index = columnIndex[approachId];
+      const minutes = index === -1 ? NaN : Number(row[index]);
+      if (!Number.isFinite(minutes) || minutes <= 0) continue;
+      const point = { hour: time.hour, minutes };
+      latest[approachId] = { minutes, timestamp: time.stamp };
+      if (time.key === todayKey) historyBuckets[approachId].today.set(time.hour, point);
+      if (time.key === comparisonKey) historyBuckets[approachId].comparison.set(time.hour, point);
+    }
+  }
+
+  const history = Object.fromEntries(
+    (Object.keys(approachGmapsColumns) as ApproachId[]).map((approachId) => [approachId, {
+      today: [...historyBuckets[approachId].today.values()].sort((left, right) => left.hour - right.hour),
+      comparison: [...historyBuckets[approachId].comparison.values()].sort((left, right) => left.hour - right.hour),
+      comparisonLabel,
+    }]),
+  ) as Partial<Record<ApproachId, ApproachHistorySeries>>;
+
+  if (!Object.keys(latest).length) throw new Error("Crossborder sheet has no times");
+  return { history, latest };
 }
 
 function parseCalibratedApproachSheet(gmapsCsv: string, checkpointCsv: string): AdjustedApproachSheet {
@@ -1539,7 +1591,9 @@ async function fetchAdjustedApproachSheet() {
     fetchSheetCsv(checkpointSheetUrl, "Checkpoint.sg"),
     fetchSheetCsv(crossborderSheetUrl, "Crossborder").catch(() => ""),
   ]);
-  const parsed = parseCalibratedApproachSheet(gmapsCsv, checkpointCsv);
+  const parsed = crossborderCsv
+    ? parseApproachTimesFromCsv(crossborderCsv)
+    : parseCalibratedApproachSheet(gmapsCsv, checkpointCsv);
   return { ...parsed, jam: crossborderCsv ? parseLatestJam(crossborderCsv) : {} };
 }
 
