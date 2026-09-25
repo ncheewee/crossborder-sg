@@ -8,7 +8,7 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
-const APP_VERSION = "v1.11";
+const APP_VERSION = "v1.12";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -154,28 +154,7 @@ type AdjustedApproachSheet = {
   latest: AdjustedApproachTimes;
   jam: Partial<Record<ApproachId, ApproachJam>>;
 };
-type ApproachTripReport = {
-  direction: Direction;
-  checkpoint: "Woodlands";
-  approachId: ApproachId;
-  startedAt: string;
-  clearedAt: string;
-  estimatedMinutes: number;
-  actualWaitMinutes: number;
-  joinLatitude: number;
-  joinLongitude: number;
-  clearLatitude: number;
-  clearLongitude: number;
-  locationAccuracyMeters: number | null;
-};
 type CapturedLocation = Coordinate & { accuracy: number | null };
-type QueueCapture = {
-  direction: Direction;
-  approachId: ApproachId;
-  estimatedMinutes: number;
-  startedAt: string;
-  location: CapturedLocation;
-};
 
 declare global {
   interface Window {
@@ -2017,11 +1996,7 @@ function PhotoZoom({
   );
 }
 
-function V3WoodlandsApproach({
-  submitApproachReport,
-}: {
-  submitApproachReport: (report: ApproachTripReport) => Promise<void>;
-}) {
+function V3WoodlandsApproach() {
   const [travelDirection, setTravelDirection] = useState<Direction>("sg-my");
   const [selectedApproach, setSelectedApproach] = useState<ApproachId>("woodlands-bke-left");
   const [visualLoadingApproach, setVisualLoadingApproach] = useState<ApproachId | null>("woodlands-bke-left");
@@ -2032,9 +2007,6 @@ function V3WoodlandsApproach({
   const [sideAlert, setSideAlert] = useState<string | null>(null);
   const [routeOptions, setRouteOptions] = useState<Partial<Record<ApproachId, ApproachRouteOption>>>({});
   const [routeHistory, setRouteHistory] = useState<Partial<Record<ApproachId, ApproachHistorySeries>>>({});
-  const [queueCapture, setQueueCapture] = useState<QueueCapture | null>(null);
-  const [queueState, setQueueState] = useState<"idle" | "locating-join" | "queued" | "locating-clear" | "saving" | "saved" | "error">("idle");
-  const [queueMessage, setQueueMessage] = useState("");
   const [routeScrollThumb, setRouteScrollThumb] = useState<{ top: number; height: number } | null>(null);
   const routeListRef = useRef<HTMLDivElement>(null);
   const preloadedRouteImages = useRef<HTMLImageElement[]>([]);
@@ -2122,9 +2094,6 @@ function V3WoodlandsApproach({
     const nextApproach = woodlandsApproachDefinitions[direction][0].id;
     setVisualLoadingApproach(nextApproach);
     setSelectedApproach(nextApproach);
-    setQueueCapture(null);
-    setQueueState("idle");
-    setQueueMessage("");
     setNavigateState("idle");
     setNavigateMessage("");
     setSideAlert(null);
@@ -2183,67 +2152,6 @@ function V3WoodlandsApproach({
     if (approachId === selectedApproach) return;
     setVisualLoadingApproach(approachId);
     setSelectedApproach(approachId);
-  }
-
-  async function recordQueueJoin() {
-    if (!selected) return;
-    const startedAt = new Date().toISOString();
-    const selectedAtJoin = selected;
-    const directionAtJoin = travelDirection;
-    setQueueState("locating-join");
-    setQueueMessage("");
-    try {
-      const location = await requestGrantedLocation({ enableHighAccuracy: true, maximumAge: 0 });
-      if (!isOnDepartureSide(location, directionAtJoin)) {
-        setQueueState("idle");
-        setSideAlert(wrongSideCheckpointMessage(directionAtJoin));
-        return;
-      }
-      setQueueCapture({
-        direction: directionAtJoin,
-        approachId: selectedAtJoin.id,
-        estimatedMinutes: selectedAtJoin.crossingMinutes,
-        startedAt,
-        location,
-      });
-      setQueueState("queued");
-      setQueueMessage("Queue start recorded.");
-    } catch (error) {
-      setQueueState("error");
-      setQueueMessage(error instanceof Error ? error.message : "Could not record the queue start.");
-    }
-  }
-
-  async function recordCustomsClearance() {
-    if (!queueCapture) return;
-    const clearedAt = new Date().toISOString();
-    setQueueState("locating-clear");
-    setQueueMessage("");
-    try {
-      const location = await requestCurrentLocation({ enableHighAccuracy: true, maximumAge: 0 });
-      const actualWaitMinutes = Math.max(1, Math.round((new Date(clearedAt).getTime() - new Date(queueCapture.startedAt).getTime()) / 60_000));
-      setQueueState("saving");
-      await submitApproachReport({
-        direction: queueCapture.direction,
-        checkpoint: "Woodlands",
-        approachId: queueCapture.approachId,
-        startedAt: queueCapture.startedAt,
-        clearedAt,
-        estimatedMinutes: queueCapture.estimatedMinutes,
-        actualWaitMinutes,
-        joinLatitude: queueCapture.location.latitude,
-        joinLongitude: queueCapture.location.longitude,
-        clearLatitude: location.latitude,
-        clearLongitude: location.longitude,
-        locationAccuracyMeters: Math.max(queueCapture.location.accuracy ?? 0, location.accuracy ?? 0) || null,
-      });
-      setQueueCapture(null);
-      setQueueState("saved");
-      setQueueMessage(`Recorded ${actualWaitMinutes} min for calibration.`);
-    } catch (error) {
-      setQueueState("error");
-      setQueueMessage(error instanceof Error ? error.message : "Could not record customs clearance.");
-    }
   }
 
   return (
@@ -2332,17 +2240,6 @@ function V3WoodlandsApproach({
             >
               {navigateState === "locating" ? "LOCATING…" : "NAVIGATE"}
             </button>
-            <div className={`v3-queue-tester ${queueState}`} aria-live="polite">
-              <button
-                type="button"
-                className="v3-queue-tester-button"
-                disabled={queueState === "locating-join" || queueState === "locating-clear" || queueState === "saving"}
-                onClick={() => queueCapture ? void recordCustomsClearance() : void recordQueueJoin()}
-              >
-                {queueState === "locating-join" || queueState === "locating-clear" ? "LOCATING..." : queueState === "saving" ? "SAVING..." : queueCapture ? "CLEARED CUSTOMS" : "JOINED QUEUE"}
-              </button>
-              {queueMessage && <span>{queueMessage}</span>}
-            </div>
           </div>
         </>}
       </article>
@@ -2989,16 +2886,6 @@ export default function Home() {
     return response;
   }, [auth, expireAuth, isAuthConfigured]);
 
-  const submitApproachReport = useCallback(async (report: ApproachTripReport) => {
-    const response = await authFetch(`${apiBase()}/api/approach-reports`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(report),
-    });
-    const payload = await response.json() as { message?: string };
-    if (!response.ok) throw new Error(payload.message ?? `Calibration report returned ${response.status}`);
-  }, [authFetch]);
-
   const loadTraffic = useCallback(async () => {
     if (isAuthConfigured && auth.status !== "ready") {
       setRefreshing(false);
@@ -3409,7 +3296,7 @@ export default function Home() {
         )}
       </header>
 
-      <V3WoodlandsApproach submitApproachReport={submitApproachReport} />
+      <V3WoodlandsApproach />
 
     </main>
     </PhotoZoom>
