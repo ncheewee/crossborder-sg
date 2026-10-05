@@ -8,7 +8,7 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
-const APP_VERSION = "v1.12";
+const APP_VERSION = "v1.13";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -2077,7 +2077,8 @@ function V3WoodlandsApproach() {
         ? { latitude: 1.466582, longitude: 103.768091 }
         : { latitude: 1.4430746, longitude: 103.7683229 };
       const jamStart = selected.jamStart && (selected.jamKm ?? 0) > 0 ? selected.jamStart : null;
-      const url = googleMapsNavigationUrl(coordinate, plaza, jamStart);
+      const via = jamStart ?? selected.waypoint;
+      const url = googleMapsNavigationUrl(coordinate, plaza, via);
       const opened = window.open(url, "_blank");
       if (!opened) window.location.assign(url);
       setNavigateState("idle");
@@ -2238,7 +2239,7 @@ function V3WoodlandsApproach() {
               disabled={navigateState === "locating"}
               onClick={() => void startNavigation()}
             >
-              {navigateState === "locating" ? "LOCATING…" : "NAVIGATE"}
+              {navigateState === "locating" ? "LOCATING…" : `Navigate to ${approachLetter(selected.label)}`}
             </button>
           </div>
         </>}
@@ -2760,6 +2761,11 @@ const woodlandsApproachVisualImages: Record<ApproachId, string> = {
 function staticAssetUrl(asset: string) {
   if (typeof window === "undefined") return asset;
   return new URL(asset, document.baseURI).toString();
+}
+
+function approachLetter(label: string) {
+  const match = label.match(/^([A-D])/);
+  return match ? match[1] : label.slice(0, 1);
 }
 
 function googleMapsNavigationUrl(
