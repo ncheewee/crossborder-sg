@@ -1055,8 +1055,10 @@ button { font: inherit; }
 .v3-navigate {
   width: 100%;
   min-height: 48px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-top: 0;
   border: 0;
   border-radius: 10px;
@@ -1067,6 +1069,11 @@ button { font: inherit; }
   font-weight: 750;
   text-decoration: none;
   cursor: pointer;
+}
+
+.v3-navigate .v3-route-letter {
+  background: #ffffff;
+  color: #0f766e;
 }
 
 .v3-navigate:disabled {

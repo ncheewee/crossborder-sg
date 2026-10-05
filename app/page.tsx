@@ -8,7 +8,7 @@ import {
   shadowMinutesForSource,
 } from "../lib/crossing-calibration";
 
-const APP_VERSION = "v1.13";
+const APP_VERSION = "v1.14";
 
 type Direction = "sg-my" | "my-sg";
 type Checkpoint = "Tuas" | "Woodlands";
@@ -2238,8 +2238,14 @@ function V3WoodlandsApproach() {
               className="v3-navigate"
               disabled={navigateState === "locating"}
               onClick={() => void startNavigation()}
+              aria-label={navigateState === "locating" ? "Locating" : `Navigate to ${approachLetter(selected.label)}`}
             >
-              {navigateState === "locating" ? "LOCATING…" : `Navigate to ${approachLetter(selected.label)}`}
+              {navigateState === "locating" ? "LOCATING…" : (
+                <>
+                  Navigate
+                  <span className="v3-route-letter" aria-hidden="true">{approachLetter(selected.label)}</span>
+                </>
+              )}
             </button>
           </div>
         </>}
