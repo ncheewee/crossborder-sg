@@ -85,6 +85,13 @@ There are two recurring monitors:
 
 - GitHub Actions runs `scripts/hourly-model-comparison.mjs` hourly against the
   public API. Google Routes API checks are opt-in via `USE_GOOGLE_ROUTES_API=true`.
+- GitHub Actions runs `scripts/report-v3-checkpoint-variance.mjs` hourly to
+  collect Checkpoint.sg readings into the sheet, with no Telegram. Once a day
+  at 06:30 SGT (often 15–50 minutes late on GitHub cron) it sends Telegram
+  yesterday's Crossborder vs Checkpoint.sg charts and a summary: average and
+  typical gap, share of 15-minute slots within ±8m, the widest gap, each
+  side's peak, and where both stand now. Run it by hand from the Actions tab
+  ("Run workflow", daily report ticked).
 - The local macOS launchd job runs the Android emulator, captures Google Maps,
   Checkpoint.sg, and Beat the Jam, then runs `scripts/report-competitor-comparison.mjs`.
 

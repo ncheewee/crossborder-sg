@@ -1,17 +1,26 @@
-name: Hourly checkpoint variance charts
+name: Checkpoint variance (hourly data, daily Telegram)
 
 on:
   schedule:
-    # Intended: once per SGT hour. GitHub cron often starts 15–50 minutes late;
-    # that delay is the late Telegram, not a second sender.
+    # Hourly: collect only (history + Checkpoint.sg sheet row). No Telegram.
     - cron: "0 * * * *"
+    # Daily 06:30 SGT (22:30 UTC): Telegram yesterday's Crossborder vs
+    # Checkpoint.sg comparison plus where both stand now. GitHub cron often
+    # starts 15–50 minutes late, so expect it between about 06:45 and 07:20.
+    - cron: "30 22 * * *"
   workflow_dispatch:
+    inputs:
+      daily_report:
+        description: "Send the daily Telegram report now"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: hourly-checkpoint-variance-charts
+  # Separate groups so a queued hourly run can never cancel the daily report.
+  group: checkpoint-variance-${{ (github.event.schedule == '30 22 * * *' || inputs.daily_report) && 'daily' || 'hourly' }}
   cancel-in-progress: false
 
 jobs:
@@ -24,8 +33,9 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - name: Send hourly variance charts from freshest device capture
+      - name: Collect hourly, or send the daily Telegram report
         env:
+          DAILY_REPORT: ${{ (github.event.schedule == '30 22 * * *' || inputs.daily_report) && '1' || '0' }}
           CROSSBORDER_API_BASE: https://crossborder-sg-api.ncheewee.workers.dev
           MONITOR_API_KEY: ${{ secrets.MONITOR_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

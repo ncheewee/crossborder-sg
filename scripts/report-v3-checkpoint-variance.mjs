@@ -2,6 +2,7 @@ import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
+import { buildDailyMessage, previousSingaporeDate, summarizeDay } from "./daily-checkpoint-summary.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const captureRoot = process.env.COMPETITOR_CAPTURE_DIR || join(repoRoot, ".competitor-captures");
@@ -60,74 +61,8 @@ function plausibleRange(range) {
   return Number.isFinite(low) && Number.isFinite(high) && low > 0 && high >= low && high <= 240 ? [low, high] : null;
 }
 
-function signedMinutes(value) {
-  return `${value >= 0 ? "+" : ""}${value}m`;
-}
-
 function shortDirection(label) {
   return label.startsWith("Singapore") ? "SG→JB" : "JB→SG";
-}
-
-function formatMinutes(value) {
-  return Number.isFinite(value) ? `${value}m` : "—";
-}
-
-function gapVsCheckpoint(oursMid, checkpointMid) {
-  if (!Number.isFinite(oursMid) || !Number.isFinite(checkpointMid)) return null;
-  return oursMid - checkpointMid;
-}
-
-function describeMovement(currentMid, previousMid) {
-  if (!Number.isFinite(currentMid) || !Number.isFinite(previousMid)) return null;
-  const delta = currentMid - previousMid;
-  if (Math.abs(delta) < 8) return null;
-  return `${delta > 0 ? "up" : "down"} ${Math.abs(delta)}m`;
-}
-
-function buildHourlyInsight(routeReports, checkpointSource) {
-  const stamp = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Singapore",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date());
-  const sourceNote = checkpointSource === "mi6-macrodroid" ? "Mi6"
-    : checkpointSource === "android-emulator" ? "emulator, no Mi6"
-      : "Checkpoint missing";
-
-  const lines = routeReports.map((report) => {
-    const name = shortDirection(report.label);
-    const ours = formatMinutes(report.oursMid);
-    if (!Number.isFinite(report.checkpointMid)) return `${name}  CB ${ours}  ·  no Checkpoint`;
-    const gap = gapVsCheckpoint(report.oursMid, report.checkpointMid);
-    const match = Math.abs(gap) <= 8 ? "match" : `${signedMinutes(gap)} vs CP`;
-    return `${name}  CB ${ours}  ·  CP ${formatMinutes(report.checkpointMid)}  ·  ${match}`;
-  });
-
-  const takeaways = [];
-  if (checkpointSource === "android-emulator") {
-    takeaways.push("Checkpoint is emulator — treat it as a stand-in.");
-  } else if (checkpointSource !== "mi6-macrodroid") {
-    takeaways.push("No fresh Checkpoint this hour.");
-  }
-
-  for (const report of routeReports) {
-    const name = shortDirection(report.label);
-    const gap = gapVsCheckpoint(report.oursMid, report.checkpointMid);
-    if (gap !== null && gap <= -12) {
-      takeaways.push(`${name} Crossborder is ${Math.abs(gap)}m under Checkpoint.`);
-    } else if (gap !== null && gap >= 12) {
-      takeaways.push(`${name} Crossborder is ${gap}m over Checkpoint.`);
-    }
-    const move = describeMovement(report.oursMid, report.previousOursMid);
-    if (move) takeaways.push(`${name} ${move} since the last chart.`);
-  }
-
-  if (!takeaways.length) {
-    takeaways.push("Both sides sit with Checkpoint. Nothing to change.");
-  }
-
-  return [`${stamp}  ·  Crossborder vs Checkpoint  ·  CP ${sourceNote}`, "", ...lines, "", takeaways[0]].join("\n");
 }
 
 async function readCsv(path) {
@@ -420,6 +355,7 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, reportDate) {
   const checkpointSlots = checkpointByQuarter(checkpointRecords);
   const points = [];
   let lastCheckpoint = null;
+  let lastCheckpointAt = null;
   for (let slot = start; slot <= end; slot += 900_000) {
     const oursRecord = closestRecord(sources.ours?.records ?? [], slot);
     const checkpointRecord = checkpointSlots.get(slot) ?? null;
@@ -433,6 +369,7 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, reportDate) {
     let checkpointRange = observedRange;
     if (observedRange) {
       lastCheckpoint = observedRange;
+      lastCheckpointAt = slot;
     } else if (lastCheckpoint) {
       checkpointRange = lastCheckpoint;
     }
@@ -445,6 +382,7 @@ function buildQuarterDayPoints(route, sources, checkpointRecords, reportDate) {
       checkpointLow: checkpointRange?.[0] ?? null,
       checkpointHigh: checkpointRange?.[1] ?? null,
       checkpointMid: midpoint(checkpointRange),
+      checkpointAgeMs: checkpointRange ? slot - lastCheckpointAt : null,
     };
     if ([point.oursMid, point.checkpointMid].some(Number.isFinite)) {
       points.push(point);
@@ -759,6 +697,10 @@ const mi6Log = mi6StatusIsCurrent
   ? mi6Status.mi6Log
   : "Mi6 status was not recorded during this hourly run.";
 const chartDryRun = process.env.CHART_DRY_RUN === "1";
+// The hourly run only collects (history + Checkpoint.sg sheet row). Telegram
+// goes out once a day, from the DAILY_REPORT run, covering yesterday in SGT.
+const dailyReport = process.env.DAILY_REPORT === "1" || process.env.DAILY_REPORT === "true";
+const skipAppends = chartDryRun || dailyReport;
 let records = [];
 try {
   records = await loadWorkerCheckpointCaptures();
@@ -837,7 +779,7 @@ const historyLines = rows.map((row) => [
   row.tomtomLow ?? "", row.tomtomHigh ?? "", row.tomtomMid ?? "",
   row.mapboxLow ?? "", row.mapboxHigh ?? "", row.mapboxMid ?? "",
 ].join(","));
-if (!chartDryRun) {
+if (!skipAppends) {
   try { await access(historyPath); } catch { await writeFile(historyPath, "capturedAt,label,oursLow,oursHigh,oursMid,checkpointLow,checkpointHigh,checkpointMid,tomtomLow,tomtomHigh,tomtomMid,mapboxLow,mapboxHigh,mapboxMid\n"); }
   await appendFile(historyPath, `${historyLines.join("\n")}\n`);
 }
@@ -847,25 +789,25 @@ await writeFile(join(captureRoot, "latest-v3-checkpoint-variance.json"), `${JSON
   mi6Log,
   rows,
 }, null, 2)}\n`);
-if (!chartDryRun) {
+if (!skipAppends) {
   try {
     await appendCheckpointSheetRow(rows, checkpointSource, mi6Log, checkpoint?.capturedAt ?? capturedAt);
   } catch (error) {
     console.warn(`Checkpoint.sg sheet append failed: ${error instanceof Error ? error.message : error}`);
   }
 } else {
-  console.log("Chart dry run: skipped history and Checkpoint.sg sheet append.");
+  console.log(`${dailyReport ? "Daily report" : "Chart dry run"}: skipped history and Checkpoint.sg sheet append.`);
 }
 const routeReports = [];
 for (const route of rows) {
   const routeDefinition = routeSets.find((item) => item.label === route.label);
   if (!routeDefinition) throw new Error(`Missing route definition for ${route.label}`);
-  const reportDate = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(route.capturedAt));
+  const reportDate = dailyReport
+    ? previousSingaporeDate(new Date(route.capturedAt))
+    : new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date(route.capturedAt));
   const points = buildQuarterDayPoints(routeDefinition, sources, records, reportDate);
-  const oursHistory = points.filter((point) => Number.isFinite(point.oursMid));
-  const previousOursMid = oursHistory.length >= 2 ? oursHistory.at(-2).oursMid : null;
   const png = await sharp(Buffer.from(chartSvg(route, points))).png().toBuffer();
   await writeFile(join(captureRoot, `latest-${route.directionKey}-hourly-chart.png`), png);
   routeReports.push({
@@ -874,15 +816,30 @@ for (const route of rows) {
     png,
     oursMid: route.oursMid,
     checkpointMid: route.checkpointMid,
-    previousOursMid,
+    reportDate,
+    summary: summarizeDay(points),
   });
 }
 
+const dailyText = dailyReport
+  ? buildDailyMessage({
+    reportDate: routeReports[0].reportDate,
+    checkpointSource,
+    directions: routeReports.map((report) => ({
+      name: shortDirection(report.label),
+      summary: report.summary,
+      now: { oursMid: report.oursMid, checkpointMid: report.checkpointMid },
+    })),
+  })
+  : null;
 if (chartDryRun) {
+  if (dailyText) console.log(dailyText);
   console.log("Chart dry run: skipped Telegram send.");
+} else if (!dailyReport) {
+  console.log("Hourly run: data collected; Telegram goes out with the daily report only.");
 } else {
   for (const report of routeReports) {
-    await sendPhoto(report.png, report.filename, shortDirection(report.label));
+    await sendPhoto(report.png, report.filename, `${shortDirection(report.label)} · ${report.reportDate}`);
   }
-  await sendMessage(buildHourlyInsight(routeReports, checkpointSource));
+  await sendMessage(dailyText);
 }
